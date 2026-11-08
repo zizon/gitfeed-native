@@ -157,6 +157,3 @@ export async function sync(root: string): Promise<GitActionResult> {
   }
 }
 
-export function gitErrorText(err: unknown): string {
-  return message(err)
-}

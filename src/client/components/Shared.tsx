@@ -297,7 +297,7 @@ export function RefreshState({ state, t }: { state: ClientState; t: Translate })
   )
 }
 
-export function EmptyArticle({ t }: { state: ClientState; t: Translate }) {
+export function EmptyArticle({ t }: { t: Translate }) {
   // The list bar already states the counts; this pane only needs to say what to
   // do next.
   return (

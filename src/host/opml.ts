@@ -23,7 +23,7 @@ export interface ImportSummary {
   folders: Record<string, number>
 }
 
-function titleCase(raw: string | null | undefined): string | null {
+function folderLabel(raw: string | null | undefined): string | null {
   const text = decodeEntities(raw || '').trim()
   return text || null
 }
@@ -51,13 +51,13 @@ export function parseOpml(xml: string): OpmlEntry[] {
     if (url) {
       feeds.push({
         url: url,
-        title: titleCase(attr(attrs, 'title') || attr(attrs, 'text')),
+        title: folderLabel(attr(attrs, 'title') || attr(attrs, 'text')),
         folder: stack.length ? stack[stack.length - 1] : null,
       })
       continue
     }
     if (selfClosing) continue
-    stack.push(titleCase(attr(attrs, 'text') || attr(attrs, 'title')) || 'Uncategorized')
+    stack.push(folderLabel(attr(attrs, 'text') || attr(attrs, 'title')) || 'Uncategorized')
   }
   return feeds
 }

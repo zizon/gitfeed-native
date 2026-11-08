@@ -35,7 +35,7 @@ import type {
 } from './types.js'
 import { clamp, digestText, messageOf } from './util.js'
 
-export const plainCache = new Map<string, string>()
+const plainCache = new Map<string, string>()
 
 export function createController(t: Translate, prefs: PrefsStore): Controller {
   const saved = prefs.getSnapshot()
@@ -89,7 +89,7 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
   let listCache: { key: string | null; items: Item[] } = { key: null, items: [] }
   let toastTimer: ReturnType<typeof setTimeout> | null = null
   /** The last explicit scope mark, so a too-wide action can be taken back. */
-  let lastScopeMark: { ids: string[]; read: boolean } | null = null
+  let lastScopeMark: string[] | null = null
 
   function get(): ClientState {
     return reader.getSnapshot()
@@ -363,7 +363,7 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
    */
   function runScopeMark(ids: string[]): void {
     if (!ids.length) return
-    lastScopeMark = { ids: ids.slice(), read: true }
+    lastScopeMark = ids.slice()
     mark(ids, true, false)
     bumpList()
     toast(t('toast.marked', { n: ids.length }), false, true)
@@ -401,10 +401,10 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
   function undoMark(): void {
     const last = lastScopeMark
     lastScopeMark = null
-    if (!last || !last.ids.length) return
-    mark(last.ids, !last.read, false)
+    if (!last || !last.length) return
+    mark(last, false, false)
     bumpList()
-    toast(t('toast.unmarked', { n: last.ids.length }))
+    toast(t('toast.unmarked', { n: last.length }))
   }
 
   /**

@@ -66,23 +66,6 @@ export interface ScheduleJobInfo {
   error: string | null
 }
 
-/** The state payload `/gitfeed/api/state` returns (full or compact). */
-export interface StatePayload {
-  version: string
-  unchanged?: boolean
-  items: Item[]
-  read: string[]
-  starred: string[]
-  feeds: Feed[]
-  reader: ReaderPrefs
-  repo: string
-  allowGit: boolean
-  git: GitInfo | null
-  schedule: ScheduleJobInfo[]
-  generatedAt: string
-  error?: string
-}
-
 export interface FeedEntry {
   id: string
   url: string

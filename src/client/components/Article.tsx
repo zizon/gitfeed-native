@@ -53,7 +53,7 @@ export function Article({ state, controller, t, compact }: ArticleProps) {
   }, [item && item.id])
 
   if (!item) {
-    return compact ? null : <EmptyArticle state={state} t={t} />
+    return compact ? null : <EmptyArticle t={t} />
   }
 
   const starred = state.starred.has(item.id)

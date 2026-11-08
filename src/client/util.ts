@@ -1,5 +1,7 @@
 /** Formatting and the untrusted-HTML sanitizer. */
 
+import { DIGEST_CHARS } from './constants.js'
+
 export function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value))
 }
@@ -60,7 +62,7 @@ const DROP_TAGS = new Set([
   'LINK', 'META', 'SVG', 'MATH', 'TEMPLATE', 'NOSCRIPT', 'BASE', 'CANVAS',
 ])
 
-export function safeUrl(raw: string | null | undefined, base?: string | null): string | null {
+function safeUrl(raw: string | null | undefined, base?: string | null): string | null {
   if (!raw) return null
   let url
   try {
@@ -72,7 +74,7 @@ export function safeUrl(raw: string | null | undefined, base?: string | null): s
   return null
 }
 
-export function cleanTree(el: Element): void {
+function cleanTree(el: Element): void {
   const kids = Array.from(el.children)
   for (const child of kids) {
     if (DROP_TAGS.has(child.tagName)) {
@@ -148,7 +150,7 @@ export function plainFromHtml(html: string | null | undefined): string {
  * @param {number} [max] most characters kept before the ellipsis.
  * @returns {string} digest text, empty when the entry has no summary.
  */
-export function digestText(html: string | null | undefined, max = 240): string {
+export function digestText(html: string | null | undefined, max = DIGEST_CHARS): string {
   const text = plainFromHtml(html)
   // Link labels such as "Comments" or "Read on" are not a summary worth a row.
   if (text.length < 16) return ''

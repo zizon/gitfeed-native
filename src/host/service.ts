@@ -598,7 +598,7 @@ export function createGitfeed(options: GitfeedOptions) {
       if (hits.length >= limit) break
     }
     return {
-      total: hits.length,
+      returned: hits.length,
       unread: data.items.reduce(function (n, item) { return readSet.has(item.id) ? n : n + 1 }, 0),
       feeds: data.feeds.length,
       items: hits,
