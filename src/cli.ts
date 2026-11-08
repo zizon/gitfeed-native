@@ -14,7 +14,7 @@
 import path from 'node:path'
 import { runFetch } from './host/fetch.js'
 import { importOpml } from './host/opml.js'
-import { installCi, scaffoldData, starterFiles } from './host/scaffold.js'
+import { scaffoldData, starterFiles } from './host/scaffold.js'
 import { expandHome } from './host/settings.js'
 
 interface Flags {
@@ -34,8 +34,7 @@ usage: gitfeed <command> [options]
 commands:
   fetch                    fetch every subscribed feed into data/
   import-opml <file>       merge an OPML export into feeds.json
-  init [dir]               create a starter data root, with its CI job
-  ci [dir]                 write/refresh the data root's GitHub Actions job
+  init [dir]               create a starter data root
 
 options:
   --root <dir>             data root (default: $GITFEED_REPO, else the current directory)
@@ -47,13 +46,10 @@ options:
   --replace                import-opml: replace the subscription list
   -h, --help               show this help
 
-init and ci copy this package's stand-alone CLI bundle and a scheduled
-workflow into the data root, so the job fetches from the data repository alone:
-no checkout of this package, no token, no npm install in CI. ci refreshes the
-bundle after upgrading the plugin.
-
-The reader's fast local refresh runs the same fetcher and writes to the
-gitignored .local/ cache instead of data/.
+There is no server-side job: the reader and the CLI fetch from wherever they
+run, and the git remote is wherever that checkout pushes. The reader's fast
+local refresh runs the same fetcher and writes to the gitignored .local/ cache
+instead of data/.
 `
 
 function message(err: unknown): string {
@@ -138,16 +134,8 @@ function commandInit(flags: Flags, positional: string[]): number {
   }
   console.log(`created ${target}`)
   console.log(`  ${starterFiles().join('  ')}`)
-  console.log('commit .gitfeed/ and .github/workflows/fetch.yml to arm the scheduled fetch job')
+  console.log('git init, add a remote, and commit when you want the data backed up')
   console.log("add a feed with `gitfeed import-opml <file>` or the reader's Add feed box")
-  return 0
-}
-
-function commandCi(flags: Flags, positional: string[]): number {
-  const target = dataRoot(flags, positional[1])
-  const result = installCi(target)
-  console.log(`wrote ${result.files.join('  ')} in ${result.root}`)
-  console.log('commit both files; the workflow runs twice an hour and commits data/')
   return 0
 }
 
@@ -181,7 +169,6 @@ export async function main(argv: string[]): Promise<number> {
     if (command === 'fetch') return await commandFetch(flags)
     if (command === 'import-opml') return await commandImport(flags, positional)
     if (command === 'init') return commandInit(flags, positional)
-    if (command === 'ci') return commandCi(flags, positional)
     console.error(`gitfeed: unknown command ${JSON.stringify(command)}`)
     console.error(USAGE)
     return 2

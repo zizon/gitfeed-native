@@ -62,19 +62,6 @@ run(esbuild, [
   "--log-level=warning"
 ]);
 
-const cliBundle = path.join(ROOT, "lib", "gitfeed.mjs");
-const version = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")).version;
-run(esbuild, [
-  "src/cli-entry.ts",
-  "--bundle",
-  "--format=esm",
-  "--platform=node",
-  "--target=node20",
-  "--outfile=" + cliBundle,
-  "--banner:js=#!/usr/bin/env node\n// gitfeed CLI " + version + " (gitfeed-native) — regenerate with `gitfeed ci`.\n",
-  "--log-level=warning"
-]);
-
 const code = readFileSync(bundle, "utf8");
 const wrapped = `window.__ModuleLoader__.load({
   id: '${BUNDLE_ID}',
@@ -90,4 +77,4 @@ ${code}
 `;
 writeFileSync(path.join(ROOT, "lib", "client.js"), wrapped);
 rmSync(bundle, { force: true });
-console.log("built lib/index.js, lib/client.js, and lib/gitfeed.mjs");
+console.log("built lib/index.js and lib/client.js");

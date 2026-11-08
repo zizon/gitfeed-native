@@ -7,9 +7,9 @@ job runner for feed refresh and read-state sync, and one compact
 
 The package is **code only**. The data it reads lives in a separate repository,
 so installing, updating, and sharing the plugin never touches subscriptions,
-items, or read state. The one thing it writes into the data repository is the
-CI job: `gitfeed ci` drops a stand-alone bundle of this CLI beside the data, so
-a scheduled fetch needs neither the code checkout nor a token.
+items, or read state — it writes nothing into that repository and asks for no
+token. Fetching happens where the reader runs, on the Host's own job runner;
+there is no server-side job to arm.
 
 ## Two repositories, one reader
 
@@ -133,10 +133,9 @@ The plugin reads and writes one directory — the data root — resolved as:
 2. `$GITFEED_REPO`,
 3. `~/gitfeed`.
 
-That directory holds `feeds.json`, `config.json`, `data/`, the gitignored
-`.local/` refresh cache, and — once `gitfeed ci` ran — `.gitfeed/gitfeed.mjs`
-with the generated `.github/workflows/fetch.yml`. It is a clone of the data
-repository (or any checkout of it). When it is missing or empty, the first
+That directory holds `feeds.json`, `config.json`, `data/`, and the gitignored
+`.local/` refresh cache. It is a clone of the data repository (or any checkout
+of it). When it is missing or empty, the first
 activation writes a starter version so the reader mounts with an empty inbox
 instead of an error:
 
@@ -148,8 +147,6 @@ data/read.ndjson       (empty)
 data/starred.ndjson    (empty)
 .gitattributes         union-merge rules for read/starred/item lines
 .gitignore             .local/ and friends
-.gitfeed/gitfeed.mjs   stand-alone CLI bundle the CI job runs
-.github/workflows/fetch.yml  scheduled fetch job
 ```
 
 ### A local copy vs a checkout
@@ -257,24 +254,12 @@ Agent turn in a Session, so using it would spend a model call per refresh.
 The full contract and the primitive-by-primitive rationale are in
 [`docs/jobs.md`](docs/jobs.md).
 
-### GitHub Actions in the data repository
+### No server-side job
 
-`gitfeed init` writes the job into a new data root, and `gitfeed ci` writes it
-into an existing one:
-
-- `.gitfeed/gitfeed.mjs` — this package's CLI bundled into one Node script;
-- `.github/workflows/fetch.yml` — a job that runs it on `1,31 * * * *` and
-  commits `data/` with the repository's own `GITHUB_TOKEN`.
-
-The job installs nothing and checks out nothing but the data repository, so the
-code repository can stay private and no secret is needed. It runs
-`node .gitfeed/gitfeed.mjs fetch`, then commits only `data/`, rebasing over a
-read-state push from a machine. Commit both generated files when `gitfeed ci`
-writes them; the schedule starts once the workflow is on the default branch
-(GitHub also disables scheduled workflows in forks until enabled).
-
-Run `gitfeed ci` again after upgrading the plugin so the committed bundle
-matches the installed one.
+Fetches run inside the Host, so there is nothing to deploy, no workflow to keep
+in sync, and no token to hand to CI. The job runner refetches the feeds that are
+due and the sync job pushes the result with whatever git credentials the
+checkout already uses.
 
 ### CLI
 
@@ -288,8 +273,7 @@ gitfeed fetch --dry-run
 gitfeed fetch --refresh          # ignore cached ETags; re-read every feed
 gitfeed import-opml ~/Downloads/feeds.opml
 gitfeed import-opml --replace ~/Downloads/feeds.opml
-gitfeed init ~/gitfeed           # write the starter data root, with its CI job
-gitfeed ci ~/gitfeed             # write/refresh the data repo's fetch job
+gitfeed init ~/gitfeed           # write the starter data root
 gitfeed --help
 ```
 
@@ -301,19 +285,18 @@ node bin/gitfeed.mjs fetch --root ~/gitfeed
 
 ### Cron
 
-If the checkout lives on a machine that is always on, cron can keep the
-committed `data/` tree current without the reader open — it runs the same
-fetcher the generated workflow runs:
+The reader refreshes on its own while the Host runs. A machine that is always on
+can additionally keep the committed `data/` tree current without the reader
+open, by running the same fetcher from the installed CLI:
 
 ```bash
 */30 * * * * cd $HOME/gitfeed \
-  && node .gitfeed/gitfeed.mjs fetch \
+  && git pull --rebase --autostash -q \
+  && node $HOME/gitfeed-native/bin/gitfeed.mjs fetch --root . \
   && git add data \
   && git commit -qm "feed: $(date -u +%FT%TZ)" \
   && git push || true
 ```
-
-The generated workflow is the alternative when no machine stays on.
 
 ## Reading UI
 
@@ -323,8 +306,9 @@ not carry its own theme setting.
 - **Filters**: Unread / All / Starred.
 - **Search** over title, summary, and feed title.
 - **Feeds**: folders from the OPML import, collapsible; unread counts; error
-  marks; add by feed URL or site URL (with discovery); unsubscribe removes the
-  feed's items from both stores.
+  marks; add by feed URL or site URL (with discovery). Unsubscribe from a feed
+  row's mark, or from the rail's ⋯ menu for the feed you are reading; it removes
+  the subscription and that feed's items from both stores.
 - **List**: one line per item, grouped by folder or source on request, with a
   `Mark {n} read` button on each group whose header sticks to the top while
   its group is in view. Rows are virtualized at fixed heights.
@@ -517,8 +501,7 @@ data/starred.ndjson merge=union
 data/items/*.ndjson merge=union
 ```
 
-The scheduled job never touches `read.ndjson`; the reader never touches the item
-shards.
+Fetches only append item shards; the reader only appends read/star state.
 
 ## Layout
 
@@ -611,9 +594,9 @@ produced.
 - **Only what the feed gives you.** Some feeds publish a teaser; "Open
   original" is one click away.
 - **Not offline.** Images are hotlinked from the origin.
-- **Fetching needs a fetcher somewhere.** The reader refreshes while a panel is
-  open, cron covers a machine that is always on, and the data repository's
-  generated workflow covers the rest. If none is running, items wait.
+- **Fetching needs a fetcher somewhere.** The Host does it while it runs, and a
+  cron entry on an always-on machine covers the rest. If nothing is running,
+  items wait.
 - **Loopback only.** The API is served by the Harness web server and refuses
   cross-origin requests; it is not designed to be exposed publicly.
 - **The right Sidebar needs a session.** The main-panel page works without one.

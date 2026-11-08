@@ -574,6 +574,8 @@ export const CSS = `
   white-space: nowrap;
 }
 .gf-menu-sep { height: 0.5px; margin: 4px 8px; background: var(--dsw-alias-border-l2); }
+.gf-menu-confirm-row { display: flex; gap: 6px; padding: 2px 4px 4px; }
+.gf-menu-confirm-row .gf-menubtn { width: auto; flex: 1; justify-content: center; }
 
 .gf-tab-title { display: inline-flex; align-items: center; gap: 6px; }
 
