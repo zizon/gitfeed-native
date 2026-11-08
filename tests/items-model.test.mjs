@@ -71,6 +71,27 @@ ok(freshState.itemsVersion !== full.itemsVersion, 'a new row moves the item mode
 ok(freshState.items.some((item) => item.id === 'zz-later'), 'the new row is in the model')
 ok(freshState.items[0].id === 'zz-later', 'the newest row leads the list', freshState.items[0].date)
 
+// A repair lands in the cache while the committed copy came first, so the two
+// stores hold one id twice. The model has to carry the longer body or the
+// repair never reaches the reader.
+const repairedId = full.items[1].id
+appendItem(`${root}/.local/items`, {
+  id: repairedId,
+  feed: 'feed-a',
+  title: 'repaired',
+  link: 'https://example.com/repaired',
+  date: full.items[1].date,
+  author: '',
+  summary: `<p>${'the longer body '.repeat(50)}</p>`,
+})
+const merged = await service.getState(null, null)
+const mergedRow = merged.items.find((item) => item.id === repairedId)
+ok(
+  mergedRow !== undefined && mergedRow.summary.length > 400,
+  'a repaired copy in the cache wins over the committed one',
+  mergedRow && mergedRow.summary.length,
+)
+
 const listed = await service.listForTool({ limit: 3 })
 ok(listed.items.length === 3, 'the agent tool still lists rows')
 

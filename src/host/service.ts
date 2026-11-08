@@ -191,13 +191,22 @@ export function createGitfeed(options: GitfeedOptions) {
     if (itemsCache.version === version && itemsCache.items) return { version: version, items: itemsCache.items }
 
     const items: Item[] = []
-    const seenItems = new Set<string>()
+    /** id -> index in `items`, so a later copy can replace an earlier one. */
+    const at = new Map<string, number>()
     for (const file of shards) {
       const rows = await readNdjson<Item | null>(file)
       for (const row of rows) {
-        if (!row || !row.id || !row.date || seenItems.has(row.id)) continue
-        seenItems.add(row.id)
-        items.push(row)
+        if (!row || !row.id || !row.date) continue
+        const index = at.get(row.id)
+        if (index === undefined) {
+          at.set(row.id, items.length)
+          items.push(row)
+          continue
+        }
+        // Both stores can hold the same id: a repair lengthens the copy in the
+        // cache while the committed one came first, and a repair only ever
+        // grows a summary, so the longer copy is the one that was repaired.
+        if ((row.summary || '').length > (items[index].summary || '').length) items[index] = row
       }
     }
     items.sort(compareItems)

@@ -2,7 +2,7 @@
 // configured, and repaired in place once a feed re-serves a longer copy than
 // the archive holds (the migration path after raising or lifting the cap).
 
-import { readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { lib, ok, finish } from './harness.mjs'
 import { appendItem, makeDataRoot, removeRoot } from './fixtures.mjs'
@@ -104,6 +104,29 @@ function root(extra = {}) {
   const second = await runFetch({ root: dir })
   ok(second.repaired === 0, 'a second pass has nothing left to repair', second.repaired)
   ok(readRows(file).length === 1, 'repairing rewrites rather than appends', readRows(file).length)
+  removeRoot(dir)
+}
+
+// 4. A row the committed archive already holds is not new again.
+// The refresh writes the cache, but the reader merges `data/` first: a dedupe
+// that only knew the cache treated the whole committed archive as missing and
+// re-appended it to `.local/items` on every run.
+{
+  const dir = root()
+  stubFetch(rss('<p>plain body</p>'))
+  const first = await runFetch({ root: dir, dataDir: '.local' })
+  ok(first.fresh === 1, 'a first refresh lands its row in the cache', first.summary)
+  const month = new Date().toISOString().slice(0, 7)
+  const cached = path.join(dir, '.local', 'items', `${month}.ndjson`)
+  const row = readRows(cached)[0]
+  // Promote that row into the committed archive, the way a CLI run would.
+  mkdirSync(path.join(dir, 'data', 'items'), { recursive: true })
+  writeFileSync(path.join(dir, 'data', 'items', `${month}.ndjson`), `${JSON.stringify(row)}\n`)
+  rmSync(cached)
+
+  const second = await runFetch({ root: dir, dataDir: '.local' })
+  ok(second.fresh === 0, 'a row the committed archive holds is not new again', second.summary)
+  ok(!existsSync(cached), 'the cache keeps no second copy of it')
   removeRoot(dir)
 }
 

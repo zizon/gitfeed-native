@@ -300,12 +300,21 @@ export async function runFetch(options: FetchOptions): Promise<FetchResult> {
   }
 
   // id -> archived summary length, so a feed that re-serves a longer body than
-  // the archive holds can repair a copy an older, smaller cap cut short.
+  // the archive holds can repair a copy an older, smaller cap cut short. A run
+  // that writes the cache still counts the committed archive as archived:
+  // otherwise every row the reader already holds from `data/` is fetched again
+  // as new, and the cache fills with a second copy of the whole library.
   const known = new Map<string, number>()
-  for (const file of await listShards(itemsDir)) {
-    const rows = await readNdjson<{ id: string; summary?: string } | null>(file)
-    for (const row of rows) {
-      if (row && row.id) known.set(row.id, typeof row.summary === 'string' ? row.summary.length : 0)
+  const archivedDirs = itemsDir === paths.items ? [itemsDir] : [paths.items, itemsDir]
+  for (const dir of archivedDirs) {
+    for (const file of await listShards(dir)) {
+      const rows = await readNdjson<{ id: string; summary?: string } | null>(file)
+      for (const row of rows) {
+        if (!row || !row.id) continue
+        const length = typeof row.summary === 'string' ? row.summary.length : 0
+        const previous = known.get(row.id)
+        if (previous === undefined || length > previous) known.set(row.id, length)
+      }
     }
   }
 
