@@ -4,13 +4,21 @@ import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 import type { Feed, GitInfo, GroupBy, Item, ReaderPrefs, ScheduleJobInfo } from '../shared/types.js'
 import { PREFIX } from './constants.js'
 import type { Translate } from './locales.js'
+import {
+  feedFolder,
+  feedTitle,
+  groupKey,
+  haystackOf,
+  listOf,
+  markCountsOf,
+} from './derive.js'
+import type { ReaderView } from './derive.js'
 import type { PrefsStore } from './prefs.js'
 import type { ClientState, Controller, Filter, MarkCounts, ReaderSource } from './types.js'
 import {
   clamp,
   digestText,
   messageOf,
-  plainFromHtml,
 } from './util.js'
 
 export const plainCache = new Map<string, string>()
@@ -157,6 +165,21 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     if (state.toast) set({ toast: null })
   }
 
+  /** The list's inputs, gathered from the snapshot the reader publishes. */
+  function view(): ReaderView {
+    return {
+      items: state.items,
+      read: state.read,
+      starred: state.starred,
+      feeds: state.feedMap,
+      filter: state.filter,
+      query: state.query,
+      feedId: state.feedId,
+      stickyRead: stickyRead,
+      uncategorized: t('feed.uncategorized'),
+    }
+  }
+
   function getList(): Item[] {
     // The epoch covers every rebuild the rows can see: a new item model, or a
     // changed read/star set. The state version is not part of the key, because
@@ -164,27 +187,16 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     // those would hand the list a fresh array on every quiet refresh.
     const key = [state.filter, state.query, state.feedId || '', state.listEpoch].join('\u0000')
     if (listCache.key !== key) {
-      listCache = { key: key, items: filterItems() }
+      listCache = { key: key, items: listOf(view(), searchHay) }
     }
     return listCache.items
-  }
-
-  function filterItems(): Item[] {
-    const query = state.query.trim().toLowerCase()
-    return state.items.filter(function (item) {
-      if (state.filter === 'unread' && state.read.has(item.id) && !stickyRead.has(item.id)) return false
-      if (state.filter === 'starred' && !state.starred.has(item.id)) return false
-      if (state.feedId && item.feed !== state.feedId) return false
-      if (query && searchHay(item).indexOf(query) === -1) return false
-      return true
-    })
   }
 
   function searchHay(item: Item): string {
     const key = `${item.id}:${item.summary ? item.summary.length : 0}`
     let text = plainCache.get(key)
     if (text === undefined) {
-      text = (`${item.title} ${plainFromHtml(item.summary)} ${feedTitleOf(item.feed)}`).toLowerCase()
+      text = haystackOf(item, feedTitle(state.feedMap, item.feed))
       if (plainCache.size > 4000) plainCache.clear()
       plainCache.set(key, text)
     }
@@ -203,18 +215,16 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
   }
 
   function feedTitleOf(id: string): string {
-    const feed = state.feedMap.get(id)
-    return feed ? feed.title : id
+    return feedTitle(state.feedMap, id)
   }
 
   function feedFolderOf(id: string): string {
-    const feed = state.feedMap.get(id)
-    return (feed && feed.folder) || t('feed.uncategorized')
+    return feedFolder(state.feedMap, id, t('feed.uncategorized'))
   }
 
   function groupKeyOf(item: Item): string {
     const groupBy = state.groupBy || state.reader.groupBy || 'none'
-    return groupBy === 'feed' ? item.feed : feedFolderOf(item.feed)
+    return groupKey(item, groupBy, state.feedMap, t('feed.uncategorized'))
   }
 
   function request(route: string, payload?: unknown): Promise<ApiResponse> {
@@ -551,19 +561,7 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
    * button that looks like the small one next to it.
    */
   function markCounts(): MarkCounts {
-    let results = 0
-    for (const item of getList()) if (!state.read.has(item.id)) results += 1
-    const folder = state.feedId ? feedFolderOf(state.feedId) : null
-    let source = 0
-    let folderCount = 0
-    let all = 0
-    for (const item of state.items) {
-      if (state.read.has(item.id)) continue
-      all += 1
-      if (state.feedId && item.feed === state.feedId) source += 1
-      if (folder && feedFolderOf(item.feed) === folder) folderCount += 1
-    }
-    return { results: results, source: source, folder: folderCount, all: all, folderName: folder }
+    return markCountsOf(view(), getList())
   }
 
   /** Mark every unread item in the reader, whatever the scope on screen is. */
