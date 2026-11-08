@@ -156,7 +156,7 @@ export function GitStatus({ state, t }: { state: ClientState; t: Translate }) {
       key: 'auto',
       className: fetchJob.last && !fetchJob.last.ok ? 'gf-warn' : undefined,
       title: detail.join(' · '),
-    }, `↻ ${Math.max(1, Math.round(fetchJob.intervalMs / 60000))}m`))
+    }, tf(t, 'status.autoEvery', { n: Math.max(1, Math.round(fetchJob.intervalMs / 60000)) })))
   }
   if (fetchJob && fetchJob.running) nodes.push(h('span', { key: 'running', className: 'gf-muted' }, t('status.running')))
   if (syncJob && syncJob.enabled) {

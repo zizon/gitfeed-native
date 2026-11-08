@@ -48,27 +48,24 @@ digest of the summary, so a list can be skimmed and skipped without opening
 every article. Display prefs turn the digest off (rows then use the shorter
 two-line height); the choice is stored per browser.
 
-Marking read follows the viewport. A bar floats at the bottom of the list and
-its single target re-labels itself as the reader scrolls, always from the
-strongest scope that is actually in effect: an active search wins, then a
-selected source (`Mark Hacker News read`), then the group under the top edge
-when grouping is on (`Mark Fresh read`), and otherwise the view-wide
-`Mark all read`. A source therefore never widens to its folder, and with
-neither grouping nor a source the label stays put instead of flipping with
-every row. One click runs that scope, and the toast that follows carries
-**Undo**, which takes the mark back in one more click. The bar's ▾ lists every scope with its count for an explicit choice;
-there the library-wide entry sits behind a divider and needs a second,
-differently placed click. No key marks in bulk. The Feeds list carries a
-visible ✓ on every source with unread items and on every folder header, and
-each list group header offers `Mark {n} read`.
+Marking read lives at the scope it clears, once. A bar floats at the bottom of
+the list and names the view it would clear: an active search (`Mark results
+read`), the selected source (`Mark Hacker News read`), or the whole view
+(`Mark all read`). Its ▾ appears only when a second scope exists that the view
+cannot reach — every unread item in the library — and that entry needs a
+second, differently placed click. The toast that follows carries **Undo**,
+which takes the mark back in one click. The Feeds list carries a visible ✓ on
+every source with unread items and on every folder header, so a single source
+or folder is marked from its own row. A list group header names its section and
+its size and nothing else: the same scope already has a control where it is
+managed. No key marks in bulk.
 
 Background refresh: the rail's second bar ends with the age of the last run
-(`⟳ 2m`; it pulses while a run is in flight and the Fetch button spins then).
+(`2m`; it shows `…` while a run is in flight and the Fetch button spins then).
 The ⋯ menu's **Refresh** block shows the interval and the last result
 (`0 new · 35 failed`), and its **Sync** block shows the auto-sync interval,
-the next run, and the last result. The main page's status line carries
-`↻ 5m` for refresh and `⇄ 10m` for sync, both with the same detail in their
-tooltips.
+the next run, and the last result. The main page's status line carries the
+refresh interval beside the branch, with the same detail in its tooltip.
 
 ## Where it lives in the Harness UI
 
@@ -311,15 +308,13 @@ not carry its own theme setting.
 - **Filters**: Unread / All / Starred.
 - **Search** over title, summary, and feed title.
 - **Feeds**: folders from the OPML import, collapsible; unread counts; error
-  marks; add by feed URL or site URL (with discovery). Every feed row carries
-  its actions in view — mark the source read, and unsubscribe (colored
-  destructive on hover, confirmed on click); the rail's ⋯ menu repeats the
-  unsubscribe for the feed being read. Either removes the subscription and that
-  feed's items from both stores.
+  marks; one "Add feed" row that opens the form. Every feed row carries its
+  actions in view — mark the source read, and unsubscribe (colored destructive
+  on hover, confirmed on click), which removes the subscription and that feed's
+  items from both stores. That row is the only unsubscribe entry.
 - **List**: one line per item, grouped by folder or source on request, with a
-  `Mark {n} read` button on each group whose header sticks to the top while
-  its group is in view. A group that is a source also carries `Unsubscribe`,
-  which asks before removing that feed and its items. Rows are virtualized at fixed heights.
+  sticky header that names each section and its size. Marking and unsubscribing
+  are not repeated there — the floating bar and the feed rows own them. Rows are virtualized at fixed heights.
   A row that is marked read stays in the Unread list until the scope changes
   (filter, search, or source), so nothing shifts under the pointer while
   reading; a feed or folder that was on screen stays in the Feeds list for the

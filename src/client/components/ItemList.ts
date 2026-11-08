@@ -73,10 +73,6 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
   const [markOpen, setMarkOpen] = useState(false)
   /** Only the whole-library entry needs a second, differently placed click. */
   const [markArmed, setMarkArmed] = useState(false)
-  /** The feed whose section header is asking before unsubscribing. */
-  const [pendingUnsub, setPendingUnsub] = useState<string | null>(null)
-  /** Where the viewport sits: at the top, or inside a row/section. */
-  const [anchor, setAnchor] = useState({ atTop: true, index: 0 })
   function closeMark() {
     setMarkOpen(false)
     setMarkArmed(false)
@@ -182,9 +178,6 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
       return current.start === start && current.end === end ? current : { start: start, end: end }
     })
     const atTop = top <= 12
-    setAnchor(function (current) {
-      return current.atTop === atTop && current.index === index ? current : { atTop: atTop, index: index }
-    })
     // At the very top new rows should simply appear; anywhere else the entry
     // under the viewport edge is the landmark that must not move.
     const anchorIndex = Math.min(entries.length - 1, lowerBound(offsets, top))
@@ -284,59 +277,12 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
 
   const listRows = slice.map(function (entry) {
     if (entry.kind === 'group') {
-      const groupUnread = entry.group.items.filter(function (item) { return !state.read.has(item.id) }).length
-      // A section grouped by source is the source's own row, so it carries the
-      // source's actions too: mark the section read, and unsubscribe from it.
-      const feedId = groupBy === 'feed' ? entry.group.key : ''
-      const confirming = feedId !== '' && pendingUnsub === feedId
-      return h('div', { key: entry.key, className: `gf-group${confirming ? ' confirming' : ''}` },
-        // The count lives on the button that acts on it ("Mark 29 read"); a
-        // separate badge would repeat the same number a few pixels away.
-        h('span', { className: 'gf-group-name' }, confirming ? t('confirm.unsubscribe') : entry.group.label),
-        h('div', { className: 'gf-group-actions' },
-          confirming
-            ? [
-              h(Button, {
-                key: 'cancel',
-                variant: 'ghost',
-                size: 'sm',
-                className: 'gf-group-read',
-                onClick: function () { setPendingUnsub(null) },
-              }, t('action.cancel')),
-              h(Button, {
-                key: 'remove',
-                variant: 'ghost',
-                size: 'sm',
-                className: 'gf-group-read gf-danger',
-                disabled: state.busy.remove,
-                title: t('confirm.unsubscribeHint'),
-                onClick: function () {
-                  setPendingUnsub(null)
-                  void controller.removeFeed(feedId)
-                },
-              }, t('action.remove')),
-            ]
-            : [
-              feedId
-                ? h(Button, {
-                  key: 'unsub',
-                  variant: 'ghost',
-                  size: 'sm',
-                  className: 'gf-group-unsub',
-                  title: t('confirm.unsubscribeHint'),
-                  onClick: function () { setPendingUnsub(feedId) },
-                }, t('action.remove'))
-                : null,
-              h(Button, {
-                key: 'mark',
-                variant: 'ghost',
-                size: 'sm',
-                className: 'gf-group-read',
-                disabled: !groupUnread,
-                title: t('action.markGroup'),
-                onClick: function () { controller.markGroup(entry.group.key) },
-              }, groupUnread ? tf(t, 'action.markGroupCount', { n: groupUnread }) : t('action.markGroup')),
-            ]))
+      // A section header groups rows; it is not another place to act on them.
+      // The same scope already has a control where it is managed — the feed's
+      // own row in the feed list — and the floating button covers the view.
+      return h('div', { key: entry.key, className: 'gf-group' },
+        h('span', { className: 'gf-group-name' }, entry.group.label),
+        h('span', { className: 'gf-group-count' }, String(entry.group.items.length)))
     }
     const item = entry.item
     const unread = !state.read.has(item.id)
@@ -383,56 +329,23 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
         feed: state.feedId,
       }
     }
-    if (!anchor.atTop && groupBy !== 'none') {
-      for (let i = Math.min(anchor.index, entries.length - 1); i >= 0; i--) {
-        const found = entries[i]
-        if (found.kind !== 'group') continue
-        const unread = found.group.items.filter(function (item) { return !state.read.has(item.id) }).length
-        const name = groupBy === 'feed' ? controller.feedTitle(found.group.key) : found.group.key
-        return { kind: 'group', label: tf(t, 'action.markNamed', { name: name }), n: unread, group: found.group.key }
-      }
-    }
     return { kind: 'all', label: t('action.markAll'), n: counts.all }
-  }, [count, anchor, groupBy, state.query, state.feedId, state.read, counts, entries, controller, t])
+  }, [count, state.query, state.feedId, counts, controller, t])
 
   function runScope() {
     if (!scope || !scope.n) return
     if (scope.kind === 'all') controller.markEverything()
     else if (scope.kind === 'source') controller.markFeed(scope.feed as string)
-    else if (scope.kind === 'group' && scope.group) controller.markGroup(scope.group)
     else controller.markAll()
   }
 
-  // Every scope names its own count, so the biggest action is never a
-  // neighbour that looks like the smallest one.
+  // The button marks the view; the menu holds the one scope the view does not
+  // reach — every unread item in the library — and only when that differs.
   const markRows: ReactNode[] = []
-  if (counts.results > 0 || count > 0) {
-    markRows.push(h(MenuItemButton, {
-      key: 'results',
-      disabled: !counts.results,
-      onSelect: function () { closeMark(); controller.markAll() },
-    }, scopeLabel(t('action.markResults'), counts.results)))
-  }
-  if (state.feedId && counts.source > 0) {
-    markRows.push(h(MenuItemButton, {
-      key: 'source',
-      onSelect: function () { closeMark(); controller.markFeed(state.feedId as string) },
-    }, scopeLabel(t('action.markSource'), counts.source)))
-  }
-  if (state.feedId && counts.folderName && counts.folder > counts.source) {
-    markRows.push(h(MenuItemButton, {
-      key: 'folder',
-      onSelect: function () {
-        closeMark()
-        if (counts.folderName) controller.markFolder(counts.folderName)
-      },
-    }, scopeLabel(t('action.markFolder'), counts.folder)))
-  }
-  if (counts.all > 0 && counts.all !== counts.results) {
+  if (counts.all > 0 && counts.all !== (scope ? scope.n : 0)) {
     markRows.push(h(MenuItemButton, {
       key: 'everything',
       danger: true,
-      separatorBefore: true,
       onSelect: function () {
         if (!markArmed) {
           setMarkArmed(true)
@@ -458,25 +371,27 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
     },
     h('span', { className: 'gf-markfloat-label' }, scope ? scope.label : t('action.markMenu')),
     h('span', { className: 'gf-markfloat-count' }, scope ? String(scope.n) : '')),
-    h(Menu, {
-      open: markOpen,
-      side: 'top',
-      align: 'end',
-      onClose: closeMark,
-      className: 'gf-markfloat-more',
-      anchor: h(IconButton, {
-        icon: h(IconChevronDownOutlineRegular, { size: 14 }),
-        label: t('action.markPick'),
-        small: true,
-        hasPopup: 'menu',
-        expanded: markOpen,
-        onClick: function () {
-          if (markOpen) closeMark()
-          else { setMarkOpen(true); setMarkArmed(false) }
-        },
-      }),
-      children: markRows,
-    }))
+    markRows.length > 0
+      ? h(Menu, {
+        open: markOpen,
+        side: 'top',
+        align: 'end',
+        onClose: closeMark,
+        className: 'gf-markfloat-more',
+        anchor: h(IconButton, {
+          icon: h(IconChevronDownOutlineRegular, { size: 14 }),
+          label: t('action.markPick'),
+          small: true,
+          hasPopup: 'menu',
+          expanded: markOpen,
+          onClick: function () {
+            if (markOpen) closeMark()
+            else { setMarkOpen(true); setMarkArmed(false) }
+          },
+        }),
+        children: markRows,
+      })
+      : null)
 
   if (state.status === 'loading' && !state.items.length) {
     return h('div', { className: paneClass }, header,

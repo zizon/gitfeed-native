@@ -40,7 +40,6 @@ export const CSS = `
 }
 .gf-brand { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .gf-brand-name { font-size: 20px; line-height: 28px; font-weight: 500; }
-.gf-brand-count { font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary); white-space: nowrap; }
 .gf-spacer { flex: 1 1 auto; }
 .gf-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .gf-search { width: 220px; min-width: 120px; flex: none; }
@@ -264,12 +263,6 @@ export const CSS = `
   font-weight: 500;
 }
 .gf-group-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.gf-group-actions { margin-left: auto; display: flex; align-items: center; gap: 4px; }
-.gf-group-actions .gf-group-read { margin-left: 0; }
-.gf-group-unsub { color: var(--dsw-alias-label-tertiary); }
-@media (hover: hover) {
-  .gf-group-unsub:hover { color: var(--dsw-alias-state-error-primary); }
-}
 
 .gf-row {
   height: 66px;
@@ -579,8 +572,6 @@ export const CSS = `
   white-space: nowrap;
 }
 .gf-menu-sep { height: 0.5px; margin: 4px 8px; background: var(--dsw-alias-border-l2); }
-.gf-menu-confirm-row { display: flex; gap: 6px; padding: 2px 4px 4px; }
-.gf-menu-confirm-row .gf-menubtn { width: auto; flex: 1; justify-content: center; }
 
 .gf-tab-title { display: inline-flex; align-items: center; gap: 6px; }
 

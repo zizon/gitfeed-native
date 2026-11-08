@@ -109,13 +109,11 @@ export interface MarkCounts {
 
 /** One marking target the floating bar can switch to as the reader scrolls. */
 export interface MarkScope {
-  kind: 'all' | 'results' | 'source' | 'group'
+  kind: 'all' | 'results' | 'source'
   label: string
   n: number
-  /** Source id for the source and feed scopes. */
+  /** Source id for the source scope. */
   feed?: string
-  /** Group key for the group scope. */
-  group?: string
 }
 
 export interface SlotProps {

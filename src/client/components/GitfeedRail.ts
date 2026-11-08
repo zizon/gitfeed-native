@@ -30,7 +30,6 @@ function RailMenu({ state, controller, t, onClose }: {
   onClose: () => void
 }) {
   const ref = useRef<HTMLDivElement>(null)
-  const [confirmUnsub, setConfirmUnsub] = useState(false)
   useOutsideClose(ref, true, onClose)
   function actionRow(label: string, disabled: boolean, run: () => void) {
     return h(Button, {
@@ -41,9 +40,6 @@ function RailMenu({ state, controller, t, onClose }: {
       onClick: function () { onClose(); run() },
     }, label)
   }
-  // The rail's feed list lives in a popover behind the feed trigger, so a row's
-  // hover mark is easy to miss. The menu names the current feed outright.
-  const currentFeed = state.feedId ? state.feeds.find(function (feed) { return feed.id === state.feedId }) : null
   const fetchJob = jobOf(state, 'fetch')
   const syncJob = jobOf(state, 'git')
   const fetchCadence = fetchJob && fetchJob.enabled
@@ -82,11 +78,6 @@ function RailMenu({ state, controller, t, onClose }: {
     h('div', { className: 'gf-menu-sep' }),
     h('div', { className: 'gf-menu-label' }, t('menu.actions')),
     actionRow(
-      state.busy.fetch ? t('status.running') : t('action.fetch'),
-      state.busy.fetch,
-      function () { void controller.runAction('fetch') },
-    ),
-    actionRow(
       t('action.pull'),
       state.busy.pull || !state.allowGit || !state.git || !state.git.repo,
       function () { void controller.runAction('pull') },
@@ -96,34 +87,6 @@ function RailMenu({ state, controller, t, onClose }: {
       state.busy.sync || !state.allowGit || !state.git || !state.git.repo,
       function () { void controller.runAction('sync') },
     ),
-    currentFeed ? h('div', { className: 'gf-menu-sep' }) : null,
-    currentFeed ? h('div', { className: 'gf-menu-label' }, t('menu.feed')) : null,
-    currentFeed && confirmUnsub
-      ? h('div', { className: 'gf-menu-confirm' },
-        h('div', { className: 'gf-menu-info' }, t('confirm.unsubscribe')),
-        h('div', { className: 'gf-menu-info' }, t('confirm.unsubscribeHint')),
-        h('div', { className: 'gf-menu-confirm-row' },
-          h(Button, {
-            variant: 'ghost',
-            size: 'sm',
-            className: 'gf-menubtn',
-            onClick: function () { setConfirmUnsub(false) },
-          }, t('action.cancel')),
-          h(Button, {
-            variant: 'ghost',
-            size: 'sm',
-            className: 'gf-menubtn gf-danger',
-            disabled: state.busy.remove,
-            onClick: function () { onClose(); void controller.removeFeed(currentFeed.id) },
-          }, t('action.remove'))))
-      : currentFeed
-        ? h(Button, {
-          variant: 'ghost',
-          size: 'sm',
-          className: 'gf-menubtn',
-          onClick: function () { setConfirmUnsub(true) },
-        }, tf(t, 'menu.unsubscribe', { name: currentFeed.title }))
-        : null,
     h('div', { className: 'gf-menu-sep' }),
     h('div', { className: 'gf-menu-label' }, t('menu.refresh')),
     h('div', { className: 'gf-menu-info' },

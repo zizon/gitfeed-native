@@ -54,7 +54,6 @@ export function GitfeedPage({ controller, t }: GitfeedPageProps) {
     }
   }
 
-  const unread = state.items.filter(function (item) { return !state.read.has(item.id) }).length
   // The toolbar emphasises the git action that actually applies right now:
   // pull when the branch is behind, sync when there is something to push,
   // fetch otherwise. The others stay available, just not as the primary.
@@ -75,10 +74,11 @@ export function GitfeedPage({ controller, t }: GitfeedPageProps) {
     } as CSSProperties,
   },
   h('header', { className: 'gf-toolbar' },
+    // The list's own controls already state the figures that matter; the brand
+    // stays a name.
     h('div', { className: 'gf-brand' },
       h(IconRss, { size: 20 }),
-      h('span', { className: 'gf-brand-name' }, t('page.title')),
-      h('span', { className: 'gf-brand-count' }, tf(t, 'unread.count', { n: unread }))),
+      h('span', { className: 'gf-brand-name' }, t('page.title'))),
     h(FilterTabs, { filter: state.filter, controller: controller, t: t }),
     h(SearchBox, { controller: controller, t: t, value: state.query, inputRef: searchRef }),
     h('div', { className: 'gf-spacer' }),

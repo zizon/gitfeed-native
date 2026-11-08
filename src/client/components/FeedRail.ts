@@ -250,15 +250,9 @@ export function FeedRail({ state, controller, t, compact, onPick }: FeedRailProp
     rows.push(h(EmptyState, { key: 'empty', className: 'compact', hint: t('empty.rail') }))
   }
 
+  // One "Add feed" entry: the row in the list, which carries its own label.
   return h('div', { className: `gf-feedrail${compact ? ' compact' : ''}` },
     h('div', { className: 'gf-rail-head' },
-      h('span', { className: 'gf-rail-title' }, t('rail.guideTitle')),
-      h(IconButton, {
-        icon: h(IconPlusOutlineRegular, { size: 14 }),
-        label: t('action.addFeed'),
-        expanded: addOpen,
-        hasPopup: 'dialog',
-        onClick: function () { setAddOpen(!addOpen) },
-      })),
+      h('span', { className: 'gf-rail-title' }, t('rail.guideTitle'))),
     h('div', { className: 'gf-feedlist' }, rows))
 }
