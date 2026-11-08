@@ -54,6 +54,11 @@ export interface ClientState {
 export interface Controller {
   get(): ClientState
   subscribe(listener: () => void): () => void
+  /**
+   * The published snapshot the renderer binds into a `useReader(selector)`
+   * prop; a reader never writes through it.
+   */
+  reader: ReaderSource
   getList(): Item[]
   load(options?: { force?: boolean }): Promise<void>
   mark(ids: string[], value: boolean, keepList?: boolean): void
@@ -114,14 +119,24 @@ export interface MarkScope {
   n: number
 }
 
+/** The selector hook the renderer synthesizes from the registration's hooks. */
+export type ReaderHook = <S>(selector: (state: ClientState) => S) => S
+
+/** The bare snapshot source a registration publishes for that hook. */
+export interface ReaderSource {
+  getSnapshot(): ClientState
+  subscribe(listener: () => void): () => void
+}
+
 export interface SlotProps {
   controller: Controller
   t: Translate
 }
 
-export type GitfeedPageProps = SlotProps
+export type GitfeedPageProps = SlotProps & { useReader: ReaderHook }
 
 export interface GitfeedRailProps extends SlotProps {
+  useReader: ReaderHook
   useTabInfo?: () => { tab?: { visible?: boolean } } | null
 }
 

@@ -82,7 +82,7 @@ export function apply(ctx: ClientContext): void {
       name: 'sidebar.right.pane.tab',
       key: TAB_ID,
       locale: NS,
-      inject: function () { return { controller: controller } },
+      inject: function () { return { controller: controller, hooks: { reader: controller.reader } } },
     }, GitfeedRail)
   })
 
@@ -119,7 +119,7 @@ export function apply(ctx: ClientContext): void {
       name: 'main',
       key: 'gitfeed',
       locale: NS,
-      inject: function () { return { controller: controller } },
+      inject: function () { return { controller: controller, hooks: { reader: controller.reader } } },
     }, GitfeedPage)
   })
 

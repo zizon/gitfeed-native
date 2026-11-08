@@ -10,7 +10,7 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { Chevron } from '../icons.js'
 import { DEFAULT_LIST } from '../constants.js'
-import { useElementWidth, useKeyboard, useMount, useOutsideClose, useReader } from '../hooks.js'
+import { useElementWidth, useKeyboard, useMount, useOutsideClose } from '../hooks.js'
 import { fmtIn, fmtTime } from '../util.js'
 import type { ClientState, GitfeedRailProps } from '../types.js'
 import type { Controller } from '../types.js'
@@ -113,8 +113,11 @@ function RailMenu({ state, controller, t, onClose }: {
   )
 }
 
-export function GitfeedRail({ controller, t, useTabInfo }: GitfeedRailProps) {
-  const state = useReader(controller)
+/** The whole snapshot: the rail's bar, list, and article all read it. */
+const wholeState = function (state: ClientState) { return state }
+
+export function GitfeedRail({ controller, t, useReader, useTabInfo }: GitfeedRailProps) {
+  const state = useReader(wholeState)
   const rootRef = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
   const [feedsOpen, setFeedsOpen] = useState(false)

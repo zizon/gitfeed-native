@@ -11,8 +11,8 @@ import {
   MenuSurface,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { DEFAULT_LIST, DEFAULT_RAIL } from '../constants.js'
-import { useKeyboard, useMount, useOutsideClose, useReader } from '../hooks.js'
-import type { GitfeedPageProps } from '../types.js'
+import { useKeyboard, useMount, useOutsideClose } from '../hooks.js'
+import type { ClientState, GitfeedPageProps } from '../types.js'
 import { clamp } from '../util.js'
 import { IconRss } from '../icons.js'
 import { Article } from './Article.js'
@@ -20,8 +20,11 @@ import { FeedRail } from './FeedRail.js'
 import { ItemList } from './ItemList.js'
 import { DisplayPrefs, ErrorState, FilterTabs, GitStatus, SearchBox, Toasts } from './Shared.js'
 
-export function GitfeedPage({ controller, t }: GitfeedPageProps) {
-  const state = useReader(controller)
+/** The whole snapshot: one list, one article pane, one source list. */
+const wholeState = function (state: ClientState) { return state }
+
+export function GitfeedPage({ controller, t, useReader }: GitfeedPageProps) {
+  const state = useReader(wholeState)
   const rootRef = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
   const [prefsOpen, setPrefsOpen] = useState(false)

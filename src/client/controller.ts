@@ -1,10 +1,11 @@
 /** The reader's single client state machine, shared by every surface. */
 
+import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 import type { Feed, GitInfo, GroupBy, Item, ReaderPrefs, ScheduleJobInfo } from '../shared/types.js'
 import { PREFIX } from './constants.js'
 import type { Translate } from './locales.js'
 import type { PrefsStore } from './prefs.js'
-import type { ClientState, Controller, Filter, MarkCounts } from './types.js'
+import type { ClientState, Controller, Filter, MarkCounts, ReaderSource } from './types.js'
 import {
   clamp,
   digestText,
@@ -92,8 +93,11 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     toast: null,
   }
 
+  const store = createSnapshotStore<ClientState>(state)
+  /** The published snapshot; the renderer binds it, nothing writes through it. */
+  const reader: ReaderSource = store
+
   const digestCache = new Map<string, string>()
-  const listeners = new Set<() => void>()
   let listCache: { key: string | null; items: Item[] } = { key: null, items: [] }
   let loadPromise: Promise<void> | null = null
   let mounted = 0
@@ -115,17 +119,16 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
   let visibilityHandler: (() => void) | null = null
 
   function get(): ClientState {
-    return state
+    return reader.getSnapshot()
   }
 
   function subscribe(listener: () => void): () => void {
-    listeners.add(listener)
-    return function () { listeners.delete(listener) }
+    return reader.subscribe(listener)
   }
 
   function set(patch: Partial<ClientState>): void {
     state = Object.assign({}, state, patch)
-    for (const listener of listeners) listener()
+    store.set(state)
   }
 
   function setBusy(key: string, value: boolean): void {
@@ -711,12 +714,12 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     if (toastTimer) clearTimeout(toastTimer)
     if (flushTimer) clearTimeout(flushTimer)
     if (freshTimer) clearTimeout(freshTimer)
-    listeners.clear()
   }
 
   const api: Controller = {
     get: get,
     subscribe: subscribe,
+    reader: reader,
     getList: getList,
     load: load,
     mark: mark,

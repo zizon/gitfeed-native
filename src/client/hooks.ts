@@ -1,18 +1,12 @@
 /** React hooks and the one-keyboard-owner arbitration for multiple surfaces. */
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from './react.js'
+import { useEffect, useLayoutEffect, useRef, useState } from './react.js'
 import type { RefObject } from './react.js'
-import type { ClientState, Controller } from './types.js'
+import type { Controller } from './types.js'
 
 const keyboardSurfaces = new Set<string>()
 const keyboardOwner: { id: string | null } = { id: null }
 let keyboardSeq = 0
-
-export function useReader(controller: Controller): ClientState {
-  const subscribe = useCallback(function (listener: () => void) { return controller.subscribe(listener) }, [controller])
-  const getSnapshot = useCallback(function () { return controller.get() }, [controller])
-  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
-}
 
 export function useMount(controller: Controller): void {
   useEffect(function () {
