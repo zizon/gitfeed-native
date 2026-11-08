@@ -1,4 +1,11 @@
-/** The reader's single client state machine, shared by every surface. */
+/**
+ * The reader's single client state machine, shared by every surface.
+ *
+ * It holds two halves — the archive and repository facts a load brings in, and
+ * what the reader is looking at — and publishes them as one snapshot. Every
+ * write names the half it moves, so a transport change cannot rewrite the view
+ * by accident.
+ */
 
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 import type { Feed, GitInfo, GroupBy, Item, ReaderPrefs, ScheduleJobInfo } from '../shared/types.js'
@@ -14,7 +21,15 @@ import {
 } from './derive.js'
 import type { ReaderView } from './derive.js'
 import type { PrefsStore } from './prefs.js'
-import type { ClientState, Controller, Filter, MarkCounts, ReaderSource } from './types.js'
+import type {
+  ClientState,
+  Controller,
+  Filter,
+  MarkCounts,
+  ReaderData,
+  ReaderSource,
+  ReaderUi,
+} from './types.js'
 import {
   clamp,
   digestText,
@@ -66,7 +81,7 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
   const savedGroupBy: GroupBy | null = saved.groupBy === 'none' || saved.groupBy === 'folder' || saved.groupBy === 'feed'
     ? saved.groupBy
     : null
-  let state: ClientState = {
+  let data: ReaderData = {
     status: 'idle',
     error: null,
     loadError: null,
@@ -85,6 +100,8 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     version: null,
     repo: '',
     allowGit: true,
+  }
+  let ui: ReaderUi = {
     filter: 'unread',
     query: '',
     feedId: null,
@@ -101,7 +118,7 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     toast: null,
   }
 
-  const store = createSnapshotStore<ClientState>(state)
+  const store = createSnapshotStore<ClientState>(Object.assign({}, data, ui))
   /** The published snapshot; the renderer binds it, nothing writes through it. */
   const reader: ReaderSource = store
 
@@ -134,25 +151,43 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     return reader.subscribe(listener)
   }
 
-  function set(patch: Partial<ClientState>): void {
-    state = Object.assign({}, state, patch)
-    store.set(state)
+  /**
+   * Publish one consistent snapshot. Both halves merge in the same step, so a
+   * change that moves both — a load that also drops the selection — never
+   * renders the intermediate one.
+   * @param dataPatch - archive, marks, or repository facts that moved.
+   * @param uiPatch - viewing state that moved.
+   */
+  function commit(dataPatch: Partial<ReaderData> | null, uiPatch: Partial<ReaderUi> | null): void {
+    if (dataPatch) data = Object.assign({}, data, dataPatch)
+    if (uiPatch) ui = Object.assign({}, ui, uiPatch)
+    store.set(Object.assign({}, data, ui))
+  }
+
+  /** Publish a change the transport made to the archive or the repository. */
+  function setData(patch: Partial<ReaderData>): void {
+    commit(patch, null)
+  }
+
+  /** Publish a change the reader made to what it is looking at. */
+  function setUi(patch: Partial<ReaderUi>): void {
+    commit(null, patch)
   }
 
   function setBusy(key: string, value: boolean): void {
-    const busy = Object.assign({}, state.busy)
+    const busy = Object.assign({}, ui.busy)
     if (value) busy[key] = true
     else Reflect.deleteProperty(busy, key)
-    set({ busy: busy })
+    setUi({ busy: busy })
   }
 
   function toast(text: string, error?: boolean, undo?: boolean): void {
     if (toastTimer) clearTimeout(toastTimer)
-    set({ toast: { text: text, error: !!error, at: Date.now(), undo: !!undo } })
+    setUi({ toast: { text: text, error: !!error, at: Date.now(), undo: !!undo } })
     // An undoable mark stays on screen long enough to be taken back.
     toastTimer = setTimeout(function () {
       toastTimer = null
-      set({ toast: null })
+      setUi({ toast: null })
     }, error || undo ? 8000 : 3500)
   }
 
@@ -162,19 +197,19 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
       clearTimeout(toastTimer)
       toastTimer = null
     }
-    if (state.toast) set({ toast: null })
+    if (ui.toast) setUi({ toast: null })
   }
 
   /** The list's inputs, gathered from the snapshot the reader publishes. */
   function view(): ReaderView {
     return {
-      items: state.items,
-      read: state.read,
-      starred: state.starred,
-      feeds: state.feedMap,
-      filter: state.filter,
-      query: state.query,
-      feedId: state.feedId,
+      items: data.items,
+      read: data.read,
+      starred: data.starred,
+      feeds: data.feedMap,
+      filter: ui.filter,
+      query: ui.query,
+      feedId: ui.feedId,
       stickyRead: stickyRead,
       uncategorized: t('feed.uncategorized'),
     }
@@ -185,7 +220,7 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     // changed read/star set. The state version is not part of the key, because
     // it also moves for git and schedule polling, and rebuilding the rows for
     // those would hand the list a fresh array on every quiet refresh.
-    const key = [state.filter, state.query, state.feedId || '', state.listEpoch].join('\u0000')
+    const key = [ui.filter, ui.query, ui.feedId || '', ui.listEpoch].join('\u0000')
     if (listCache.key !== key) {
       listCache = { key: key, items: listOf(view(), searchHay) }
     }
@@ -196,7 +231,7 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     const key = `${item.id}:${item.summary ? item.summary.length : 0}`
     let text = plainCache.get(key)
     if (text === undefined) {
-      text = haystackOf(item, feedTitle(state.feedMap, item.feed))
+      text = haystackOf(item, feedTitle(data.feedMap, item.feed))
       if (plainCache.size > 4000) plainCache.clear()
       plainCache.set(key, text)
     }
@@ -215,16 +250,16 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
   }
 
   function feedTitleOf(id: string): string {
-    return feedTitle(state.feedMap, id)
+    return feedTitle(data.feedMap, id)
   }
 
   function feedFolderOf(id: string): string {
-    return feedFolder(state.feedMap, id, t('feed.uncategorized'))
+    return feedFolder(data.feedMap, id, t('feed.uncategorized'))
   }
 
   function groupKeyOf(item: Item): string {
-    const groupBy = state.groupBy || state.reader.groupBy || 'none'
-    return groupKey(item, groupBy, state.feedMap, t('feed.uncategorized'))
+    const groupBy = ui.groupBy || data.reader.groupBy || 'none'
+    return groupKey(item, groupBy, data.feedMap, t('feed.uncategorized'))
   }
 
   function request(route: string, payload?: unknown): Promise<ApiResponse> {
@@ -235,14 +270,14 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
       cache: 'no-store',
       credentials: 'same-origin',
     }).then(async function (res) {
-      let data: ApiResponse = {}
+      let body: ApiResponse = {}
       try {
-        data = (await res.json()) as ApiResponse
+        body = (await res.json()) as ApiResponse
       } catch {
-        data = {}
+        body = {}
       }
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
-      return data
+      if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`)
+      return body
     })
   }
 
@@ -251,103 +286,104 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     if (loadPromise) return loadPromise
     const force = options?.force === true
     loadPromise = (async function () {
-      if (!state.loadedOnce) set({ status: 'loading' })
+      if (!data.loadedOnce) setData({ status: 'loading' })
       const params: string[] = []
-      if (!force && state.version) params.push(`version=${encodeURIComponent(state.version)}`)
-      if (state.itemsVersion) params.push(`itemsVersion=${encodeURIComponent(state.itemsVersion)}`)
+      if (!force && data.version) params.push(`version=${encodeURIComponent(data.version)}`)
+      if (data.itemsVersion) params.push(`itemsVersion=${encodeURIComponent(data.itemsVersion)}`)
       const url = `${PREFIX}/state${params.length ? `?${params.join('&')}` : ''}`
       const res = await fetch(url, { cache: 'no-store', credentials: 'same-origin' })
-      let data: StateResponse
+      let payload: StateResponse
       try {
-        data = (await res.json()) as StateResponse
+        payload = (await res.json()) as StateResponse
       } catch {
         throw new Error(`HTTP ${res.status}`)
       }
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
-      if (data.unchanged) {
-        set({
+      if (!res.ok) throw new Error(payload.error || `HTTP ${res.status}`)
+      if (payload.unchanged) {
+        setData({
           status: 'ready',
           error: null,
           loadedOnce: true,
-          git: data.git || state.git,
-          schedule: Array.isArray(data.schedule) ? data.schedule : state.schedule,
-          repo: data.repo || state.repo,
-          allowGit: data.allowGit !== false,
+          git: payload.git || data.git,
+          schedule: Array.isArray(payload.schedule) ? payload.schedule : data.schedule,
+          repo: payload.repo || data.repo,
+          allowGit: payload.allowGit !== false,
         })
         return
       }
-      if (data.error) {
-        set({
+      if (payload.error) {
+        setData({
           status: 'error',
-          error: data.error,
+          error: payload.error,
           loadedOnce: true,
-          version: data.version || null,
-          git: data.git || null,
-          schedule: Array.isArray(data.schedule) ? data.schedule : [],
+          version: payload.version || null,
+          git: payload.git || null,
+          schedule: Array.isArray(payload.schedule) ? payload.schedule : [],
         })
         return
       }
       // Rows travel only with the item model they belong to. A payload without
       // them is usable just when it names the model this reader already holds;
       // anything else means a mid-update race, so ask again from scratch.
-      const replaceItems = Array.isArray(data.items)
-      if (!replaceItems && data.itemsVersion !== state.itemsVersion) {
+      const replaceItems = Array.isArray(payload.items)
+      if (!replaceItems && payload.itemsVersion !== data.itemsVersion) {
         setTimeout(function () { load({ force: true }).catch(function () { }) }, 0)
         return
       }
-      const items = replaceItems ? (data.items as Item[]) : state.items
+      const items = replaceItems ? (payload.items as Item[]) : data.items
       const byId = replaceItems
         ? new Map<string, Item>(items.map(function (item): [string, Item] { return [item.id, item] }))
-        : state.byId
+        : data.byId
       // Rows that landed while the reader was already open: the list fades
       // them in instead of reflowing the page under the pointer.
       const fresh = new Set<string>()
-      if (replaceItems && state.loadedOnce) {
-        for (const item of items) if (!state.byId.has(item.id)) fresh.add(item.id)
+      if (replaceItems && data.loadedOnce) {
+        for (const item of items) if (!data.byId.has(item.id)) fresh.add(item.id)
       }
-      const read = new Set<string>(Array.isArray(data.read) ? data.read : state.read)
-      const starred = new Set<string>(Array.isArray(data.starred) ? data.starred : state.starred)
-      const feeds: Feed[] = Array.isArray(data.feeds) ? data.feeds : state.feeds
+      const read = new Set<string>(Array.isArray(payload.read) ? payload.read : data.read)
+      const starred = new Set<string>(Array.isArray(payload.starred) ? payload.starred : data.starred)
+      const feeds: Feed[] = Array.isArray(payload.feeds) ? payload.feeds : data.feeds
       const feedMap = new Map<string, Feed>(feeds.map(function (feed): [string, Feed] { return [feed.id, feed] }))
       if (replaceItems) plainCache.clear()
-      set({
+      commit({
         status: 'ready',
         error: null,
         loadError: null,
         loadedOnce: true,
         items: items,
         byId: byId,
-        itemsVersion: data.itemsVersion || state.itemsVersion,
+        itemsVersion: payload.itemsVersion || data.itemsVersion,
         fresh: fresh,
         feeds: feeds,
         feedMap: feedMap,
         read: read,
         starred: starred,
-        reader: data.reader || state.reader,
-        git: data.git || null,
-        schedule: Array.isArray(data.schedule) ? data.schedule : [],
-        version: data.version || null,
-        repo: data.repo || state.repo,
-        allowGit: data.allowGit !== false,
-        current: state.current && byId.has(state.current) ? state.current : null,
-        listEpoch: replaceItems || !sameSet(state.read, read) || !sameSet(state.starred, starred)
-          ? state.listEpoch + 1
-          : state.listEpoch,
+        reader: payload.reader || data.reader,
+        git: payload.git || null,
+        schedule: Array.isArray(payload.schedule) ? payload.schedule : [],
+        version: payload.version || null,
+        repo: payload.repo || data.repo,
+        allowGit: payload.allowGit !== false,
+      }, {
+        current: ui.current && byId.has(ui.current) ? ui.current : null,
+        listEpoch: replaceItems || !sameSet(data.read, read) || !sameSet(data.starred, starred)
+          ? ui.listEpoch + 1
+          : ui.listEpoch,
       })
       if (fresh.size) {
         if (freshTimer) clearTimeout(freshTimer)
         freshTimer = setTimeout(function () {
           freshTimer = null
-          if (state.fresh.size) set({ fresh: new Set() })
+          if (data.fresh.size) setData({ fresh: new Set() })
         }, 1600)
       }
     })().catch(function (err: unknown) {
       const text = messageOf(err)
-      if (state.loadedOnce) {
-        set({ loadError: text })
+      if (data.loadedOnce) {
+        setData({ loadError: text })
         toast(t('toast.failed', { error: text }), true)
       } else {
-        set({ status: 'error', error: text, loadError: text, loadedOnce: true })
+        setData({ status: 'error', error: text, loadError: text, loadedOnce: true })
       }
     }).finally(function () {
       loadPromise = null
@@ -367,7 +403,7 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     if (unreadIds.length) jobs.push(request('/mark', { ids: unreadIds, read: false }))
     Promise.all(jobs).then(function (results) {
       const last = results.at(-1)
-      if (last?.version) set({ version: last.version })
+      if (last?.version) setData({ version: last.version })
       load().catch(function () { })
     }).catch(function (err: unknown) {
       toast(t('toast.readFailed', { error: messageOf(err) }), true)
@@ -391,7 +427,7 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     if (!clean.length) return
     const keep =  keepList
     const shown = keep && value ? new Set(getList().map(function (item) { return item.id })) : null
-    const read = new Set(state.read)
+    const read = new Set(data.read)
     for (const id of clean) {
       if (value) read.add(id)
       else read.delete(id)
@@ -409,7 +445,7 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
         stickyRead.delete(id)
       }
     }
-    set({ read: read })
+    setData({ read: read })
     if (!flushTimer) flushTimer = setTimeout(flushMarks, 350)
   }
 
@@ -419,90 +455,90 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
   }
 
   function bumpList() {
-    set({ listEpoch: state.listEpoch + 1 })
+    setUi({ listEpoch: ui.listEpoch + 1 })
   }
 
   function select(id: string | null): void {
     if (!id) {
-      set({ current: null })
+      setUi({ current: null })
       return
     }
-    if (!state.byId.has(id)) return
-    set({ current: id })
-    if (!state.read.has(id)) mark([id], true)
+    if (!data.byId.has(id)) return
+    setUi({ current: id })
+    if (!data.read.has(id)) mark([id], true)
   }
 
   function closeArticle() {
-    set({ current: null })
+    setUi({ current: null })
   }
 
   function selectFeed(id: string | null): void {
-    if ((id || null) !== state.feedId) clearSticky()
-    set({ feedId: id || null })
+    if ((id || null) !== ui.feedId) clearSticky()
+    setUi({ feedId: id || null })
   }
 
   function setFilter(filter: Filter): void {
-    if (filter !== state.filter) clearSticky()
-    set({ filter: filter })
+    if (filter !== ui.filter) clearSticky()
+    setUi({ filter: filter })
   }
 
   function setQuery(query: string): void {
     const next = query || ''
-    if (next !== state.query) clearSticky()
-    set({ query: next })
+    if (next !== ui.query) clearSticky()
+    setUi({ query: next })
   }
 
   function move(offset: number): void {
     const list = getList()
     if (!list.length) return
-    let index = list.findIndex(function (item) { return item.id === state.current })
+    let index = list.findIndex(function (item) { return item.id === ui.current })
     if (index === -1) index = offset > 0 ? -1 : list.length
     const next = list.at(clamp(index + offset, 0, list.length - 1))
     if (next) select(next.id)
   }
 
   function toggleRead(): void {
-    const id = state.current
+    const id = ui.current
     if (!id) return
-    const isRead = state.read.has(id)
+    const isRead = data.read.has(id)
     mark([id], !isRead)
     if (isRead) bumpList()
   }
 
   function toggleStar(): void {
-    const id = state.current
+    const id = ui.current
     if (!id) return
-    const on = !state.starred.has(id)
-    const starred = new Set(state.starred)
+    const on = !data.starred.has(id)
+    const starred = new Set(data.starred)
     if (on) starred.add(id)
     else starred.delete(id)
-    set({ starred: starred })
-    request('/star', { ids: [id], star: on }).then(function (data) {
-      if (data.version) set({ version: data.version })
+    setData({ starred: starred })
+    request('/star', { ids: [id], star: on }).then(function (payload) {
+      if (payload.version) setData({ version: payload.version })
       load().catch(function () { })
     }).catch(function (err: unknown) {
-      const revert = new Set(state.starred)
+      const revert = new Set(data.starred)
       if (on) revert.delete(id)
       else revert.add(id)
-      set({ starred: revert })
+      setData({ starred: revert })
       toast(t('toast.failed', { error: messageOf(err) }), true)
     })
   }
 
   function openCurrent(): void {
-    const id = state.current
-    const item = id ? state.byId.get(id) : undefined
+    const id = ui.current
+    const item = id ? data.byId.get(id) : undefined
     if (item && item.link && /^https?:/i.test(item.link)) {
       window.open(item.link, '_blank', 'noopener,noreferrer')
     }
   }
 
   function escape(): void {
-    if (state.current) {
+    if (ui.current) {
       closeArticle()
       return
     }
-    set({ query: '', feedId: null })
+    setUi({ query: '', feedId: null })
   }
 
   /**
@@ -519,28 +555,28 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
 
   function markAll(): void {
     runScopeMark(getList()
-      .filter(function (item) { return !state.read.has(item.id) })
+      .filter(function (item) { return !data.read.has(item.id) })
       .map(function (item) { return item.id }))
   }
 
   function markGroup(key: string): void {
     runScopeMark(getList()
-      .filter(function (item) { return groupKeyOf(item) === key && !state.read.has(item.id) })
+      .filter(function (item) { return groupKeyOf(item) === key && !data.read.has(item.id) })
       .map(function (item) { return item.id }))
   }
 
   /** Every unread item of one source, whatever the list filter is showing. */
   function markFeed(feedId: string): void {
-    runScopeMark(state.items
-      .filter(function (item) { return item.feed === feedId && !state.read.has(item.id) })
+    runScopeMark(data.items
+      .filter(function (item) { return item.feed === feedId && !data.read.has(item.id) })
       .map(function (item) { return item.id }))
   }
 
   /** Every unread item of one folder, whatever the list filter is showing. */
   function markFolder(folder: string): void {
-    runScopeMark(state.items
+    runScopeMark(data.items
       .filter(function (item) {
-        return !state.read.has(item.id) && feedFolderOf(item.feed) === folder
+        return !data.read.has(item.id) && feedFolderOf(item.feed) === folder
       })
       .map(function (item) { return item.id }))
   }
@@ -566,35 +602,35 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
 
   /** Mark every unread item in the reader, whatever the scope on screen is. */
   function markEverything(): void {
-    runScopeMark(state.items
-      .filter(function (item) { return !state.read.has(item.id) })
+    runScopeMark(data.items
+      .filter(function (item) { return !data.read.has(item.id) })
       .map(function (item) { return item.id }))
   }
 
   function setGroupBy(value: string): void {
     const next = value === 'folder' || value === 'feed' ? value : 'none'
     prefs.update(function (draft) { draft.groupBy = next })
-    set({ groupBy: next })
+    setUi({ groupBy: next })
   }
 
   function setHideEmpty(value: boolean): void {
     prefs.update(function (draft) { draft.hideEmpty = value })
-    set({ hideEmpty: value })
+    setUi({ hideEmpty: value })
   }
 
   function setMarkOnScroll(value: boolean): void {
     prefs.update(function (draft) { draft.markOnScroll = value })
-    set({ markOnScroll: value })
+    setUi({ markOnScroll: value })
   }
 
   function setShowDigest(value: boolean): void {
     prefs.update(function (draft) { draft.showDigest = value })
-    set({ showDigest: value })
+    setUi({ showDigest: value })
   }
 
   function setFolderOpen(name: string, open: boolean): void {
     prefs.update(function (draft) { draft.folderOpen[name] = open })
-    set({ folderOpen: Object.assign({}, prefs.getSnapshot().folderOpen) })
+    setUi({ folderOpen: Object.assign({}, prefs.getSnapshot().folderOpen) })
   }
 
   function setWidths(patch: { railW?: number; listW?: number }): void {
@@ -609,16 +645,16 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
       next.listW = listW
       prefs.update(function (draft) { draft.listW = listW })
     }
-    if (Object.keys(next).length) set(next)
+    if (Object.keys(next).length) setUi(next)
   }
 
   async function addFeed(url: string, folder: string): Promise<boolean> {
-    if (state.busy.add) return false
+    if (ui.busy.add) return false
     setBusy('add', true)
     try {
-      const data = await request('/feeds', { url: url, folder: folder })
-      if (data.ok === false) throw new Error(data.error || 'could not add feed')
-      toast(t('toast.subscribed', { name: (data.feed && (data.feed.title || data.feed.url)) || url }))
+      const payload = await request('/feeds', { url: url, folder: folder })
+      if (payload.ok === false) throw new Error(payload.error || 'could not add feed')
+      toast(t('toast.subscribed', { name: (payload.feed && (payload.feed.title || payload.feed.url)) || url }))
       await load({ force: true })
       return true
     } catch (err) {
@@ -630,12 +666,12 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
   }
 
   async function removeFeed(id: string): Promise<boolean> {
-    if (!id || state.busy.remove) return false
+    if (!id || ui.busy.remove) return false
     setBusy('remove', true)
     try {
-      const data = await request('/feeds/remove', { id: id })
-      if (data.ok === false) throw new Error(data.error || 'could not remove feed')
-      if (state.feedId === id) set({ feedId: null })
+      const payload = await request('/feeds/remove', { id: id })
+      if (payload.ok === false) throw new Error(payload.error || 'could not remove feed')
+      if (ui.feedId === id) setUi({ feedId: null })
       toast(t('toast.unsubscribed', { name: feedTitleOf(id) }))
       await load({ force: true })
       return true
@@ -648,14 +684,14 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
   }
 
   async function runAction(name: string): Promise<void> {
-    if (state.busy[name]) return
+    if (ui.busy[name]) return
     setBusy(name, true)
     try {
-      const data = await request(`/${name}`, {})
-      if (data.ok === false) {
-        toast(t('toast.failed', { error: data.error || data.output || name }), true)
+      const payload = await request(`/${name}`, {})
+      if (payload.ok === false) {
+        toast(t('toast.failed', { error: payload.error || payload.output || name }), true)
       } else if (name === 'fetch') {
-        toast(t('toast.fetch', { summary: data.output || 'ok' }))
+        toast(t('toast.fetch', { summary: payload.output || 'ok' }))
       } else if (name === 'pull') {
         toast(t('toast.pull'))
       } else if (name === 'sync') {

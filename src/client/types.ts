@@ -14,7 +14,11 @@ export interface Toast {
   undo?: boolean
 }
 
-export interface ClientState {
+/**
+ * What the data root answered: the archive, the marks, the repository facts,
+ * and how the last load went. The transport half of the snapshot.
+ */
+export interface ReaderData {
   status: Status
   error: string | null
   loadError: string | null
@@ -35,6 +39,10 @@ export interface ClientState {
   version: string | null
   repo: string
   allowGit: boolean
+}
+
+/** What the reader is looking at, and what the surface is doing while it looks. */
+export interface ReaderUi {
   filter: Filter
   query: string
   feedId: string | null
@@ -50,6 +58,9 @@ export interface ClientState {
   busy: Record<string, boolean>
   toast: Toast | null
 }
+
+/** The published snapshot both halves merge into: what a surface reads. */
+export type ClientState = ReaderData & ReaderUi
 
 export interface Controller {
   get(): ClientState
