@@ -2,11 +2,13 @@
 
 import { h, useRef, useState } from "../react.js";
 import { Chevron } from "../icons.js";
+import { DEFAULT_LIST } from "../constants.js";
 import { useElementWidth, useKeyboard, useMount, useOutsideClose, useReader } from "../hooks.js";
 import { tf } from "../locales.js";
 import type { ClientState, GitfeedRailProps } from "../types.js";
 import type { Controller } from "../types.js";
 import type { Translate } from "../locales.js";
+import { clamp } from "../util.js";
 import { Article } from "./Article.js";
 import { FeedRail } from "./FeedRail.js";
 import { ItemList } from "./ItemList.js";
@@ -57,6 +59,29 @@ export function GitfeedRail({ controller, t, useTabInfo }: GitfeedRailProps) {
   useMount(controller);
   useKeyboard(controller, searchRef, rootRef, visible);
 
+  // The list keeps at least 320px for the article, so the stored width is
+  // clamped to this Surface's own width instead of only to its global range.
+  const wideListW = clamp(state.listW, 260, Math.max(260, width - 325));
+
+  function startResize() {
+    return function (event: any) {
+      event.preventDefault();
+      const startX = event.clientX;
+      const start = wideListW;
+      const total = rootRef.current ? rootRef.current.clientWidth : width;
+      const max = Math.max(260, Math.min(900, total - 325));
+      function move(moveEvent: any) {
+        controller.setWidths({ listW: clamp(start + (moveEvent.clientX - startX), 260, max) });
+      }
+      function up() {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", up);
+      }
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", up);
+    };
+  }
+
   const feedLabel = state.feedId ? controller.feedTitle(state.feedId) : t("feed.all");
 
   return h("div", { className: "gf gf-railpage", ref: rootRef },
@@ -83,10 +108,19 @@ export function GitfeedRail({ controller, t, useTabInfo }: GitfeedRailProps) {
     state.status === "error" && !state.items.length
       ? h(ErrorState, { state: state, controller: controller, t: t })
       : wide
-        ? h("div", { className: "gf-wide" },
-          h(ItemList, { state: state, controller: controller, t: t, wide: true }),
-          h("div", { className: "gf-wide-article" },
-            state.current ? h(Article, { state: state, controller: controller, t: t }) : h(EmptyArticle, { state: state, t: t })))
+        ? h("div", {
+          className: "gf-wide",
+          style: { "--gf-list": wideListW + "px" } as any
+        },
+        h(ItemList, { state: state, controller: controller, t: t, wide: true }),
+        h("div", {
+          className: "gf-splitter", role: "separator", "aria-orientation": "vertical",
+          title: t("action.resize"),
+          onPointerDown: startResize(),
+          onDoubleClick: function () { controller.setWidths({ listW: DEFAULT_LIST }); }
+        }),
+        h("div", { className: "gf-wide-article" },
+          state.current ? h(Article, { state: state, controller: controller, t: t }) : h(EmptyArticle, { state: state, t: t })))
         : state.current
           ? h("div", { className: "gf-rail-article" }, h(Article, { state: state, controller: controller, t: t, compact: true }))
           : h(ItemList, { state: state, controller: controller, t: t, wide: true }),

@@ -1,6 +1,6 @@
 /** Feed folders, subscriptions, and the add/unsubscribe controls. */
 
-import { h, useId, useMemo, useState } from "../react.js";
+import { h, useId, useMemo, useRef, useState } from "../react.js";
 import { Chevron } from "../icons.js";
 import type { Feed } from "../../shared/types.js";
 import type { FeedRailProps } from "../types.js";
@@ -39,6 +39,17 @@ export function FeedRail({ state, controller, t, compact, onPick }: FeedRailProp
   const hideEmpty = state.hideEmpty === null ? !!state.reader.hideEmptyFeeds : !!state.hideEmpty;
   const hiding = hideEmpty && state.filter === "unread";
   const folders = state.feeds.map(function (feed) { return feed.folder; }).filter(Boolean);
+
+  // A folder opens or closes only when it first appears or when the reader
+  // toggles it. Deriving the state from the live unread count made the list
+  // collapse and expand on every background refresh while it was on screen.
+  const seededOpen = useRef<Map<string, boolean>>(new Map());
+  function folderOpenOf(name: string, unread: number): boolean {
+    if (Object.prototype.hasOwnProperty.call(state.folderOpen, name)) return !!state.folderOpen[name];
+    const seeded = seededOpen.current;
+    if (!seeded.has(name)) seeded.set(name, unread > 0);
+    return seeded.get(name) === true;
+  }
 
   function pick(id: string | null) {
     controller.selectFeed(id);
@@ -106,7 +117,7 @@ export function FeedRail({ state, controller, t, compact, onPick }: FeedRailProp
     let unread = 0;
     for (const feed of feeds) unread += grouped.counts.get(feed.id) || 0;
     if (hiding && unread === 0) continue;
-    const open = name in state.folderOpen ? !!state.folderOpen[name] : unread > 0;
+    const open = folderOpenOf(name, unread);
     const children: any[] = [];
     for (const feed of feeds) {
       const count = grouped.counts.get(feed.id) || 0;

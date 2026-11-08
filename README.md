@@ -51,6 +51,11 @@ GitHub Actions job runs.
 All surfaces share one client controller and one Host API, so read state and the
 selected article stay consistent if both are open.
 
+The main panel is the three-pane layout. The right Sidebar page is a single
+pane until its tab is wide (680px or more, for example in fullscreen), where it
+splits into list and article: drag the divider between them to resize, and
+double-click it to reset. The width is stored with the main page's list width.
+
 ## Bundle registration
 
 | surface | registration |

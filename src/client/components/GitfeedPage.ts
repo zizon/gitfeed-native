@@ -89,7 +89,7 @@ export function GitfeedPage({ controller, t }: GitfeedPageProps) {
     h(FeedRail, { state: state, controller: controller, t: t }),
     h("div", {
       className: "gf-splitter", role: "separator", "aria-orientation": "vertical",
-      title: "drag to resize · double-click to reset",
+      title: t("action.resize"),
       onPointerDown: startResize("rail"),
       onDoubleClick: function () { controller.setWidths({ railW: DEFAULT_RAIL }); }
     }),
@@ -97,7 +97,7 @@ export function GitfeedPage({ controller, t }: GitfeedPageProps) {
     state.current ? h(Fragment, null,
       h("div", {
         className: "gf-splitter", role: "separator", "aria-orientation": "vertical",
-        title: "drag to resize · double-click to reset",
+        title: t("action.resize"),
         onPointerDown: startResize("list"),
         onDoubleClick: function () { controller.setWidths({ listW: DEFAULT_LIST }); }
       }),

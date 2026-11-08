@@ -41,6 +41,7 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
   const seen = useRef(new Map<string, number>());
   const raf = useRef(0);
   const lastKey = useRef("");
+  const lastSelected = useRef<string | null>(null);
 
   const entries = useMemo<Entry[]>(function () {
     if (groupBy === "none") {
@@ -151,9 +152,17 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
     };
   }, [compute]);
 
+  // Reveal a newly selected item, but never move the viewport because the
+  // background refresh rebuilt the entries: the user may be reading elsewhere
+  // in the list while new items land.
   useEffect(function () {
     const id = state.current;
-    if (!id) return;
+    if (!id) {
+      lastSelected.current = null;
+      return;
+    }
+    if (lastSelected.current === id) return;
+    lastSelected.current = id;
     const index = itemIndex.get(id);
     if (index === undefined) return;
     const currentRange = rangeRef.current;
