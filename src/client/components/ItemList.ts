@@ -40,10 +40,13 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
   const [range, setRange] = useState({ start: 0, end: 24 });
   const rangeRef = useRef(range);
   rangeRef.current = range;
-  const seen = useRef(new Map<string, number>());
   const raf = useRef(0);
   const lastKey = useRef("");
   const lastSelected = useRef<string | null>(null);
+  /** Scroll offset the previous compute saw, to know what the viewport passed. */
+  const lastTop = useRef(0);
+  /** Scroll offset this surface moved to on its own, which must not mark anything. */
+  const programmatic = useRef<number | null>(null);
 
   const entries = useMemo<Entry[]>(function () {
     if (groupBy === "none") {
@@ -90,10 +93,19 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
 
   const total = offsets[entries.length] || 0;
 
+  // Scroll position this surface wrote itself (a filter reset, revealing the
+  // selected item) must not count as the reader scrolling past those rows.
+  function scrollTo(el: HTMLDivElement, value: number) {
+    el.scrollTop = value;
+    programmatic.current = el.scrollTop;
+  }
+
   const compute = useCallback(function () {
     const el = viewportRef.current;
     if (!el) return;
     const top = el.scrollTop;
+    const prevTop = lastTop.current;
+    lastTop.current = top;
     const height = el.clientHeight || 600;
     const visibleStart = lowerBound(offsets, top);
     const visibleEnd = Math.min(entries.length, lowerBound(offsets, top + height) + 1);
@@ -102,26 +114,24 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
     setRange(function (current) {
       return current.start === start && current.end === end ? current : { start: start, end: end };
     });
-    if (!markOnScroll) return;
-    const seenMap = seen.current;
-    for (let i = visibleStart; i < visibleEnd; i++) {
-      const entry = entries[i];
-      if (entry && entry.kind === "row") seenMap.set(entry.item.id, i);
+    let jumped = false;
+    if (programmatic.current !== null) {
+      jumped = Math.abs(programmatic.current - top) < 1;
+      programmatic.current = null;
     }
+    if (!markOnScroll || jumped) return;
+    // Rows the viewport top passed on the way down are read, including the
+    // ones a scrollbar drag skipped over without ever rendering them.
+    if (top <= prevTop) return;
+    const from = lowerBound(offsets, prevTop);
+    const to = lowerBound(offsets, top);
     const markIds: string[] = [];
-    for (const pair of seenMap) {
-      const idx = itemIndex.get(pair[0]);
-      if (idx === undefined) {
-        seenMap.delete(pair[0]);
-        continue;
-      }
-      if (idx < visibleStart) {
-        if (!state.read.has(pair[0])) markIds.push(pair[0]);
-        seenMap.delete(pair[0]);
-      }
+    for (let i = from; i < to; i++) {
+      const entry = entries[i];
+      if (entry && entry.kind === "row" && !state.read.has(entry.item.id)) markIds.push(entry.item.id);
     }
     if (markIds.length) controller.mark(markIds, true);
-  }, [offsets, entries, itemIndex, markOnScroll, state.read, controller]);
+  }, [offsets, entries, markOnScroll, state.read, controller]);
 
   const onScroll = useCallback(function () {
     if (raf.current) return;
@@ -135,9 +145,8 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
     const key = groupBy + "\u0000" + state.query + "\u0000" + state.feedId;
     if (lastKey.current !== key) {
       lastKey.current = key;
-      seen.current.clear();
       const el = viewportRef.current;
-      if (el) el.scrollTop = 0;
+      if (el) scrollTo(el, 0);
     }
     compute();
   }, [compute, groupBy, state.query, state.feedId, state.version]);
@@ -170,7 +179,7 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
     const currentRange = rangeRef.current;
     if (index >= currentRange.start && index < currentRange.end) return;
     const el = viewportRef.current;
-    if (el) el.scrollTop = Math.max(0, offsets[index] - 32);
+    if (el) scrollTo(el, Math.max(0, offsets[index] - 32));
   }, [state.current, itemIndex, offsets]);
 
   const slice = entries.slice(range.start, range.end);
