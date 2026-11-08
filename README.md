@@ -319,10 +319,13 @@ not carry its own theme setting.
   section header sticks to the top while its section is in view and carries
   that section's actions — `Mark {n} read`, plus `Unsubscribe` when the section
   is a source. Rows are virtualized at fixed heights.
-  A row that is marked read stays in the Unread list until the scope changes
-  (filter, search, or source), so nothing shifts under the pointer while
-  reading; a feed or folder that was on screen stays in the Feeds list for the
-  same reason.- **Read on scroll**: a row counts as read only after the viewport top passed
+  A row that is marked read stays in the Unread list while it is still under
+  the pointer, so nothing shifts under it while reading; then it goes without
+  the list moving: a grouped section fades where it stands and leaves once
+  nothing in it is unread, and a flat list lets rows go in one batch as they
+  scroll out of the mounted band. A feed or folder that was on screen stays in
+  the Feeds list for the same reason.
+- **Read on scroll**: a row counts as read only after the viewport top passed
   it while moving down; rows a scrollbar drag skipped over are included.
 - **Article**: sanitized feed HTML (element allowlist, `href`/`src`/`alt`/
   `title` only, http(s)/mailto URLs only), star, mark unread, open original.
@@ -522,7 +525,6 @@ src/host/                   settings, scaffold, store, OPML, XML, fetch, git, ru
 tests/                      behaviour suites, fixtures, and the runner (`pnpm test`)
 docs/jobs.md                runner contract, primitives, and the ratchet
 docs/cloud-sync.md          why the GitHub Actions job was removed, and restoring it
-docs/audit-2026-11-09.md    point-in-time review: bugs, doc drift, and shape findings
 src/client/                 native reader: controller, transport, derivations, viewport, prefs, hooks, components, styles, locales
 src/shared/                 item/feed/state types shared by both halves
 build.mjs                   tsc Host + esbuild Client into the loader envelope

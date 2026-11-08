@@ -52,6 +52,25 @@ export function groupFloorOf(entries: readonly Entry[]): number[] {
   return out
 }
 
+/**
+ * Rows above the mounted band the reader has already read. They were kept on
+ * screen only so the list would not move under the pointer; the scroll anchor
+ * holds that position now, and a flat list has no section to release them.
+ * @param entries - the flattened list entries.
+ * @param start - the first entry the band mounts.
+ * @param read - the read set.
+ * @returns the ids of the read rows above the band, in archive order.
+ */
+export function settledAbove(entries: readonly Entry[], start: number, read: ReadonlySet<string>): string[] {
+  const out: string[] = []
+  const end = Math.min(start, entries.length)
+  for (let i = 0; i < end; i++) {
+    const entry = entries[i]
+    if (entry.kind === 'row' && read.has(entry.item.id)) out.push(entry.item.id)
+  }
+  return out
+}
+
 /** One viewport pass, before it decides anything. */
 export interface WindowInput {
   entries: readonly Entry[]

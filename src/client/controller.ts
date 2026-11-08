@@ -256,6 +256,17 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     bumpList()
   }
 
+  /**
+   * Drop the rows a scroll left behind. They were held so the list would not
+   * move under the pointer, and the anchor holds that now; the rebuild is
+   * skipped when nothing was actually held, so a scroll over rows that never
+   * stuck costs nothing.
+   */
+  function trimSticky(ids: string[]): void {
+    if (!transport.release(ids)) return
+    bumpList()
+  }
+
   function bumpList() {
     setUi({ listEpoch: ui.listEpoch + 1 })
   }
@@ -303,7 +314,10 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     const id = ui.current
     if (!id) return
     const isRead = data.read.has(id)
-    mark([id], !isRead)
+    // Marking read keeps the row where it is, the way opening an article does:
+    // the section fade or the band trim lets it go once it is out of the way.
+    // Marking unread puts it back, so that direction rebuilds at once.
+    mark([id], !isRead, !isRead)
     if (isRead) bumpList()
   }
 
@@ -337,6 +351,9 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
       closeArticle()
       return
     }
+    // Clearing the scope is a scope change like any other: the rows the old
+    // scope kept reachable go with it.
+    if (ui.query || ui.feedId) clearSticky()
     setUi({ query: '', feedId: null })
   }
 
@@ -493,6 +510,7 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     setShowDigest: setShowDigest,
     digest: digestOf,
     releaseSticky: releaseSticky,
+    trimSticky: trimSticky,
     setFolderOpen: setFolderOpen,
     setWidths: setWidths,
     addFeed: transport.addFeed,

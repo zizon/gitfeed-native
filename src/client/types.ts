@@ -91,6 +91,8 @@ export interface Controller {
   dismissToast(): void
   /** Let go of rows a section the reader finished was holding on screen. */
   releaseSticky(ids: string[]): void
+  /** Let go of rows a scroll left behind, rebuilding only if it held any. */
+  trimSticky(ids: string[]): void
   markGroup(key: string): void
   markFeed(feedId: string): void
   markFolder(folder: string): void

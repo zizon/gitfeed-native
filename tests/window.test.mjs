@@ -28,7 +28,7 @@ if (esbuild === undefined) {
       `--outfile=${bundle}`,
       '--log-level=warning',
     ])
-    const { groupFloorOf, lowerBound, offsetIndex, windowOf } = await import(pathToFileURL(bundle).href)
+    const { groupFloorOf, lowerBound, offsetIndex, settledAbove, windowOf } = await import(pathToFileURL(bundle).href)
 
     const row = (id, h = 10) => ({ kind: 'row', key: id, item: { id: id }, h: h })
     const header = (key, h = 10) => ({ kind: 'group', key: `group:${key}`, group: { key: key, label: key, items: [] }, h: h })
@@ -113,6 +113,17 @@ if (esbuild === undefined) {
     ok(deep.headerIndex === 0, 'and reports the one header it needs', deep.headerIndex)
     const ungrouped = pass(grouped, { top: 250, prevTop: 250, height: 100, groupBy: 'none' })
     ok(ungrouped.start === 21, 'with no grouping the band is the plain overscan', ungrouped.start)
+
+    // Rows a scroll left behind: read rows above the band. A grouped list lets
+    // them go by fading their section; a flat one has no section, which is why
+    // the band is the rule there.
+    const read = new Set(['r0', 'r1', 'r5', 'r30'])
+    const settled = settledAbove(flat, 16, read)
+    ok(settled.join(',') === 'r0,r1,r5', 'read rows above the band are settled', settled)
+    ok(settledAbove(flat, 0, read).length === 0, 'nothing above the top is settled')
+    ok(settledAbove(flat, 16, new Set()).length === 0, 'an unread list settles nothing')
+    ok(settledAbove(flat, 500, read).length === 4, 'a scroll past the end settles every read row above it')
+    ok(settledAbove(grouped, 40, new Set(['a29', 'b0'])).join(',') === 'a29,b0', 'section headers are not rows to settle')
   } finally {
     rmSync(out, { recursive: true, force: true })
   }

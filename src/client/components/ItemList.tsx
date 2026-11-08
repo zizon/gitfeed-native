@@ -11,7 +11,7 @@ import {
 import { GROUP_H, ROW_H, ROW_H_PLAIN } from '../constants.js'
 import { entriesOf, exhaustedGroups } from '../derive.js'
 import type { Entry, GroupEntry } from '../derive.js'
-import { groupFloorOf, offsetIndex, windowOf } from '../window.js'
+import { groupFloorOf, offsetIndex, settledAbove, windowOf } from '../window.js'
 import type { ItemListProps, MarkScope } from '../types.js'
 import { fmtTime } from '../util.js'
 import { IconStar } from '../icons.js'
@@ -29,6 +29,12 @@ function scopeLabel(label: string, n: number) {
 
 /** How long a finished section fades before the list is rebuilt without it. */
 const FADE_MS = 380
+/**
+ * Read rows above the band before a scroll releases them in one batch. One
+ * rebuild per row would re-derive the whole archive every 66 pixels; this is
+ * roughly a screen and a half of slack.
+ */
+const TRIM_AT = 24
 
 export function ItemList({ state, controller, t, wide }: ItemListProps) {
   const list = controller.getList()
@@ -137,6 +143,13 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
       return { start: next.start, end: next.end, headerIndex: next.headerIndex }
     })
     scrollAnchor.current = next.anchor
+    // Rows above the band that were read on the way here were kept only so the
+    // list would not move; the anchor holds the position now. A flat list has
+    // no section to fade them out, so the band is what lets them go.
+    if (state.filter === 'unread') {
+      const settled = settledAbove(entries, next.start, state.read)
+      if (settled.length >= TRIM_AT) controller.trimSticky(settled)
+    }
     let jumped = false
     if (programmatic.current !== null) {
       jumped = Math.abs(programmatic.current - top) < 1
@@ -147,7 +160,7 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
     // Implicit marks keep their rows: a row must not vanish from under the
     // pointer. The section releases them once it has nothing unread left.
     if (markIds.length) controller.mark(markIds, true, true)
-  }, [offsets, entries, groupFloor, groupBy, markOnScroll, state.read, controller])
+  }, [offsets, entries, groupFloor, groupBy, markOnScroll, state.read, state.filter, controller])
 
   const onScroll = useCallback(function () {
     if (raf.current) return
