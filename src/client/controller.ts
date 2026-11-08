@@ -247,6 +247,15 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     transport.clearSticky()
   }
 
+  /**
+   * Let go of rows a finished section no longer needs kept, and rebuild so the
+   * section leaves. The list asked for this once its fade is done.
+   */
+  function releaseSticky(ids: string[]): void {
+    transport.release(ids)
+    bumpList()
+  }
+
   function bumpList() {
     setUi({ listEpoch: ui.listEpoch + 1 })
   }
@@ -258,7 +267,7 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     }
     if (!data.byId.has(id)) return
     setUi({ current: id })
-    if (!data.read.has(id)) mark([id], true)
+    if (!data.read.has(id)) mark([id], true, true)
   }
 
   function closeArticle() {
@@ -483,6 +492,7 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     setMarkOnScroll: setMarkOnScroll,
     setShowDigest: setShowDigest,
     digest: digestOf,
+    releaseSticky: releaseSticky,
     setFolderOpen: setFolderOpen,
     setWidths: setWidths,
     addFeed: transport.addFeed,

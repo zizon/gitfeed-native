@@ -74,6 +74,8 @@ export interface Transport {
   unmount: () => void
   dispose: () => void
   clearSticky: () => void
+  /** Let go of rows a finished section no longer needs kept. */
+  release: (ids: readonly string[]) => boolean
   /** Rows kept on screen only so the list stays put; the view reads this. */
   readonly sticky: ReadonlySet<string>
 }
@@ -400,6 +402,11 @@ export function createTransport(ports: TransportPorts): Transport {
     unmount: unmount,
     dispose: dispose,
     clearSticky: function () { if (stickyRead.size) stickyRead.clear() },
+    release: function (ids: readonly string[]): boolean {
+      let changed = false
+      for (const id of ids) if (stickyRead.delete(id)) changed = true
+      return changed
+    },
     get sticky() { return stickyRead },
   }
 }

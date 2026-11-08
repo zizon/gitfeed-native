@@ -89,6 +89,8 @@ export interface Controller {
   undoMark(): void
   /** Clear the transient banner, called when the shared toast has finished. */
   dismissToast(): void
+  /** Let go of rows a section the reader finished was holding on screen. */
+  releaseSticky(ids: string[]): void
   markGroup(key: string): void
   markFeed(feedId: string): void
   markFolder(folder: string): void

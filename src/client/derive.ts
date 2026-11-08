@@ -143,6 +143,29 @@ export function entriesOf(
 }
 
 /**
+ * Sections whose every listed row is already read. Only the unread filter can
+ * hold those, and only because an implicit mark kept them listed: they are on
+ * their way out, not content.
+ * @param entries - the flattened list entries.
+ * @param read - the read set.
+ * @param filter - the list filter in effect.
+ * @returns the section keys that are finished.
+ */
+export function exhaustedGroups(
+  entries: readonly Entry[],
+  read: ReadonlySet<string>,
+  filter: Filter,
+): string[] {
+  if (filter !== 'unread') return []
+  const out: string[] = []
+  for (const entry of entries) {
+    if (entry.kind !== 'group') continue
+    if (entry.group.items.every(function (item) { return read.has(item.id) })) out.push(entry.group.key)
+  }
+  return out
+}
+
+/**
  * What each marking scope would touch, so the menu can state the size before
  * it acts.
  * @param view - the reader's current scope.

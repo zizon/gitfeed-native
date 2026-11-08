@@ -275,6 +275,14 @@ export const CSS = `
   z-index: 3;
 }
 
+/* A section whose unread rows have all been read: kept on screen only so
+   nothing moved under the pointer, and now on its way out. */
+.gf-fade {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 340ms ease;
+}
+
 .gf-group-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gf-group-actions { margin-left: auto; display: flex; align-items: center; gap: 4px; }
 .gf-group-unsub { color: var(--dsw-alias-label-tertiary); }

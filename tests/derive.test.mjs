@@ -28,7 +28,16 @@ if (esbuild === undefined) {
       `--outfile=${bundle}`,
       '--log-level=warning',
     ])
-    const { feedFolder, feedTitle, groupKey, haystackOf, listOf, markCountsOf } = await import(pathToFileURL(bundle).href)
+    const {
+      entriesOf,
+      exhaustedGroups,
+      feedFolder,
+      feedTitle,
+      groupKey,
+      haystackOf,
+      listOf,
+      markCountsOf,
+    } = await import(pathToFileURL(bundle).href)
 
     const feeds = new Map([
       ['feed-a', { id: 'feed-a', url: 'https://example.com/a.xml', title: 'Alpha Notes', folder: 'Daily' }],
@@ -115,6 +124,33 @@ if (esbuild === undefined) {
     )
     ok(groupKey(items[0], 'feed', feeds, 'Uncategorized') === 'feed-a', 'grouping by source uses the id')
     ok(groupKey(items[2], 'folder', feeds, 'Uncategorized') === 'Uncategorized', 'grouping by folder uses the label')
+
+    // A section is finished when nothing listed in it is still unread.
+    const titleOf = (id) => feedTitle(feeds, id)
+    const folderOf = (id) => feedFolder(feeds, id, 'Uncategorized')
+    const sections = entriesOf(items, 'folder', 10, 10, titleOf, folderOf)
+    ok(
+      sections.map((entry) => entry.kind).join(',') === 'group,row,row,group,row,row',
+      'grouping flattens one header plus its rows per section',
+      sections.map((entry) => entry.kind),
+    )
+    ok(
+      exhaustedGroups(sections, new Set(['a1', 'a2']), 'unread').join(',') === 'Daily',
+      'a section with nothing unread is finished',
+      exhaustedGroups(sections, new Set(['a1', 'a2']), 'unread'),
+    )
+    ok(
+      exhaustedGroups(sections, new Set(['a1']), 'unread').length === 0,
+      'a section with one unread row is not finished',
+    )
+    ok(
+      exhaustedGroups(sections, new Set(['a1', 'a2', 'b1', 'b2']), 'all').length === 0,
+      'the all filter keeps finished sections',
+    )
+    ok(
+      exhaustedGroups(entriesOf(items, 'none', 10, 10, titleOf, folderOf), new Set(['a1', 'a2']), 'unread').length === 0,
+      'an ungrouped list has no section to finish',
+    )
 
     const hay = haystackOf(items[0], 'Alpha Notes')
     ok(hay.includes('first post') && hay.includes('alpha notes'), 'a row search text carries its title and source name', hay)

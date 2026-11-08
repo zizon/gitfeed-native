@@ -9,7 +9,7 @@ import {
   MenuItemButton,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { GROUP_H, ROW_H, ROW_H_PLAIN } from '../constants.js'
-import { entriesOf } from '../derive.js'
+import { entriesOf, exhaustedGroups } from '../derive.js'
 import type { Entry, GroupEntry } from '../derive.js'
 import { groupFloorOf, offsetIndex, windowOf } from '../window.js'
 import type { ItemListProps, MarkScope } from '../types.js'
@@ -26,6 +26,9 @@ function scopeLabel(label: string, n: number) {
     </span>
   )
 }
+
+/** How long a finished section fades before the list is rebuilt without it. */
+const FADE_MS = 380
 
 export function ItemList({ state, controller, t, wide }: ItemListProps) {
   const list = controller.getList()
@@ -141,7 +144,9 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
     }
     if (jumped) return
     const markIds = next.passedIds.filter(function (id) { return !state.read.has(id) })
-    if (markIds.length) controller.mark(markIds, true)
+    // Implicit marks keep their rows: a row must not vanish from under the
+    // pointer. The section releases them once it has nothing unread left.
+    if (markIds.length) controller.mark(markIds, true, true)
   }, [offsets, entries, groupFloor, groupBy, markOnScroll, state.read, controller])
 
   const onScroll = useCallback(function () {
@@ -210,6 +215,38 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
     const el = viewportRef.current
     if (el) scrollTo(el, Math.max(0, offsets[index] - 32))
   }, [state.current, itemIndex, offsets])
+
+  /**
+   * Sections whose unread rows have all been read: they are kept on screen only
+   * so nothing moves under the pointer, so they fade where they stand and the
+   * list is rebuilt without them once the fade is done.
+   */
+  const finished = useMemo(function () {
+    return exhaustedGroups(entries, state.read, state.filter)
+  }, [entries, state.read, state.filter])
+  const finishedKey = finished.join('\u0000')
+  const finishedSet = new Set(finished)
+  useEffect(function () {
+    if (!finishedKey) return
+    const timer = setTimeout(function () {
+      const ids: string[] = []
+      for (const entry of entries) {
+        if (entry.kind !== 'group' || !finishedSet.has(entry.group.key)) continue
+        for (const item of entry.group.items) ids.push(item.id)
+      }
+      if (ids.length) controller.releaseSticky(ids)
+    }, FADE_MS)
+    return function () { clearTimeout(timer) }
+  }, [finishedKey, controller])
+
+  /** Whether the entry at one index belongs to a section that is leaving. */
+  function leaving(index: number): boolean {
+    if (!finishedSet.size) return false
+    const floor = groupFloor[index]
+    if (floor < 0) return false
+    const header = entries[floor]
+    return header.kind === 'group' && finishedSet.has(header.group.key)
+  }
 
   const slice = entries.slice(range.start, range.end)
   const top = offsets[range.start] || 0
@@ -293,10 +330,11 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
     )
   }
 
-  const listRows = slice.map(function (entry) {
+  const listRows = slice.map(function (entry, offset) {
+    const gone = leaving(range.start + offset) ? ' gf-fade' : ''
     if (entry.kind === 'group') {
       return (
-        <div key={entry.key} className="gf-group">
+        <div key={entry.key} className={`gf-group${gone}`}>
           {sectionHeader(entry)}
         </div>
       )
@@ -308,7 +346,7 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
     return (
       <div
         key={entry.key}
-        className={`gf-row${unread ? ' unread' : ''}${state.current === item.id ? ' active' : ''}${state.fresh.has(item.id) ? ' gf-row-in' : ''}`}
+        className={`gf-row${unread ? ' unread' : ''}${state.current === item.id ? ' active' : ''}${state.fresh.has(item.id) ? ' gf-row-in' : ''}${gone}`}
         role="button"
         tabIndex={-1}
         aria-current={state.current === item.id ? 'true' : undefined}
@@ -468,7 +506,11 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
           <div style={{ height: bottom }} />
         </div>
         {pinned && pinned.kind === 'group'
-          ? <div className="gf-group gf-group-pinned">{sectionHeader(pinned)}</div>
+          ? (
+            <div className={`gf-group gf-group-pinned${finishedSet.has(pinned.group.key) ? ' gf-fade' : ''}`}>
+              {sectionHeader(pinned)}
+            </div>
+          )
           : null}
       </div>
       {markBar}
