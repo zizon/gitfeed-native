@@ -194,16 +194,13 @@ export const CSS = `
   color: var(--dsw-alias-label-tertiary);
   font-variant-numeric: tabular-nums;
 }
-.gf-rail-check { color: var(--dsw-alias-label-tertiary); }
-.gf-rail-x { visibility: hidden; }
-.gf-feed.on .gf-rail-x, .gf-feed:hover .gf-rail-x, .gf-feed:focus-within .gf-rail-x, .gf-folder-head:hover .gf-rail-x { visibility: visible; }
-@media (hover: none) {
-  .gf-rail-x { visibility: visible; }
+/* Row actions sit on the row the way "mark this source read" does: always
+   there, tertiary until the pointer is on it, destructive color only on hover —
+   the click still asks before anything is removed. */
+.gf-rail-check, .gf-rail-x { color: var(--dsw-alias-label-tertiary); }
+@media (hover: hover) {
+  .gf-feed:hover .gf-rail-x, .gf-folder-head:hover .gf-rail-x { color: var(--dsw-alias-state-error-primary); }
 }
-/* The rail's feed popover is the feed manager for a surface too narrow to show
-   a feed list of its own, so its rows keep the unsubscribe mark in view instead
-   of waiting for a hover. */
-.gf-feedpop .gf-rail-x { visibility: visible; }
 .gf-folder { margin-top: 2px; }
 .gf-folder-head {
   display: flex;

@@ -311,9 +311,11 @@ not carry its own theme setting.
 - **Filters**: Unread / All / Starred.
 - **Search** over title, summary, and feed title.
 - **Feeds**: folders from the OPML import, collapsible; unread counts; error
-  marks; add by feed URL or site URL (with discovery). Unsubscribe from a feed
-  row's mark, or from the rail's ⋯ menu for the feed you are reading; it removes
-  the subscription and that feed's items from both stores.
+  marks; add by feed URL or site URL (with discovery). Every feed row carries
+  its actions in view — mark the source read, and unsubscribe (colored
+  destructive on hover, confirmed on click); the rail's ⋯ menu repeats the
+  unsubscribe for the feed being read. Either removes the subscription and that
+  feed's items from both stores.
 - **List**: one line per item, grouped by folder or source on request, with a
   `Mark {n} read` button on each group whose header sticks to the top while
   its group is in view. Rows are virtualized at fixed heights.
