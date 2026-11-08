@@ -290,8 +290,9 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
       const feedId = groupBy === 'feed' ? entry.group.key : ''
       const confirming = feedId !== '' && pendingUnsub === feedId
       return h('div', { key: entry.key, className: `gf-group${confirming ? ' confirming' : ''}` },
+        // The count lives on the button that acts on it ("Mark 29 read"); a
+        // separate badge would repeat the same number a few pixels away.
         h('span', { className: 'gf-group-name' }, confirming ? t('confirm.unsubscribe') : entry.group.label),
-        h('span', { className: 'gf-group-count' }, String(entry.group.items.length)),
         h('div', { className: 'gf-group-actions' },
           confirming
             ? [

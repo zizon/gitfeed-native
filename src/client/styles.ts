@@ -264,7 +264,6 @@ export const CSS = `
   font-weight: 500;
 }
 .gf-group-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.gf-group-count { font-variant-numeric: tabular-nums; }
 .gf-group-actions { margin-left: auto; display: flex; align-items: center; gap: 4px; }
 .gf-group-actions .gf-group-read { margin-left: 0; }
 .gf-group-unsub { color: var(--dsw-alias-label-tertiary); }
