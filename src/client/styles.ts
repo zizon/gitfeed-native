@@ -200,6 +200,10 @@ export const CSS = `
 @media (hover: none) {
   .gf-rail-x { visibility: visible; }
 }
+/* The rail's feed popover is the feed manager for a surface too narrow to show
+   a feed list of its own, so its rows keep the unsubscribe mark in view instead
+   of waiting for a hover. */
+.gf-feedpop .gf-rail-x { visibility: visible; }
 .gf-folder { margin-top: 2px; }
 .gf-folder-head {
   display: flex;
