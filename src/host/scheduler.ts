@@ -356,7 +356,9 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
     state.lastRunAt = now
     if (!failed) state.lastOkAt = now
     const nextAt = numberOr(outcome.nextAt, 0)
-    state.nextAt = nextAt > 0 ? Math.max(now + 1000, nextAt) : now + intervalMin * 60000
+    // Never sooner than one beat: the pass that produced this outcome is the
+    // current one, and the next pass can only come from the heartbeat.
+    state.nextAt = nextAt > 0 ? Math.max(now + HEARTBEAT_MS, nextAt) : now + intervalMin * 60000
     state.last = {
       at: new Date(now).toISOString(),
       ok: !failed,
