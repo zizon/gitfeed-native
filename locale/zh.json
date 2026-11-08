@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "gitfeed",
+    "description": "基于 Git 的 RSS 阅读器：刷新订阅、在原生面板中阅读，并把已读状态同步到仓库。"
+  }
+}

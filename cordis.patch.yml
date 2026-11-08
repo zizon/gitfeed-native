@@ -1,0 +1,6 @@
+# gitfeed as a native Harness bundle: one Host row owns the data, refresh
+# schedule, git actions, and the agent tool; the package's Client module adds
+# the reader page and its sidebar entry.
+- insert:
+    - id: gitfeed
+      name: 'gitfeed-native'

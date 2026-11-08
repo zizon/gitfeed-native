@@ -1,0 +1,4 @@
+# pnpm 11 fails the install when it ignores a dependency build script. esbuild
+# postinstall is optional (its platform binary comes from an optional dependency),
+# so skip rather than approve it.
+strictDepBuilds: false

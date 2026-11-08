@@ -1,0 +1,114 @@
+// Feed list helpers: ids, URL normalisation, discovery, and feeds.json access.
+
+import { parseFeed } from "./xml.js";
+import { pathsFor } from "./settings.js";
+import { readJson, writeJson } from "./store.js";
+
+const UA = "gitfeed/2.0 (+https://github.com; personal RSS reader)";
+const FEED_TYPE = /(rss|atom|xml)/i;
+
+export function slug(input) {
+  const s = String(input || "")
+    .toLowerCase()
+    .replace(/^https?:\/\//, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+  return s || "feed";
+}
+
+export function feedIdFor(url) {
+  const u = new URL(url);
+  return slug(u.hostname.replace(/^www\./, "") + u.pathname);
+}
+
+export function normalizeUrl(url) {
+  try {
+    const u = new URL(url);
+    u.hash = "";
+    return (u.origin + u.pathname + u.search).replace(/\/$/, "").toLowerCase();
+  } catch (err) {
+    return String(url).trim().toLowerCase();
+  }
+}
+
+export async function readFeeds(root) {
+  const raw = await readJson(pathsFor(root).feeds, { feeds: [] });
+  return Array.isArray(raw.feeds) ? raw.feeds : [];
+}
+
+export async function writeFeeds(root, feeds) {
+  await writeJson(pathsFor(root).feeds, {
+    "$comment": "Subscription list. Edit by hand, use Add feed in the reader, or run `gitfeed import-opml`; then Sync.",
+    feeds: feeds
+  });
+}
+
+// Content-type alone is not enough: some sites serve XHTML as
+// application/xhtml+xml, which would slip past an /xml/ test and then parse as
+// an empty feed. Look at what the document actually is.
+function looksLikeFeed(contentType, body) {
+  const head = body
+    .slice(0, 2000)
+    .replace(/^\uFEFF/, "")
+    .replace(/^\s*<\?xml[^>]*\?>\s*/i, "")
+    .replace(/^\s*<!--[\s\S]*?-->\s*/, "")
+    .trimStart();
+  if (/^<(rss|feed|rdf)\b/i.test(head)) return true;
+  if (/^<(!doctype\s+html|html)\b/i.test(head)) return false;
+  return /(rss|atom)\+xml/i.test(contentType || "");
+}
+
+// Find <link rel="alternate" type="application/rss+xml" href="..."> on a site.
+function discoverFeed(html, base) {
+  const re = /<link\b[^>]*>/gi;
+  let m;
+  while ((m = re.exec(html))) {
+    const tag = m[0];
+    const type = /type\s*=\s*["']([^"']+)["']/i.exec(tag);
+    if (!type || !FEED_TYPE.test(type[1])) continue;
+    const href = /href\s*=\s*["']([^"']+)["']/i.exec(tag);
+    if (!href) continue;
+    try {
+      return new URL(href[1], base).href;
+    } catch (err) {
+      return null;
+    }
+  }
+  return null;
+}
+
+// Accept either a feed URL or a site URL; return the feed URL plus its title.
+export async function resolveFeed(rawUrl, depth?: number) {
+  const level = depth || 0;
+  if (level > 2) throw new Error("feed discovery loop");
+  let url;
+  try {
+    url = new URL(String(rawUrl).trim()).href;
+  } catch (err) {
+    throw new Error("not a valid URL");
+  }
+  if (!/^https?:/i.test(url)) throw new Error("only http(s) URLs are supported");
+
+  const res = await fetch(url, {
+    headers: {
+      "user-agent": UA,
+      accept: "application/rss+xml, application/atom+xml, application/xml;q=0.9, text/html;q=0.8, */*;q=0.5"
+    },
+    redirect: "follow",
+    signal: AbortSignal.timeout(20000)
+  });
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  const body = await res.text();
+  const finalUrl = res.url || url;
+
+  if (looksLikeFeed(res.headers.get("content-type"), body)) {
+    const parsed = parseFeed(body);
+    if (!parsed.items.length && !parsed.title) throw new Error("no items found in feed");
+    return { url: finalUrl, title: parsed.title || null, items: parsed.items.length };
+  }
+
+  const discovered = discoverFeed(body, finalUrl);
+  if (!discovered) throw new Error("no RSS/Atom feed found on that page");
+  return resolveFeed(discovered, level + 1);
+}

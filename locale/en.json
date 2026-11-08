@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "gitfeed",
+    "description": "A git-backed RSS reader: refresh feeds, read in a native pane, and sync read state to your repository."
+  }
+}
