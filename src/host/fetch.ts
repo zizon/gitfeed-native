@@ -124,6 +124,9 @@ async function fetchOne(feed: FeedDefinition, prev: FeedMeta | undefined, now: D
 
   const seen = new Set<string>()
   const items: Item[] = []
+  // Zero is the default and keeps the feed's body whole; a positive setting is
+  // a deliberate cap for archives that must stay small.
+  const cap = settings.fetch.maxSummaryChars
   for (let i = 0; i < parsed.items.length; i++) {
     const it = parsed.items[i]
     const key = it.guid || it.link || (`${it.title}|${it.date}`)
@@ -140,7 +143,7 @@ async function fetchOne(feed: FeedDefinition, prev: FeedMeta | undefined, now: D
       date: date.toISOString(),
       // Some feeds put a profile URL in <author>; it renders as noise.
       author: (it.author || '').replace(/https?:\/\/\S+/gi, '').replace(/\s+/g, ' ').trim().slice(0, 120),
-      summary: (it.summary || '').slice(0, settings.fetch.maxSummaryChars),
+      summary: cap > 0 ? (it.summary || '').slice(0, cap) : (it.summary || ''),
     })
   }
 
@@ -246,6 +249,8 @@ export interface FetchOptions {
   only?: string
   feeds?: string[]
   dryRun?: boolean
+  /** Ignore the stored validator and re-read every feed body. */
+  refresh?: boolean
   onLog?: (line: string) => void
 }
 
@@ -261,6 +266,7 @@ export async function runFetch(options: FetchOptions): Promise<FetchResult> {
   const wanted = Array.isArray(opts.feeds) ? new Set(opts.feeds.map(String)) : null
   const restricted = only !== '' || wanted !== null
   const dryRun = opts.dryRun === true
+  const refresh = opts.refresh === true
   const logs: string[] = []
   const log = function (line: string): void {
     logs.push(line)
@@ -274,7 +280,8 @@ export async function runFetch(options: FetchOptions): Promise<FetchResult> {
     const message = only ? `no feed with id ${only}` : 'feeds.json contains no usable feeds'
     log(message)
     return {
-      code: 1, logs: logs, summary: message, feeds: 0, fresh: 0, unchanged: 0, expired: 0, failed: 0, perFeed: {},
+      code: 1, logs: logs, summary: message, feeds: 0, fresh: 0, unchanged: 0, expired: 0, failed: 0, repaired: 0,
+      perFeed: {},
     }
   }
 
@@ -291,10 +298,14 @@ export async function runFetch(options: FetchOptions): Promise<FetchResult> {
     }
   }
 
-  const known = new Set<string>()
+  // id -> archived summary length, so a feed that re-serves a longer body than
+  // the archive holds can repair a copy an older, smaller cap cut short.
+  const known = new Map<string, number>()
   for (const file of await listShards(itemsDir)) {
-    const rows = await readNdjson<{ id: string } | null>(file)
-    for (const row of rows) if (row && row.id) known.add(row.id)
+    const rows = await readNdjson<{ id: string; summary?: string } | null>(file)
+    for (const row of rows) {
+      if (row && row.id) known.set(row.id, typeof row.summary === 'string' ? row.summary.length : 0)
+    }
   }
 
   const now = new Date()
@@ -306,15 +317,19 @@ export async function runFetch(options: FetchOptions): Promise<FetchResult> {
   }
 
   const results = await pool(feeds, settings.fetch.concurrency, function (feed) {
-    return runFeed(feed, meta[feed.id], now, settings)
+    // `refresh` drops the validators so every feed answers with a body; the
+    // second pass over known ids is what repairs summaries a smaller cap cut.
+    return runFeed(feed, refresh ? undefined : meta[feed.id], now, settings)
   })
 
   const floor = cutoffKey(now, settings.fetch.keepMonths)
   const fresh: Item[] = []
+  const repairs = new Map<string, { month: string; summary: string }>()
   const perFeed: Record<string, FetchFeedOutcome> = {}
   let failed = 0
   let unchanged = 0
   let expired = 0
+  let repaired = 0
   for (const r of results) {
     if ('error' in r) {
       failed++
@@ -339,15 +354,25 @@ export async function runFetch(options: FetchOptions): Promise<FetchResult> {
     }
     let added = 0
     for (const item of r.items ?? []) {
-      if (known.has(item.id)) continue
+      const archived = known.get(item.id)
+      if (archived !== undefined) {
+        // The feed is re-serving a body longer than the archived copy, which
+        // means that copy was cut by a smaller maxSummaryChars when it was
+        // written. Raising the cap should heal the archive, not only new items.
+        if (item.summary.length > archived && item.date.slice(0, 7) >= floor) {
+          repairs.set(item.id, { month: item.date.slice(0, 7), summary: item.summary })
+          known.set(item.id, item.summary.length)
+        }
+        continue
+      }
       // Older than the retention window: never write it, and let prune() drop
       // any shard already fully out of range.
       if (item.date.slice(0, 7) < floor) {
-        known.add(item.id)
+        known.set(item.id, item.summary.length)
         expired++
         continue
       }
-      known.add(item.id)
+      known.set(item.id, item.summary.length)
       fresh.push(item)
       added++
     }
@@ -373,6 +398,38 @@ export async function runFetch(options: FetchOptions): Promise<FetchResult> {
     }
   }
 
+  // Repairing rewrites an existing shard in place; the append above never
+  // touches a known id, so the two passes cannot see the same row.
+  if (repairs.size > 0 && !dryRun) {
+    const byMonth = new Map<string, Map<string, string>>()
+    for (const [id, repair] of repairs) {
+      let patch = byMonth.get(repair.month)
+      if (!patch) {
+        patch = new Map<string, string>()
+        byMonth.set(repair.month, patch)
+      }
+      patch.set(id, repair.summary)
+    }
+    for (const [month, patch] of byMonth) {
+      const file = path.join(itemsDir, `${month}.ndjson`)
+      const rows = await readNdjson<Item | null>(file)
+      // A boxed flag: the map callback runs synchronously, but a plain `let`
+      // trips the unnecessary-condition rule because TS cannot see the write.
+      const applied = { touched: false }
+      const next = rows.map(function (row) {
+        if (!row) return row
+        const summary = patch.get(row.id)
+        if (summary === undefined || summary.length <= (row.summary || '').length) return row
+        applied.touched = true
+        repaired++
+        return Object.assign({}, row, { summary: summary })
+      })
+      if (!applied.touched) continue
+      await writeNdjson(file, next)
+      log(`  repair ${path.relative(root, file)}  ${patch.size} item(s)`)
+    }
+  }
+
   if (!dryRun) {
     const sorted: Record<string, FeedMeta | undefined> = {}
     Object.keys(meta).sort().forEach(function (key) { sorted[key] = meta[key] })
@@ -381,7 +438,8 @@ export async function runFetch(options: FetchOptions): Promise<FetchResult> {
     if (dropped) log(`  prune ${dropped} shard(s) older than ${settings.fetch.keepMonths} months`)
   }
 
-  const counts = `${unchanged} unchanged, ${expired} past retention, ${failed} failed`
+  const repairedNote = repaired > 0 ? `, ${repaired} repaired` : ''
+  const counts = `${unchanged} unchanged, ${expired} past retention, ${failed} failed${repairedNote}`
   const summary = `${dryRun ? 'dry-run: ' : ''}${fresh.length} new item(s), ${counts}`
   log(summary)
   return {
@@ -393,6 +451,7 @@ export async function runFetch(options: FetchOptions): Promise<FetchResult> {
     unchanged: unchanged,
     expired: expired,
     failed: failed,
+    repaired: repaired,
     perFeed: perFeed,
   }
 }

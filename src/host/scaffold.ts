@@ -23,7 +23,7 @@ const FEEDS = `${JSON.stringify({
 }, null, 2)}\n`
 
 const CONFIG = `${JSON.stringify({
-  fetch: { concurrency: 6, timeoutMs: 25000, keepMonths: 6, maxSummaryChars: 2500 },
+  fetch: { concurrency: 6, timeoutMs: 25000, keepMonths: 6, maxSummaryChars: 0 },
   reader: { hideEmptyFeeds: true, markReadOnScroll: true, groupBy: 'none' },
 }, null, 2)}\n`
 

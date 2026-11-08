@@ -12,7 +12,7 @@ import type { GroupBy } from '../shared/types.js'
 import type { RepoConfig } from './types.js'
 
 export const DEFAULTS: RepoConfig = {
-  fetch: { concurrency: 6, timeoutMs: 25000, keepMonths: 6, maxSummaryChars: 2500 },
+  fetch: { concurrency: 6, timeoutMs: 25000, keepMonths: 6, maxSummaryChars: 0 },
   reader: { hideEmptyFeeds: true, markReadOnScroll: true, groupBy: 'none' },
 }
 
@@ -22,6 +22,20 @@ function clampInt(value: unknown, fallback: number, min: number, max: number): n
   const n = Number(value)
   if (!Number.isFinite(n)) return fallback
   return Math.min(max, Math.max(min, Math.round(n)))
+}
+
+/**
+ * Resolve `fetch.maxSummaryChars`. Zero is the default and means the archive
+ * keeps whatever body the feed ships; a positive value is a deliberate cap.
+ * @param {unknown} value configured cap.
+ * @returns {number} the cap in characters, 0 for "no cap".
+ */
+function summaryCap(value: unknown): number {
+  if (value === undefined || value === null || value === '') return DEFAULTS.fetch.maxSummaryChars
+  const n = Number(value)
+  if (!Number.isFinite(n)) return DEFAULTS.fetch.maxSummaryChars
+  if (n <= 0) return 0
+  return Math.min(100000, Math.max(200, Math.round(n)))
 }
 
 function toBool(value: unknown, fallback: boolean): boolean {
@@ -118,7 +132,7 @@ export function readRepoConfig(root: string): RepoConfig {
       concurrency: clampInt(env.GITFEED_CONCURRENCY || f.concurrency, DEFAULTS.fetch.concurrency, 1, 16),
       timeoutMs: clampInt(env.GITFEED_TIMEOUT_MS || f.timeoutMs, DEFAULTS.fetch.timeoutMs, 3000, 120000),
       keepMonths: clampInt(env.GITFEED_KEEP_MONTHS || f.keepMonths, DEFAULTS.fetch.keepMonths, 0, 120),
-      maxSummaryChars: clampInt(f.maxSummaryChars, DEFAULTS.fetch.maxSummaryChars, 200, 20000),
+      maxSummaryChars: summaryCap(f.maxSummaryChars),
     },
     reader: {
       hideEmptyFeeds: toBool(r.hideEmptyFeeds, DEFAULTS.reader.hideEmptyFeeds),

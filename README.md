@@ -285,6 +285,7 @@ plugin uses:
 gitfeed fetch                    # data root: --root, $GITFEED_REPO, else cwd
 gitfeed fetch --only=jvns-ca-atom-xml
 gitfeed fetch --dry-run
+gitfeed fetch --refresh          # ignore cached ETags; re-read every feed
 gitfeed import-opml ~/Downloads/feeds.opml
 gitfeed import-opml --replace ~/Downloads/feeds.opml
 gitfeed init ~/gitfeed           # write the starter data root, with its CI job
@@ -434,7 +435,7 @@ the plugin config, so they survive upgrades.
 | `fetch.concurrency` | 6 | feeds fetched in parallel |
 | `fetch.timeoutMs` | 25000 | per-feed HTTP timeout |
 | `fetch.keepMonths` | 6 | item shards older than this are deleted |
-| `fetch.maxSummaryChars` | 2500 | HTML kept per item |
+| `fetch.maxSummaryChars` | 0 | HTML kept per item; 0 keeps the feed's body whole |
 | `reader.hideEmptyFeeds` | true | initial state of "hide 0-unread" |
 | `reader.markReadOnScroll` | true | initial state of "read on scroll" |
 | `reader.groupBy` | none | initial grouping: none / folder / feed |
@@ -502,7 +503,8 @@ All of these call the same Host methods the reader uses.
 
 `id` is `sha1(feedId + "|" + guid-or-link)` truncated to 16 hex chars, so the
 same entry is never imported twice, even if a feed reorders or re-publishes it.
-`summary` is HTML truncated to `fetch.maxSummaryChars`.
+`summary` is the item HTML as the feed ships it. `fetch.maxSummaryChars` caps it when
+set to a positive number; the default of 0 keeps the body whole.
 
 `data/meta.json` holds per-feed ETag / Last-Modified so re-fetching a quiet feed
 is a 304, plus the last error per feed, which the feed rail surfaces in red.

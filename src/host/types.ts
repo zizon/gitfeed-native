@@ -91,6 +91,8 @@ export interface FetchResult {
   unchanged: number
   expired: number
   failed: number
+  /** Archived items whose body a feed re-served longer than we had it. */
+  repaired: number
   perFeed: Record<string, FetchFeedOutcome>
 }
 

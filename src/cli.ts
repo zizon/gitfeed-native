@@ -22,6 +22,7 @@ interface Flags {
   only?: string
   dataDir?: string
   dryRun?: boolean
+  refresh?: boolean
   replace?: boolean
   help?: boolean
 }
@@ -41,6 +42,8 @@ options:
   --only <feed-id>         fetch exactly one feed
   --data-dir <dir>         output directory relative to the root (default: data)
   --dry-run                fetch and report without writing
+  --refresh                ignore the cached ETag and re-read every feed (after
+                           changing fetch.maxSummaryChars, so long bodies heal)
   --replace                import-opml: replace the subscription list
   -h, --help               show this help
 
@@ -72,6 +75,7 @@ function parseArgv(argv: string[]): { flags: Flags; positional: string[] } {
     }
     if (arg === '-h' || arg === '--help') flags.help = true
     else if (arg === '--dry-run') flags.dryRun = true
+    else if (arg === '--refresh') flags.refresh = true
     else if (arg === '--replace') flags.replace = true
     else if (arg === '--root') flags.root = value('--root')
     else if (arg.startsWith('--root=')) flags.root = arg.slice('--root='.length)
@@ -97,6 +101,7 @@ async function commandFetch(flags: Flags): Promise<number> {
     dataDir: flags.dataDir,
     only: flags.only,
     dryRun:  flags.dryRun,
+    refresh:  flags.refresh,
     onLog: function (line: string) { console.log(line) },
   })
   return result.code
