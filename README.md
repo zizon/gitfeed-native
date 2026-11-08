@@ -48,17 +48,20 @@ digest of the summary, so a list can be skimmed and skipped without opening
 every article. Display prefs turn the digest off (rows then use the shorter
 two-line height); the choice is stored per browser.
 
-Marking read lives at the scope it clears, once. A bar floats at the bottom of
-the list and names the view it would clear: an active search (`Mark results
-read`), the selected source (`Mark Hacker News read`), or the whole view
-(`Mark all read`). Its ▾ appears only when a second scope exists that the view
-cannot reach — every unread item in the library — and that entry needs a
-second, differently placed click. The toast that follows carries **Undo**,
-which takes the mark back in one click. The Feeds list carries a visible ✓ on
-every source with unread items and on every folder header, so a single source
-or folder is marked from its own row. A list group header names its section and
-its size and nothing else: the same scope already has a control where it is
-managed. No key marks in bulk.
+Both actions a reader wants *while reading a feed* live on that feed's section
+row in the list: `Open Source Security  [Unsubscribe] [Mark 16 read]`. The
+section header sticks to the top while its section is in view, so they are at
+hand whenever a post from that feed is on screen; `Unsubscribe` first swaps the
+row into a confirm (`Cancel` / `Unsubscribe`) and only then removes the
+subscription and that feed's items. A folder section can only be marked.
+The Feeds panel keeps the same two marks on a feed's own row, which is how a
+feed is managed without opening it, and no row shows a count twice.
+
+A single selected source is marked from its own row, so the floating bar speaks
+only for a wider view: an active search (`Mark results read`) or the whole
+library (`Mark all read`). Its ▾ appears only when the other of those two
+exists, and the library-wide entry needs a second, differently placed click.
+The toast that follows carries **Undo**. No key marks in bulk.
 
 Background refresh: the rail's second bar ends with the age of the last run
 (`2m`; it shows `…` while a run is in flight and the Fetch button spins then).
@@ -312,9 +315,10 @@ not carry its own theme setting.
   actions in view — mark the source read, and unsubscribe (colored destructive
   on hover, confirmed on click), which removes the subscription and that feed's
   items from both stores. That row is the only unsubscribe entry.
-- **List**: one line per item, grouped by folder or source on request, with a
-  sticky header that names each section and its size. Marking and unsubscribing
-  are not repeated there — the floating bar and the feed rows own them. Rows are virtualized at fixed heights.
+- **List**: one line per item, grouped by folder or source on request. A
+  section header sticks to the top while its section is in view and carries
+  that section's actions — `Mark {n} read`, plus `Unsubscribe` when the section
+  is a source. Rows are virtualized at fixed heights.
   A row that is marked read stays in the Unread list until the scope changes
   (filter, search, or source), so nothing shifts under the pointer while
   reading; a feed or folder that was on screen stays in the Feeds list for the

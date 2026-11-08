@@ -73,6 +73,8 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
   const [markOpen, setMarkOpen] = useState(false)
   /** Only the whole-library entry needs a second, differently placed click. */
   const [markArmed, setMarkArmed] = useState(false)
+  /** The feed whose section header is asking before unsubscribing. */
+  const [pendingUnsub, setPendingUnsub] = useState<string | null>(null)
   function closeMark() {
     setMarkOpen(false)
     setMarkArmed(false)
@@ -277,12 +279,58 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
 
   const listRows = slice.map(function (entry) {
     if (entry.kind === 'group') {
-      // A section header groups rows; it is not another place to act on them.
-      // The same scope already has a control where it is managed — the feed's
-      // own row in the feed list — and the floating button covers the view.
+      const groupUnread = entry.group.items.filter(function (item) { return !state.read.has(item.id) }).length
+      // The section row is where the reader already is, so both things done
+      // *while reading a feed* live here: mark the section read, and stop
+      // following the feed. A folder section can only be marked.
+      const feedId = groupBy === 'feed' ? entry.group.key : ''
+      const confirming = feedId !== '' && pendingUnsub === feedId
       return h('div', { key: entry.key, className: 'gf-group' },
-        h('span', { className: 'gf-group-name' }, entry.group.label),
-        h('span', { className: 'gf-group-count' }, String(entry.group.items.length)))
+        h('span', { className: 'gf-group-name' }, confirming ? t('confirm.unsubscribe') : entry.group.label),
+        h('div', { className: 'gf-group-actions' },
+          confirming
+            ? [
+              h(Button, {
+                key: 'cancel',
+                variant: 'ghost',
+                size: 'sm',
+                className: 'gf-group-read',
+                onClick: function () { setPendingUnsub(null) },
+              }, t('action.cancel')),
+              h(Button, {
+                key: 'remove',
+                variant: 'ghost',
+                size: 'sm',
+                className: 'gf-group-read gf-danger',
+                disabled: state.busy.remove,
+                title: t('confirm.unsubscribeHint'),
+                onClick: function () {
+                  setPendingUnsub(null)
+                  void controller.removeFeed(feedId)
+                },
+              }, t('action.remove')),
+            ]
+            : [
+              feedId
+                ? h(Button, {
+                  key: 'unsub',
+                  variant: 'ghost',
+                  size: 'sm',
+                  className: 'gf-group-unsub',
+                  title: t('confirm.unsubscribeHint'),
+                  onClick: function () { setPendingUnsub(feedId) },
+                }, t('action.remove'))
+                : null,
+              h(Button, {
+                key: 'mark',
+                variant: 'ghost',
+                size: 'sm',
+                className: 'gf-group-read',
+                disabled: !groupUnread,
+                title: t('action.markGroup'),
+                onClick: function () { controller.markGroup(entry.group.key) },
+              }, groupUnread ? tf(t, 'action.markGroupCount', { n: groupUnread }) : t('action.markGroup')),
+            ]))
     }
     const item = entry.item
     const unread = !state.read.has(item.id)
@@ -320,22 +368,16 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
   const scope = useMemo(function (): MarkScope | null {
     if (!count) return null
     const searching = !!state.query.trim()
+    // A single source is marked from that source's own row (here or in the
+    // feed list), so the bar only speaks for a wider view.
     if (searching) return { kind: 'results', label: t('action.markResults'), n: counts.results }
-    if (state.feedId) {
-      return {
-        kind: 'source',
-        label: tf(t, 'action.markNamed', { name: controller.feedTitle(state.feedId) }),
-        n: counts.source,
-        feed: state.feedId,
-      }
-    }
+    if (state.feedId) return null
     return { kind: 'all', label: t('action.markAll'), n: counts.all }
   }, [count, state.query, state.feedId, counts, controller, t])
 
   function runScope() {
     if (!scope || !scope.n) return
     if (scope.kind === 'all') controller.markEverything()
-    else if (scope.kind === 'source') controller.markFeed(scope.feed as string)
     else controller.markAll()
   }
 
@@ -360,17 +402,17 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
   const header = h('div', { className: 'gf-listbar' },
     h('span', { className: 'gf-count-label' }, tf(t, 'items.count', { n: count })))
 
-  const markBar = h('div', { className: `gf-markfloat${scope && scope.n ? '' : ' off'}` },
+  const markBar = !scope ? null : h('div', { className: `gf-markfloat${scope.n ? '' : ' off'}` },
     h(Button, {
       variant: 'ghost',
       size: 'sm',
       className: 'gf-markfloat-main',
-      disabled: !scope || !scope.n,
-      title: scope ? scope.label : t('action.markMenu'),
+      disabled: !scope.n,
+      title: scope.label,
       onClick: runScope,
     },
-    h('span', { className: 'gf-markfloat-label' }, scope ? scope.label : t('action.markMenu')),
-    h('span', { className: 'gf-markfloat-count' }, scope ? String(scope.n) : '')),
+    h('span', { className: 'gf-markfloat-label' }, scope.label),
+    h('span', { className: 'gf-markfloat-count' }, String(scope.n))),
     markRows.length > 0
       ? h(Menu, {
         open: markOpen,

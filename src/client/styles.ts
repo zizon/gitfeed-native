@@ -263,6 +263,11 @@ export const CSS = `
   font-weight: 500;
 }
 .gf-group-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gf-group-actions { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+.gf-group-unsub { color: var(--dsw-alias-label-tertiary); }
+@media (hover: hover) {
+  .gf-group-unsub:hover { color: var(--dsw-alias-state-error-primary); }
+}
 
 .gf-row {
   height: 66px;

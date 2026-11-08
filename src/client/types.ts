@@ -109,11 +109,9 @@ export interface MarkCounts {
 
 /** One marking target the floating bar can switch to as the reader scrolls. */
 export interface MarkScope {
-  kind: 'all' | 'results' | 'source'
+  kind: 'all' | 'results'
   label: string
   n: number
-  /** Source id for the source scope. */
-  feed?: string
 }
 
 export interface SlotProps {
