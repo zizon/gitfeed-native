@@ -355,7 +355,9 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
       h('span', { className: 't' }, item.title || '(untitled)'),
       starred ? h('span', { className: 'gf-star', title: t('action.unstar') }, h(IconStar, { filled: true, size: 12 })) : null),
     h('div', { className: 'gf-row-meta' },
-      h('span', { className: 'feed-name' }, controller.feedTitle(item.feed)),
+      // Every row under a source section would repeat the name the sticky
+      // header already carries; only an ungrouped list needs it per row.
+      groupBy === 'feed' ? null : h('span', { className: 'feed-name' }, controller.feedTitle(item.feed)),
       h('span', { className: 'when' }, fmtTime(item.date))),
     digest ? h('div', { className: 'gf-row-digest' }, digest) : null)
   })

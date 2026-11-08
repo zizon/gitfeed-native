@@ -4,7 +4,6 @@ import { Fragment, h, useEffect, useRef, useState } from '../react.js'
 import type { ReactNode } from '../react.js'
 import {
   Button,
-  IconRefreshOutlineRegular,
   IconSearchOutlineRegular,
   IconWarningOutlineRegular,
   Input,
@@ -239,22 +238,23 @@ export function RefreshState({ state, t }: { state: ClientState; t: Translate })
     run ? tf(t, 'status.feedCount', { n: run.detail?.feeds ?? 0 }) : '',
     run ? tf(t, 'status.fetchLine', { fresh: run.detail?.added ?? 0, failed: run.detail?.failed ?? 0 }) : '',
   ].filter(Boolean).join(' · ')
+  // No glyph: the refresh button a few pixels above already carries one, and a
+  // second arrow that does not act reads as a second button.
   return h('span', {
     className: `gf-refresh-state${job.running ? ' running' : broken ? ' warn' : ''}`,
     title: title,
     'aria-label': title,
     role: 'status',
   },
-  h(IconRefreshOutlineRegular, { size: 12 }),
   job.running ? '…' : age)
 }
 
-export function EmptyArticle({ state, t }: { state: ClientState; t: Translate }) {
-  const unread = state.items.filter(function (item) { return !state.read.has(item.id) }).length
+export function EmptyArticle({ t }: { state: ClientState; t: Translate }) {
+  // The list bar already states the counts; this pane only needs to say what to
+  // do next.
   return h(EmptyState, {
     icon: h(IconRss, { size: 28 }),
     title: t('page.title'),
-    hint: `${tf(t, 'items.count', { n: state.items.length })} · ${tf(t, 'unread.count', { n: unread })}`,
   },
   h('p', { className: 'gf-placeholder-hint' }, t('empty.articleHint')))
 }
