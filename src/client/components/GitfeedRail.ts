@@ -5,7 +5,7 @@ import { Chevron } from "../icons.js";
 import { DEFAULT_LIST } from "../constants.js";
 import { useElementWidth, useKeyboard, useMount, useOutsideClose, useReader } from "../hooks.js";
 import { tf } from "../locales.js";
-import { fmtTime } from "../util.js";
+import { fmtIn, fmtTime } from "../util.js";
 import type { ClientState, GitfeedRailProps } from "../types.js";
 import type { Controller } from "../types.js";
 import type { Translate } from "../locales.js";
@@ -44,12 +44,16 @@ function RailMenu({ state, controller, t, onClose }: {
     h("div", { className: "gf-menu-repo" },
       state.localFetch && state.localFetch.enabled
         ? tf(t, "status.autoEvery", { n: Math.max(1, Math.round(state.localFetch.intervalMs / 60000)) })
+          + (state.localFetch.nextDueAt
+            ? " · " + tf(t, "status.nextIn", { age: fmtIn(state.localFetch.nextDueAt) })
+            : "")
         : t("status.autoOff")),
     state.localFetch
       ? h("div", { className: "gf-menu-repo" },
         (state.localFetch.running ? t("status.running") : t("status.lastRefresh") + ": " + (state.localFetch.lastRunAt ? fmtTime(state.localFetch.lastRunAt) : t("status.never")))
         + (state.localFetch.last && !state.localFetch.running
-          ? " · " + tf(t, "status.fetchLine", { fresh: state.localFetch.last.fresh, failed: state.localFetch.last.failed })
+          ? " · " + tf(t, "status.feedCount", { n: state.localFetch.last.feeds })
+            + " · " + tf(t, "status.fetchLine", { fresh: state.localFetch.last.fresh, failed: state.localFetch.last.failed })
           : ""))
       : null,
     h("div", { className: "gf-menu-sep" }),

@@ -24,6 +24,18 @@ export function fmtTime(iso) {
   return new Date(iso).toISOString().slice(0, 10)
 }
 
+export function fmtIn(iso) {
+  const time = new Date(iso).getTime()
+  if (!Number.isFinite(time)) return ''
+  const diff = time - Date.now()
+  if (diff <= 0) return 'now'
+  const hour = 3600000
+  const day = 86400000
+  if (diff < hour) return Math.max(1, Math.round(diff / 60000)) + 'm'
+  if (diff < day) return Math.round(diff / hour) + 'h'
+  return Math.round(diff / day) + 'd'
+}
+
 export function fmtDate(iso) {
   const date = new Date(iso)
   if (Number.isNaN(date.getTime())) return ''

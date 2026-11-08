@@ -46,6 +46,8 @@ export interface GitfeedConfig {
   repo?: string;
   refreshMinutes?: number;
   idleMinutes?: number;
+  adaptive?: boolean;
+  maxIntervalMinutes?: number;
   allowGit?: boolean;
   tool?: boolean;
 }
@@ -67,6 +69,12 @@ export interface FeedDefinition {
   folder: string | null;
 }
 
+export interface FetchFeedOutcome {
+  added: number;
+  failed: boolean;
+  notModified: boolean;
+}
+
 export interface FetchResult {
   code: number;
   logs: string[];
@@ -76,6 +84,7 @@ export interface FetchResult {
   unchanged: number;
   expired: number;
   failed: number;
+  perFeed: Record<string, FetchFeedOutcome>;
 }
 
 export interface GitActionResult {

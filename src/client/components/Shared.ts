@@ -5,7 +5,7 @@ import type { ClientState, Controller, Toast } from "../types.js";
 import type { Translate } from "../locales.js";
 import { tf } from "../locales.js";
 import { IconRss } from "../icons.js";
-import { fmtTime } from "../util.js";
+import { fmtIn, fmtTime } from "../util.js";
 
 export function FilterTabs({ filter, controller, t, compact }: {
   filter: ClientState["filter"];
@@ -170,7 +170,9 @@ export function RefreshState({ state, t }: { state: ClientState; t: Translate })
   const age = local.lastRunAt ? fmtTime(local.lastRunAt) : t("status.never");
   const title = [
     tf(t, "status.autoEvery", { n: Math.max(1, Math.round(local.intervalMs / 60000)) }),
+    local.nextDueAt ? tf(t, "status.nextIn", { age: fmtIn(local.nextDueAt) }) : "",
     t("status.lastRefresh") + ": " + age,
+    run ? tf(t, "status.feedCount", { n: run.feeds }) : "",
     run ? tf(t, "status.fetchLine", { fresh: run.fresh, failed: run.failed }) : ""
   ].filter(Boolean).join(" · ");
   return h("span", {

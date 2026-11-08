@@ -31,7 +31,15 @@ function parseDate(raw, now) {
   return d;
 }
 
-async function loadFeeds(root) {
+/**
+ * The feeds a run would fetch, with the ids the fetcher assigns them: a
+ * configured `id` goes through the same slug rules, and duplicate ids get a
+ * numeric suffix. The scheduler keys its per-feed clocks by these ids, so both
+ * sides must agree on them.
+ * @param {string} root data root.
+ * @returns {Promise<Array<{id:string,url:string,title:string|null,folder:string|null}>>} runnable feeds.
+ */
+export async function loadRuntimeFeeds(root) {
   const raw = await readJson(pathsFor(root).feeds, null);
   if (!raw || !Array.isArray(raw.feeds)) {
     throw new Error("feeds.json is missing or has no \"feeds\" array");
@@ -202,9 +210,10 @@ async function dropOrphans(itemsDir, live) {
  * @param {string} options.root gitfeed checkout.
  * @param {string} [options.dataDir] output directory relative to `root`; defaults to `data`.
  * @param {string} [options.only] fetch exactly one feed id.
+ * @param {string[]} [options.feeds] fetch only these feed ids (the scheduler's due set).
  * @param {boolean} [options.dryRun] fetch and report without writing.
  * @param {(line: string) => void} [options.onLog] receives every progress line.
- * @returns {Promise<{code:number, logs:string[], summary:string, feeds:number, fresh:number, unchanged:number, expired:number, failed:number}>}
+ * @returns {Promise<{code:number, logs:string[], summary:string, feeds:number, fresh:number, unchanged:number, expired:number, failed:number, perFeed:Record<string,{added:number, failed:boolean, notModified:boolean}>}>}
  */
 export async function runFetch(options) {
   const opts = options || {};
@@ -215,6 +224,8 @@ export async function runFetch(options) {
   const itemsDir = path.join(dataRoot, "items");
   const metaFile = path.join(dataRoot, "meta.json");
   const only = String(opts.only || "");
+  const wanted = Array.isArray(opts.feeds) ? new Set(opts.feeds.map(String)) : null;
+  const restricted = only !== "" || wanted !== null;
   const dryRun = opts.dryRun === true;
   const logs = [];
   const log = function (line) {
@@ -222,20 +233,23 @@ export async function runFetch(options) {
     if (typeof opts.onLog === "function") opts.onLog(line);
   };
 
-  let feeds = await loadFeeds(root);
+  let feeds = await loadRuntimeFeeds(root);
   if (only) feeds = feeds.filter(function (feed) { return feed.id === only; });
+  if (wanted) feeds = feeds.filter(function (feed) { return wanted.has(feed.id); });
   if (feeds.length === 0) {
     const message = only ? "no feed with id " + only : "feeds.json contains no usable feeds";
     log(message);
-    return { code: 1, logs: logs, summary: message, feeds: 0, fresh: 0, unchanged: 0, expired: 0, failed: 0 };
+    return {
+      code: 1, logs: logs, summary: message, feeds: 0, fresh: 0, unchanged: 0, expired: 0, failed: 0, perFeed: {}
+    };
   }
 
   await ensureDir(itemsDir);
   const meta = await readJson(metaFile, {});
   const live = new Set(feeds.map(function (feed) { return feed.id; }));
   let staleFeeds = 0;
-  // A single-feed run must not judge every other feed "unsubscribed".
-  if (!only) {
+  // A restricted run must not judge every other feed "unsubscribed".
+  if (!restricted) {
     for (const key of Object.keys(meta)) {
       if (live.has(key)) continue;
       delete meta[key];
@@ -252,7 +266,7 @@ export async function runFetch(options) {
   const now = new Date();
   log("gitfeed " + now.toISOString() + "  " + feeds.length + " feeds");
   if (staleFeeds) log("  drop " + staleFeeds + " stale feed(s) from meta.json");
-  if (!dryRun && !only) {
+  if (!dryRun && !restricted) {
     const dropped = await dropOrphans(itemsDir, live);
     if (dropped) log("  drop " + dropped + " item(s) from removed feeds");
   }
@@ -263,12 +277,14 @@ export async function runFetch(options) {
 
   const floor = cutoffKey(now, settings.fetch.keepMonths);
   const fresh = [];
+  const perFeed = {};
   let failed = 0;
   let unchanged = 0;
   let expired = 0;
   for (const r of results) {
     if (r.error) {
       failed++;
+      perFeed[r.feed.id] = { added: 0, failed: true, notModified: false };
       log("  err  " + r.feed.id.padEnd(18) + " " + r.error);
       const prevMeta = meta[r.feed.id] || {};
       meta[r.feed.id] = Object.assign({}, prevMeta, {
@@ -283,6 +299,7 @@ export async function runFetch(options) {
     meta[r.feed.id] = Object.assign({ url: r.feed.url, folder: r.feed.folder || null }, r.meta);
     if (r.notModified) {
       unchanged++;
+      perFeed[r.feed.id] = { added: 0, failed: false, notModified: true };
       log("  ok   " + r.feed.id.padEnd(18) + " unchanged");
       continue;
     }
@@ -300,6 +317,7 @@ export async function runFetch(options) {
       fresh.push(item);
       added++;
     }
+    perFeed[r.feed.id] = { added: added, failed: false, notModified: false };
     log("  ok   " + r.feed.id.padEnd(18) + " +" + added + " (" + r.items.length + " seen)");
   }
 
@@ -340,6 +358,7 @@ export async function runFetch(options) {
     fresh: fresh.length,
     unchanged: unchanged,
     expired: expired,
-    failed: failed
+    failed: failed,
+    perFeed: perFeed
   };
 }

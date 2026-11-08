@@ -44,6 +44,8 @@ export interface LocalFetchRun {
   fresh: number;
   failed: number;
   code: number;
+  /** Feeds the run attempted (an adaptive run touches only the due ones). */
+  feeds: number;
 }
 
 export interface LocalFetchInfo {
@@ -52,6 +54,8 @@ export interface LocalFetchInfo {
   lastRunAt: string | null;
   running: boolean;
   last: LocalFetchRun | null;
+  /** Earliest scheduled fetch, or null when nothing is tracked yet. */
+  nextDueAt: string | null;
 }
 
 /** The state payload `/gitfeed/api/state` returns (full or compact). */

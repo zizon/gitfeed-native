@@ -73,7 +73,8 @@ export function pathsFor(root: string): Record<string, string> {
     starred: path.join(root, "data", "starred.ndjson"),
     local: path.join(root, ".local"),
     localItems: path.join(root, ".local", "items"),
-    localMeta: path.join(root, ".local", "meta.json")
+    localMeta: path.join(root, ".local", "meta.json"),
+    localSchedule: path.join(root, ".local", "schedule.json")
   };
 }
 

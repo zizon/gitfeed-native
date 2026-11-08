@@ -180,13 +180,21 @@ commit. The data root is untouched.
 While the reader is open, the Host plugin refreshes into the gitignored
 `.local/` cache:
 
-- every `refreshMinutes` (plugin config, default 5);
+- at most every `refreshMinutes` (plugin config, default 5) — the *minimum*
+  interval between runs;
 - only after the reader made a request in the last `idleMinutes` (default 15),
   so a forgotten panel does not hammer feeds overnight;
 - never into the committed `data/` tree, so it cannot race the Actions job.
 
-Set `refreshMinutes: 0` to disable the schedule. **Fetch** in the reader still
-works.
+Each run fetches only the feeds whose own interval is due. A feed that keeps
+producing items stays on `refreshMinutes`; a feed that answers 304, produces
+nothing, or fails doubles its interval on every quiet run, up to
+`maxIntervalMinutes` (default 1440, once a day), and drops back to the minimum
+the moment it produces an item. That is what keeps a barely-updated blog from
+being polled every five minutes. The per-feed clocks live in
+`.local/schedule.json` — machine-local, never committed. Set `adaptive: false`
+to fetch every feed on every run, or `refreshMinutes: 0` to disable the
+schedule entirely. **Fetch** in the reader still fetches everything.
 
 ### GitHub Actions in the data repository
 
@@ -323,17 +331,24 @@ the plugin config, so they survive upgrades.
 
 Plugin config (the Host row's `config:` in the profile patch):
 
+The shipped defaults are declared in the bundle's `cordis.patch.yml`, so that
+file doubles as the reference for every setting. A profile patch that targets
+the `gitfeed` row replaces `config` wholesale (the Loader never deep-merges it),
+so an override restates every key it should keep.
+
 | key | default | effect |
 | --- | --- | --- |
 | `repo` | `$GITFEED_REPO` or `~/gitfeed` | data root (a checkout of the data repository or a starter copy) |
-| `refreshMinutes` | 5 | local refresh interval; 0 disables the schedule |
+| `refreshMinutes` | 5 | minimum interval between refresh runs, and the interval a feed that keeps producing items gets; 0 disables the schedule |
 | `idleMinutes` | 15 | stop scheduled refreshes after this long without a request |
+| `adaptive` | true | per-feed intervals: quiet or failing feeds back off |
+| `maxIntervalMinutes` | 1440 | ceiling of that backoff |
 | `allowGit` | true | expose Pull and Sync to the reader and the tool |
 | `tool` | true | register the `gitfeed` agent tool |
 
 Precedence: **environment variable > `config.json` > built-in default** for
 fetch/reader values; **environment variable > plugin config > built-in default**
-for `refreshMinutes` and `allowGit`.
+for `refreshMinutes`, `adaptive`, `maxIntervalMinutes` and `allowGit`.
 
 | env | overrides |
 | --- | --- |
@@ -342,6 +357,8 @@ for `refreshMinutes` and `allowGit`.
 | `GITFEED_TIMEOUT_MS` | `fetch.timeoutMs` |
 | `GITFEED_KEEP_MONTHS` | `fetch.keepMonths` |
 | `GITFEED_LOCAL_FETCH_MIN` | plugin `refreshMinutes` (`0` disables) |
+| `GITFEED_FETCH_ADAPTIVE` | plugin `adaptive` (`0` fetches every feed per run) |
+| `GITFEED_FETCH_MAX_MIN` | plugin `maxIntervalMinutes` |
 | `GITFEED_ALLOW_GIT` | plugin `allowGit` (`0` disables) |
 
 ## Agent tool

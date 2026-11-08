@@ -5,8 +5,10 @@ import crypto from "node:crypto";
 import path from "node:path";
 import { copyFile, mkdir, stat } from "node:fs/promises";
 import { feedIdFor, normalizeUrl, readFeeds, resolveFeed, writeFeeds } from "./feeds.js";
-import { runFetch } from "./fetch.js";
+import { loadRuntimeFeeds, runFetch } from "./fetch.js";
 import { pull, readGitInfo, sync } from "./git.js";
+import { applyRun, dueFeeds, nextDueAt, pruneSchedule, readSchedule, writeSchedule } from "./schedule.js";
+import type { ScheduleState } from "./schedule.js";
 import { pathsFor, readRepoConfig } from "./settings.js";
 import { appendNdjson, ensureDir, listShards, readJson, readNdjson, writeNdjson } from "./store.js";
 
@@ -54,6 +56,10 @@ export function createGitfeed(options) {
   const refreshMinutes = Number.isFinite(Number(options.refreshMinutes)) ? Math.max(0, Number(options.refreshMinutes)) : 0;
   const idleMinutes = Number(options.idleMinutes) > 0 ? Number(options.idleMinutes) : 15;
   const allowGit = options.allowGit !== false;
+  const adaptive = options.adaptive !== false;
+  const maxIntervalMinutes = Number.isFinite(Number(options.maxIntervalMinutes))
+    ? Math.max(1, Number(options.maxIntervalMinutes))
+    : 1440;
 
   let snapshotCache = { version: null, data: null };
   let gitCache = { at: 0, value: null };
@@ -62,6 +68,7 @@ export function createGitfeed(options) {
   let fetchRunning = false;
   let lastFetchAt = 0;
   let lastRun = null;
+  let scheduleState: ScheduleState | null = null;
   let lastActivity = Date.now();
   let disposed = false;
   let stopScheduler = null;
@@ -115,13 +122,34 @@ export function createGitfeed(options) {
     return value;
   }
 
-  function localFetchInfo() {
+  async function currentSchedule(): Promise<ScheduleState> {
+    if (!scheduleState) {
+      scheduleState = await readSchedule(root);
+      // A restart keeps reporting the last run and does not fetch again before
+      // the minimum interval has passed.
+      if (scheduleState.lastRun) {
+        if (!lastRun) lastRun = scheduleState.lastRun;
+        const at = Date.parse(scheduleState.lastRun.at);
+        if (Number.isFinite(at)) lastFetchAt = Math.max(lastFetchAt, at);
+      }
+    }
+    return scheduleState;
+  }
+
+  async function localFetchInfo() {
+    let due = null;
+    if (adaptive) {
+      const state = await currentSchedule();
+      const feeds = await loadRuntimeFeeds(root);
+      due = nextDueAt(state, feeds.map(function (feed) { return feed.id; }), Date.now());
+    }
     return {
       enabled: refreshMinutes > 0,
       intervalMs: refreshMinutes * 60000,
       lastRunAt: lastFetchAt ? new Date(lastFetchAt).toISOString() : null,
       running: fetchRunning,
-      last: lastRun
+      last: lastRun,
+      nextDueAt: due === null ? null : new Date(due).toISOString()
     };
   }
 
@@ -210,7 +238,7 @@ export function createGitfeed(options) {
         items: [], read: [], starred: [], feeds: [],
         reader: { hideEmptyFeeds: true, markReadOnScroll: true, groupBy: "none" },
         git: await gitInfo(),
-        localFetch: localFetchInfo(),
+        localFetch: await localFetchInfo(),
         repo: root,
         allowGit: allowGit,
         generatedAt: new Date().toISOString()
@@ -219,7 +247,7 @@ export function createGitfeed(options) {
     const base = {
       version: version,
       git: await gitInfo(),
-      localFetch: localFetchInfo(),
+      localFetch: await localFetchInfo(),
       repo: root,
       allowGit: allowGit,
       generatedAt: new Date().toISOString()
@@ -299,25 +327,40 @@ export function createGitfeed(options) {
 
   /**
    * Run the fetcher into the gitignored `.local/` cache.
-   * @param {{only?: string}} [opts] restrict to one feed id.
+   * @param {{only?: string, feeds?: string[]}} [opts] restrict the run.
    * @returns {Promise<object>} fetcher result.
    */
-  function runLocalFetch(opts?: { only?: string }) {
+  function runLocalFetch(opts?: { only?: string; feeds?: string[] }) {
     const only = opts && opts.only;
+    const feeds = opts && opts.feeds;
     const task = fetchChain.then(async function () {
       if (disposed) throw new Error("gitfeed is unloading");
       await ensureLocalMeta();
       fetchRunning = true;
       try {
-        const result = await runFetch({ root: root, dataDir: ".local", only: only });
+        const result = await runFetch({ root: root, dataDir: ".local", only: only, feeds: feeds });
         lastFetchAt = Date.now();
         lastRun = {
           at: new Date(lastFetchAt).toISOString(),
           summary: result.summary,
           fresh: result.fresh,
           failed: result.failed,
-          code: result.code
+          code: result.code,
+          feeds: result.feeds
         };
+        if (disposed) return result;
+        const state = await currentSchedule();
+        const subscribed = await loadRuntimeFeeds(root);
+        const ids = subscribed.map(function (feed) { return feed.id; });
+        const dropped = pruneSchedule(state, ids);
+        if (dropped) logger.info("gitfeed: dropped " + dropped + " feed(s) from the refresh schedule");
+        applyRun(state, result.perFeed, {
+          nowMs: lastFetchAt,
+          baseMin: Math.max(1, refreshMinutes),
+          maxMin: maxIntervalMinutes
+        });
+        state.lastRun = lastRun;
+        await writeSchedule(root, state);
         invalidate();
         return result;
       } finally {
@@ -491,7 +534,7 @@ export function createGitfeed(options) {
       starred: data.starred.length,
       failingFeeds: data.feeds.filter(function (f) { return !!f.error; }).length,
       git: await gitInfo(),
-      localFetch: localFetchInfo(),
+      localFetch: await localFetchInfo(),
       allowGit: allowGit
     };
   }
@@ -505,17 +548,35 @@ export function createGitfeed(options) {
     let timer = null;
     let stopped = false;
 
-    function tick() {
-      if (stopped || disposed || fetchRunning) return;
+    let ticking = false;
+
+    async function tick() {
+      if (stopped || disposed || fetchRunning || ticking) return;
       if (Date.now() - lastActivity > idleMs) return;
       if (lastFetchAt && Date.now() - lastFetchAt < refreshMs) return;
-      runLocalFetch().catch(function (err) {
+      ticking = true;
+      try {
+        if (!adaptive) {
+          await runLocalFetch();
+          return;
+        }
+        // Only the feeds whose own interval elapsed; a quiet source backs off
+        // on its own clock, so most runs touch a handful of feeds.
+        const state = await currentSchedule();
+        const subscribed = await loadRuntimeFeeds(root);
+        const ids = subscribed.map(function (feed) { return feed.id; });
+        const due = dueFeeds(state, ids, Date.now());
+        if (!due.length) return;
+        await runLocalFetch({ feeds: due });
+      } catch (err) {
         logger.warn("gitfeed: scheduled refresh failed: " + errorText(err));
-      });
+      } finally {
+        ticking = false;
+      }
     }
 
-    warm = setTimeout(tick, 12000);
-    timer = setInterval(tick, 15000);
+    warm = setTimeout(function () { tick(); }, 12000);
+    timer = setInterval(function () { tick(); }, 15000);
     if (typeof warm.unref === "function") warm.unref();
     if (typeof timer.unref === "function") timer.unref();
     stopScheduler = function () {

@@ -1,6 +1,39 @@
 # gitfeed as a native Harness bundle: one Host row owns the data, refresh
 # schedule, git actions, and the agent tool; the package's Client module adds
 # the reader page and its sidebar entry.
+#
+# Settings below are the shipped defaults; the code falls back to the same
+# numbers, so the block is also the documentation of what can be set. A profile
+# patch that targets this row replaces `config` wholesale (the Loader never
+# deep-merges it), so an override restates every key it should keep, e.g.:
+#
+#   - id: gitfeed
+#     name: 'gitfeed-native'
+#     config:
+#       refreshMinutes: 10
+#       adaptive: true
+#       maxIntervalMinutes: 720
+#
+# Environment variables win over the row: GITFEED_REPO,
+# GITFEED_LOCAL_FETCH_MIN, GITFEED_FETCH_ADAPTIVE, GITFEED_FETCH_MAX_MIN,
+# GITFEED_ALLOW_GIT.
 - insert:
     - id: gitfeed
       name: 'gitfeed-native'
+      config:
+        # Data root of the reader. Empty uses ~/gitfeed, or $GITFEED_REPO.
+        repo: ''
+        # Minutes between refresh runs, and the interval a feed that keeps
+        # producing items gets. 0 disables the schedule.
+        refreshMinutes: 5
+        # Stop refreshing while nobody used the reader for this many minutes.
+        idleMinutes: 15
+        # Per-feed adaptive intervals: a quiet or failing feed backs off
+        # instead of being polled on every run.
+        adaptive: true
+        # Ceiling of that backoff, in minutes (1440 = once a day).
+        maxIntervalMinutes: 1440
+        # Enable the Pull/Sync actions and the git status line.
+        allowGit: true
+        # Register the `gitfeed` agent tool.
+        tool: true

@@ -65,12 +65,17 @@ export function apply(ctx: PluginContext, config: GitfeedConfig) {
   const configuredRefresh = settings.refreshMinutes === undefined ? 5 : Number(settings.refreshMinutes);
   const refreshMinutes = Math.max(0, envNumber("GITFEED_LOCAL_FETCH_MIN", configuredRefresh || 0));
   const idleMinutes = Math.max(1, Number(settings.idleMinutes) || 15);
+  const adaptive = envBool("GITFEED_FETCH_ADAPTIVE", settings.adaptive !== false);
+  const configuredMax = settings.maxIntervalMinutes === undefined ? 1440 : Number(settings.maxIntervalMinutes);
+  const maxIntervalMinutes = Math.max(1, envNumber("GITFEED_FETCH_MAX_MIN", Number.isFinite(configuredMax) ? configuredMax : 1440));
   const allowGit = envBool("GITFEED_ALLOW_GIT", settings.allowGit !== false);
   const tool = settings.tool !== false;
   const service = createGitfeed({
     root: root,
     refreshMinutes: refreshMinutes,
     idleMinutes: idleMinutes,
+    adaptive: adaptive,
+    maxIntervalMinutes: maxIntervalMinutes,
     allowGit: allowGit,
     logger: ctx.logger || console
   });
@@ -104,6 +109,7 @@ export function apply(ctx: PluginContext, config: GitfeedConfig) {
   ctx.logger.info(
     "gitfeed: " + root + (refreshMinutes > 0
       ? " — refreshing into .local/ every " + refreshMinutes + " min"
+        + (adaptive ? " (per-feed adaptive intervals, capped at " + maxIntervalMinutes + " min)" : " (all feeds each run)")
       : " — scheduled refresh disabled")
   );
 }
