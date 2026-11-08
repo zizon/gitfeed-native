@@ -1,6 +1,6 @@
 /** State and controller shapes shared by the reader components. */
 
-import type { Feed, GroupBy, GitInfo, Item, LocalFetchInfo, ReaderPrefs } from '../shared/types.js'
+import type { Feed, GroupBy, GitInfo, Item, ReaderPrefs, ScheduleJobInfo } from '../shared/types.js'
 import type { Translate } from './locales.js'
 
 export type Filter = 'unread' | 'all' | 'starred'
@@ -27,7 +27,7 @@ export interface ClientState {
   feedMap: Map<string, Feed>
   reader: ReaderPrefs
   git: GitInfo | null
-  localFetch: LocalFetchInfo | null
+  schedule: ScheduleJobInfo[]
   version: string | null
   repo: string
   allowGit: boolean

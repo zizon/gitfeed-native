@@ -5,16 +5,21 @@ import crypto from 'node:crypto'
 import { copyFile, mkdir, stat } from 'node:fs/promises'
 import { feedIdFor, normalizeUrl, readFeeds, resolveFeed, writeFeeds } from './feeds.js'
 import { loadRuntimeFeeds, runFetch } from './fetch.js'
-import { pull, readGitInfo, sync } from './git.js'
-import { applyRun, dueFeeds, nextDueAt, pruneSchedule, readSchedule, writeSchedule } from './schedule.js'
-import type { ScheduleState } from './schedule.js'
+import { pull as pullRemote, readGitInfo, sync as syncRemote } from './git.js'
+import { createFetchJob, createSyncJob } from './jobs.js'
+import { createScheduler } from './scheduler.js'
+import type { Scheduler } from './scheduler.js'
 import { pathsFor, readRepoConfig } from './settings.js'
 import { appendNdjson, listShards, readJson, readNdjson, writeNdjson } from './store.js'
 import type { FetchResult, GitActionResult, Logger, ReaderStateData, ReadyState, RepoConfig } from './types.js'
 import type { FeedDefinition } from './types.js'
-import type { GitInfo, Item, LocalFetchInfo, LocalFetchRun } from '../shared/types.js'
+import type { GitInfo, Item } from '../shared/types.js'
 
 const MAX_BODY_IDS = 4000
+/** A local mark is pushed after this much quiet, so scrolling marks coalesce. */
+const AUTO_SYNC_DEBOUNCE_MS = 20000
+/** Longest a continuously marking reader waits before a sync. */
+const AUTO_SYNC_MAX_WAIT_MS = 5 * 60000
 
 export type StateResponse = Omit<ReadyState, keyof ReaderStateData> & Partial<ReaderStateData>
 
@@ -26,6 +31,10 @@ export interface GitfeedOptions {
   allowGit?: boolean
   adaptive?: boolean
   maxIntervalMinutes?: number
+  /** Minutes between read-state syncs; 0 disables auto-sync. */
+  syncMinutes?: number
+  /** Ceiling of the sync backoff. */
+  syncMaxMinutes?: number
 }
 
 interface MetaEntry {
@@ -94,21 +103,18 @@ export function createGitfeed(options: GitfeedOptions) {
   const maxIntervalMinutes = Number.isFinite(Number(options.maxIntervalMinutes))
     ? Math.max(1, Number(options.maxIntervalMinutes))
     : 1440
+  const syncMinutes = Number.isFinite(Number(options.syncMinutes)) ? Math.max(0, Number(options.syncMinutes)) : 10
+  const syncMaxMinutes = Number.isFinite(Number(options.syncMaxMinutes))
+    ? Math.max(1, Number(options.syncMaxMinutes))
+    : 60
 
   let snapshotCache: { version: string | null; data: ReaderStateData | null } = { version: null, data: null }
   let gitCache: { at: number; value: GitInfo | null } = { at: 0, value: null }
   let writeQueue = Promise.resolve()
-  let fetchChain = Promise.resolve()
-  let fetchRunning = false
-  let lastFetchAt = 0
-  let lastRun: LocalFetchRun | null = null
-  let scheduleState: ScheduleState | null = null
-  let lastActivity = Date.now()
   let disposed = false
-  let stopScheduler: (() => void) | null = null
 
   function touch() {
-    lastActivity = Date.now()
+    scheduler.touch()
   }
 
   function invalidate() {
@@ -154,37 +160,6 @@ export function createGitfeed(options: GitfeedOptions) {
     const value = await readGitInfo(root)
     gitCache = { at: Date.now(), value: value }
     return value
-  }
-
-  async function currentSchedule(): Promise<ScheduleState> {
-    if (!scheduleState) {
-      scheduleState = await readSchedule(root)
-      // A restart keeps reporting the last run and does not fetch again before
-      // the minimum interval has passed.
-      if (scheduleState.lastRun) {
-        if (!lastRun) lastRun = scheduleState.lastRun
-        const at = Date.parse(scheduleState.lastRun.at)
-        if (Number.isFinite(at)) lastFetchAt = Math.max(lastFetchAt, at)
-      }
-    }
-    return scheduleState
-  }
-
-  async function localFetchInfo(): Promise<LocalFetchInfo> {
-    let due: number | null = null
-    if (adaptive) {
-      const state = await currentSchedule()
-      const feeds = await loadRuntimeFeeds(root)
-      due = nextDueAt(state, feeds.map(function (feed) { return feed.id }), Date.now())
-    }
-    return {
-      enabled: refreshMinutes > 0,
-      intervalMs: refreshMinutes * 60000,
-      lastRunAt: lastFetchAt ? new Date(lastFetchAt).toISOString() : null,
-      running: fetchRunning,
-      last: lastRun,
-      nextDueAt: due === null ? null : new Date(due).toISOString(),
-    }
   }
 
   async function buildSnapshot(cfg: RepoConfig, version: string): Promise<ReaderStateData> {
@@ -272,7 +247,7 @@ export function createGitfeed(options: GitfeedOptions) {
         items: [], read: [], starred: [], feeds: [],
         reader: { hideEmptyFeeds: true, markReadOnScroll: true, groupBy: 'none' },
         git: await gitInfo(),
-        localFetch: await localFetchInfo(),
+        schedule: await scheduler.status(),
         repo: root,
         allowGit: allowGit,
         generatedAt: new Date().toISOString(),
@@ -281,7 +256,7 @@ export function createGitfeed(options: GitfeedOptions) {
     const base = {
       version: version,
       git: await gitInfo(),
-      localFetch: await localFetchInfo(),
+      schedule: await scheduler.status(),
       repo: root,
       allowGit: allowGit,
       generatedAt: new Date().toISOString(),
@@ -330,6 +305,7 @@ export function createGitfeed(options: GitfeedOptions) {
     touch()
     const changed = await setState(paths.read, ids, read)
     invalidate()
+    if (changed > 0) scheduler.debounce('git', AUTO_SYNC_DEBOUNCE_MS, AUTO_SYNC_MAX_WAIT_MS)
     return { ok: true, changed: changed, version: await fileVersion() }
   }
 
@@ -343,6 +319,7 @@ export function createGitfeed(options: GitfeedOptions) {
     touch()
     const changed = await setState(paths.starred, ids, starred)
     invalidate()
+    if (changed > 0) scheduler.debounce('git', AUTO_SYNC_DEBOUNCE_MS, AUTO_SYNC_MAX_WAIT_MS)
     return { ok: true, changed: changed, version: await fileVersion() }
   }
 
@@ -359,53 +336,48 @@ export function createGitfeed(options: GitfeedOptions) {
     }
   }
 
-  /**
-   * Run the fetcher into the gitignored `.local/` cache.
-   * @param {{only?: string, feeds?: string[]}} [opts] restrict the run.
-   * @returns {Promise<object>} fetcher result.
-   */
-  function runLocalFetch(opts?: { only?: string; feeds?: string[] }): Promise<FetchResult> {
-    const only = opts && opts.only
-    const feeds = opts && opts.feeds
-    const task = fetchChain.then(async function () {
+  // The scheduler owns every periodic run: the fetch job's per-feed clocks
+  // and the sync job's push/pull debounce both live here, not in a timer.
+  const scheduler: Scheduler = createScheduler({
+    root: root,
+    logger: logger,
+    idleMinutes: idleMinutes,
+    onRun: invalidate,
+  })
+
+  scheduler.register(createFetchJob({
+    refreshMinutes: refreshMinutes,
+    maxIntervalMinutes: maxIntervalMinutes,
+    adaptive: adaptive,
+    idleMinutes: idleMinutes,
+    loadFeeds: function () { return loadRuntimeFeeds(root) },
+    fetch: async function (scope) {
       if (disposed) throw new Error('gitfeed is unloading')
       await ensureLocalMeta()
-      fetchRunning = true
-      try {
-        const result = await runFetch({ root: root, dataDir: '.local', only: only, feeds: feeds })
-        lastFetchAt = Date.now()
-        lastRun = {
-          at: new Date(lastFetchAt).toISOString(),
-          summary: result.summary,
-          fresh: result.fresh,
-          failed: result.failed,
-          code: result.code,
-          feeds: result.feeds,
-        }
-        // dispose() can flip this while the fetch above is awaiting.
-        // oxlint-disable-next-line typescript/no-unnecessary-condition -- the flag is assigned from dispose()
-        if (disposed) return result
-        const state = await currentSchedule()
-        const subscribed = await loadRuntimeFeeds(root)
-        const ids = subscribed.map(function (feed) { return feed.id })
-        const dropped = pruneSchedule(state, ids)
-        if (dropped) logger.info(`gitfeed: dropped ${dropped} feed(s) from the refresh schedule`)
-        applyRun(state, result.perFeed, {
-          nowMs: lastFetchAt,
-          baseMin: Math.max(1, refreshMinutes),
-          maxMin: maxIntervalMinutes,
-        })
-        state.lastRun = lastRun
-        await writeSchedule(root, state)
-        invalidate()
-        return result
-      } finally {
-        fetchRunning = false
-        lastFetchAt = Date.now()
-      }
-    })
-    fetchChain = task.then(function () { }, function () { })
-    return task
+      return runFetch({ root: root, dataDir: '.local', only: scope.only, feeds: scope.feeds })
+    },
+  }))
+
+  scheduler.register(createSyncJob({
+    allowGit: allowGit,
+    syncMinutes: syncMinutes,
+    maxIntervalMinutes: syncMaxMinutes,
+    gitInfo: gitInfo,
+    pull: function () { return pullRemote(root) },
+    sync: function () { return syncRemote(root) },
+    version: fileVersion,
+  }))
+
+  /**
+   * Run the fetcher into the gitignored `.local/` cache.
+   * @param {{only?: string, feeds?: string[], all?: boolean}} [opts] restrict the run; the default is every feed.
+   * @returns {Promise<object>} fetcher result.
+   */
+  async function runLocalFetch(opts?: { only?: string; feeds?: string[]; all?: boolean }): Promise<FetchResult> {
+    touch()
+    const run = await scheduler.runNow('fetch', opts || { all: true })
+    if (run.value) return run.value as FetchResult
+    throw new Error(run.outcome.summary || 'fetch failed')
   }
 
   /**
@@ -436,6 +408,7 @@ export function createGitfeed(options: GitfeedOptions) {
     feeds.push(entry)
     await writeFeeds(root, feeds)
     invalidate()
+    scheduler.debounce('git', AUTO_SYNC_DEBOUNCE_MS, AUTO_SYNC_MAX_WAIT_MS)
 
     // Pull this one feed into the local cache so it appears immediately. A
     // failure here still leaves the subscription in place.
@@ -469,6 +442,7 @@ export function createGitfeed(options: GitfeedOptions) {
       }
     }
     invalidate()
+    scheduler.debounce('git', AUTO_SYNC_DEBOUNCE_MS, AUTO_SYNC_MAX_WAIT_MS)
     return { ok: true, removed: key }
   }
 
@@ -485,9 +459,11 @@ export function createGitfeed(options: GitfeedOptions) {
     if (name === 'sync' && (info.remotes || []).indexOf('origin') === -1) {
       throw new Error('gitfeed: ' + root + ' has no `origin` remote — add one with `git remote add origin <url>` and try Sync again')
     }
-    const result = name === 'pull' ? await pull(root) : await sync(root)
+    const run = await scheduler.runNow('git', { action: name })
     invalidate()
-    return result
+    const value = run.value
+    if (value && typeof value === 'object') return value as GitActionResult
+    return { ok: false, action: name, error: run.outcome.summary || 'git action failed' }
   }
 
   async function snapshotNow(): Promise<{ cfg: RepoConfig; version: string; data: ReaderStateData }> {
@@ -570,65 +546,21 @@ export function createGitfeed(options: GitfeedOptions) {
       starred: data.starred.length,
       failingFeeds: data.feeds.filter(function (f) { return !!f.error }).length,
       git: await gitInfo(),
-      localFetch: await localFetchInfo(),
+      schedule: await scheduler.status(),
       allowGit: allowGit,
     }
   }
 
   function schedule(): () => void {
-    if (stopScheduler) stopScheduler()
-    if (!(refreshMinutes > 0)) return function () { }
-    const refreshMs = refreshMinutes * 60000
-    const idleMs = Math.max(1, idleMinutes) * 60000
-    let warm: ReturnType<typeof setTimeout> | null = null
-    let timer: ReturnType<typeof setInterval> | null = null
-    let stopped = false
-
-    let ticking = false
-
-    async function tick() {
-      if (stopped || disposed || fetchRunning || ticking) return
-      if (Date.now() - lastActivity > idleMs) return
-      if (lastFetchAt && Date.now() - lastFetchAt < refreshMs) return
-      ticking = true
-      try {
-        if (!adaptive) {
-          await runLocalFetch()
-          return
-        }
-        // Only the feeds whose own interval elapsed; a quiet source backs off
-        // on its own clock, so most runs touch a handful of feeds.
-        const state = await currentSchedule()
-        const subscribed = await loadRuntimeFeeds(root)
-        const ids = subscribed.map(function (feed) { return feed.id })
-        const due = dueFeeds(state, ids, Date.now())
-        if (!due.length) return
-        await runLocalFetch({ feeds: due })
-      } catch (err) {
-        logger.warn('gitfeed: scheduled refresh failed: ' + errorText(err))
-      } finally {
-        ticking = false
-      }
+    scheduler.start()
+    return function (): void {
+      scheduler.stop()
     }
-
-    warm = setTimeout(function () { void tick() }, 12000)
-    timer = setInterval(function () { void tick() }, 15000)
-    if (typeof warm.unref === 'function') warm.unref()
-    if (typeof timer.unref === 'function') timer.unref()
-    const stop = function (): void {
-      stopped = true
-      clearTimeout(warm)
-      clearInterval(timer)
-      stopScheduler = null
-    }
-    stopScheduler = stop
-    return stop
   }
 
   function dispose(): void {
     disposed = true
-    if (stopScheduler) stopScheduler()
-    stopScheduler = null
+    scheduler.stop()
     invalidate()
   }
 

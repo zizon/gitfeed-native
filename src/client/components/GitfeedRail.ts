@@ -21,7 +21,7 @@ import { Article } from './Article.js'
 import { FeedRail } from './FeedRail.js'
 import { ItemList } from './ItemList.js'
 import { IconButton } from './Controls.js'
-import { DisplayPrefs, EmptyArticle, ErrorState, FilterTabs, RefreshState, SearchBox, Toasts } from './Shared.js'
+import { DisplayPrefs, EmptyArticle, ErrorState, FilterTabs, jobOf, RefreshState, SearchBox, Toasts } from './Shared.js'
 
 function RailMenu({ state, controller, t, onClose }: {
   state: ClientState
@@ -40,7 +40,8 @@ function RailMenu({ state, controller, t, onClose }: {
       onClick: function () { onClose(); run() },
     }, label)
   }
-  const auto = state.localFetch
+  const fetchJob = jobOf(state, 'fetch')
+  const syncJob = jobOf(state, 'git')
   return h(MenuSurface, { ref: ref, className: 'gf-popover gf-rail-menu' },
     h(DisplayPrefs, { state: state, controller: controller, t: t }),
     h('div', { className: 'gf-menu-sep' }),
@@ -63,19 +64,34 @@ function RailMenu({ state, controller, t, onClose }: {
     h('div', { className: 'gf-menu-sep' }),
     h('div', { className: 'gf-menu-label' }, t('menu.refresh')),
     h('div', { className: 'gf-menu-info' },
-      auto && auto.enabled
-        ? tf(t, 'status.autoEvery', { n: Math.max(1, Math.round(auto.intervalMs / 60000)) })
-          + (auto.nextDueAt ? ' · ' + tf(t, 'status.nextIn', { age: fmtIn(auto.nextDueAt) }) : '')
+      fetchJob && fetchJob.enabled
+        ? tf(t, 'status.autoEvery', { n: Math.max(1, Math.round(fetchJob.intervalMs / 60000)) })
+          + (fetchJob.nextDueAt ? ' · ' + tf(t, 'status.nextIn', { age: fmtIn(fetchJob.nextDueAt) }) : '')
         : t('status.autoOff')),
-    auto
+    fetchJob
       ? h('div', { className: 'gf-menu-info' },
-        (auto.running
+        (fetchJob.running
           ? t('status.running')
-          : t('status.lastRefresh') + ': ' + (auto.lastRunAt ? fmtTime(auto.lastRunAt) : t('status.never')))
-        + (auto.last && !auto.running
-          ? ' · ' + tf(t, 'status.feedCount', { n: auto.last.feeds })
-            + ' · ' + tf(t, 'status.fetchLine', { fresh: auto.last.fresh, failed: auto.last.failed })
+          : t('status.lastRefresh') + ': ' + (fetchJob.lastRunAt ? fmtTime(fetchJob.lastRunAt) : t('status.never')))
+        + (fetchJob.last && !fetchJob.running
+          ? ' · ' + tf(t, 'status.feedCount', { n: fetchJob.last.detail?.feeds ?? 0 })
+            + ' · ' + tf(t, 'status.fetchLine', {
+            fresh: fetchJob.last.detail?.added ?? 0,
+            failed: fetchJob.last.detail?.failed ?? 0,
+          })
           : ''))
+      : null,
+    h('div', { className: 'gf-menu-sep' }),
+    h('div', { className: 'gf-menu-label' }, t('menu.sync')),
+    h('div', { className: 'gf-menu-info', title: syncJob?.error ?? undefined },
+      syncJob && syncJob.enabled
+        ? tf(t, 'status.autoSyncEvery', { n: Math.max(1, Math.round(syncJob.intervalMs / 60000)) })
+          + (syncJob.nextDueAt ? ' · ' + tf(t, 'status.nextIn', { age: fmtIn(syncJob.nextDueAt) }) : '')
+        : t('status.autoSyncOff')),
+    syncJob && syncJob.lastRunAt
+      ? h('div', { className: 'gf-menu-info' },
+        t('status.lastSync') + ': ' + fmtTime(syncJob.lastRunAt)
+          + (syncJob.last ? ' · ' + (syncJob.last.ok ? t('status.synced') : t('status.syncFailed')) : ''))
       : null,
     h('div', { className: 'gf-menu-sep' }),
     h('div', { className: 'gf-menu-label' }, t('menu.repo')),
@@ -122,6 +138,7 @@ export function GitfeedRail({ controller, t, useTabInfo }: GitfeedRailProps) {
   }
 
   const feedLabel = state.feedId ? controller.feedTitle(state.feedId) : t('feed.all')
+  const fetchRunning = !!jobOf(state, 'fetch')?.running
 
   return h('div', { className: 'gf gf-railpage', ref: rootRef },
     h('div', { className: 'gf-rail-bar' },
@@ -133,9 +150,9 @@ export function GitfeedRail({ controller, t, useTabInfo }: GitfeedRailProps) {
       h(Chevron, { open: feedsOpen })),
       h(IconButton, {
         icon: h(IconRefreshOutlineRegular, { size: 16 }),
-        label: state.localFetch && state.localFetch.running ? t('status.running') : t('action.fetch'),
-        spin: !!(state.localFetch && state.localFetch.running),
-        disabled: state.busy.fetch || !!(state.localFetch && state.localFetch.running),
+        label: fetchRunning ? t('status.running') : t('action.fetch'),
+        spin: fetchRunning,
+        disabled: state.busy.fetch || fetchRunning,
         onClick: function () { void controller.runAction('fetch') },
       }),
       h(IconButton, {

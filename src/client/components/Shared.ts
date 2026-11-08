@@ -13,6 +13,7 @@ import {
   Toast,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ClientState, Controller, Toast as ToastState } from '../types.js'
+import type { ScheduleJobInfo } from '../../shared/types.js'
 import type { Translate } from '../locales.js'
 import { tf } from '../locales.js'
 import { IconRss } from '../icons.js'
@@ -126,9 +127,15 @@ export function DisplayPrefs({ state, controller, t }: {
       }))))
 }
 
+/** One job of the reader's scheduler, by id; the fetch job drives the refresh UI. */
+export function jobOf(state: ClientState, id: string): ScheduleJobInfo | undefined {
+  return state.schedule.find(function (job) { return job.id === id })
+}
+
 export function GitStatus({ state, t }: { state: ClientState; t: Translate }) {
   const git = state.git
-  const local = state.localFetch
+  const fetchJob = jobOf(state, 'fetch')
+  const syncJob = jobOf(state, 'git')
   const nodes: ReactNode[] = []
   if (!git || !git.repo) {
     nodes.push(h('span', { key: 'nogit', className: 'gf-muted' }, t('status.noGit')))
@@ -138,16 +145,34 @@ export function GitStatus({ state, t }: { state: ClientState; t: Translate }) {
     else if (git.ahead) nodes.push(h('span', { key: 'ahead' }, tf(t, 'status.ahead', { n: git.ahead })))
     else if (git.dirty) nodes.push(h('span', { key: 'dirty', className: 'gf-warn' }, t('status.dirty')))
   }
-  if (local && local.enabled) {
-    const detail = [t('status.lastRefresh') + ': ' + (local.lastRunAt ? fmtTime(local.lastRunAt) : t('status.never'))]
-    if (local.last) detail.push(tf(t, 'status.fetchLine', { fresh: local.last.fresh, failed: local.last.failed }))
+  if (fetchJob && fetchJob.enabled) {
+    const detail = [t('status.lastRefresh') + ': ' + (fetchJob.lastRunAt ? fmtTime(fetchJob.lastRunAt) : t('status.never'))]
+    if (fetchJob.last) {
+      detail.push(tf(t, 'status.fetchLine', {
+        fresh: fetchJob.last.detail?.added ?? 0,
+        failed: fetchJob.last.detail?.failed ?? 0,
+      }))
+    }
     nodes.push(h('span', {
       key: 'auto',
-      className: local.last && local.last.code !== 0 ? 'gf-warn' : undefined,
+      className: fetchJob.last && !fetchJob.last.ok ? 'gf-warn' : undefined,
       title: detail.join(' · '),
-    }, `↻ ${Math.max(1, Math.round(local.intervalMs / 60000))}m`))
+    }, `↻ ${Math.max(1, Math.round(fetchJob.intervalMs / 60000))}m`))
   }
-  if (local && local.running) nodes.push(h('span', { key: 'running', className: 'gf-muted' }, t('status.running')))
+  if (fetchJob && fetchJob.running) nodes.push(h('span', { key: 'running', className: 'gf-muted' }, t('status.running')))
+  if (syncJob && syncJob.enabled) {
+    const detail = [
+      tf(t, 'status.autoSyncEvery', { n: Math.max(1, Math.round(syncJob.intervalMs / 60000)) }),
+      syncJob.nextDueAt ? tf(t, 'status.nextIn', { age: fmtIn(syncJob.nextDueAt) }) : '',
+      t('status.lastSync') + ': ' + (syncJob.lastRunAt ? fmtTime(syncJob.lastRunAt) : t('status.never')),
+      syncJob.last ? (syncJob.last.ok ? t('status.synced') : t('status.syncFailed')) : '',
+    ].filter(Boolean).join(' · ')
+    nodes.push(h('span', {
+      key: 'sync',
+      className: syncJob.last && !syncJob.last.ok ? 'gf-warn' : undefined,
+      title: detail,
+    }, `⇄ ${Math.max(1, Math.round(syncJob.intervalMs / 60000))}m`))
+  }
   return h('div', { className: 'gf-status' }, nodes)
 }
 
@@ -200,28 +225,28 @@ export function ErrorState({ state, controller, t }: {
 
 /** Compact background-refresh indicator: age of the last run, and a warn tint when it failed. */
 export function RefreshState({ state, t }: { state: ClientState; t: Translate }) {
-  const local = state.localFetch
-  if (!local || !local.enabled) return null
-  const run = local.last
+  const job = jobOf(state, 'fetch')
+  if (!job || !job.enabled) return null
+  const run = job.last
   // Partial failures stay quiet: the Feeds list marks those rows and the
   // tooltip carries the counts. Only a run where every feed failed is an alarm.
-  const broken = run ? run.code !== 0 : false
-  const age = local.lastRunAt ? fmtTime(local.lastRunAt) : t('status.never')
+  const broken = run ? !run.ok : false
+  const age = job.lastRunAt ? fmtTime(job.lastRunAt) : t('status.never')
   const title = [
-    tf(t, 'status.autoEvery', { n: Math.max(1, Math.round(local.intervalMs / 60000)) }),
-    local.nextDueAt ? tf(t, 'status.nextIn', { age: fmtIn(local.nextDueAt) }) : '',
+    tf(t, 'status.autoEvery', { n: Math.max(1, Math.round(job.intervalMs / 60000)) }),
+    job.nextDueAt ? tf(t, 'status.nextIn', { age: fmtIn(job.nextDueAt) }) : '',
     t('status.lastRefresh') + ': ' + age,
-    run ? tf(t, 'status.feedCount', { n: run.feeds }) : '',
-    run ? tf(t, 'status.fetchLine', { fresh: run.fresh, failed: run.failed }) : '',
+    run ? tf(t, 'status.feedCount', { n: run.detail?.feeds ?? 0 }) : '',
+    run ? tf(t, 'status.fetchLine', { fresh: run.detail?.added ?? 0, failed: run.detail?.failed ?? 0 }) : '',
   ].filter(Boolean).join(' · ')
   return h('span', {
-    className: 'gf-refresh-state' + (local.running ? ' running' : broken ? ' warn' : ''),
+    className: 'gf-refresh-state' + (job.running ? ' running' : broken ? ' warn' : ''),
     title: title,
     'aria-label': title,
     role: 'status',
   },
   h(IconRefreshOutlineRegular, { size: 12 }),
-  local.running ? '…' : age)
+  job.running ? '…' : age)
 }
 
 export function EmptyArticle({ state, t }: { state: ClientState; t: Translate }) {

@@ -1,6 +1,6 @@
-# gitfeed as a native Harness bundle: one Host row owns the data, refresh
-# schedule, git actions, and the agent tool; the package's Client module adds
-# the reader page and its sidebar entry.
+# gitfeed as a native Harness bundle: one Host row owns the data, the adaptive
+# refresh/sync scheduler, git actions, and the agent tool; the package's Client
+# module adds the reader page and its sidebar entry.
 #
 # Settings below are the shipped defaults; the code falls back to the same
 # numbers, so the block is also the documentation of what can be set. A profile
@@ -16,7 +16,7 @@
 #
 # Environment variables win over the row: GITFEED_REPO,
 # GITFEED_LOCAL_FETCH_MIN, GITFEED_FETCH_ADAPTIVE, GITFEED_FETCH_MAX_MIN,
-# GITFEED_ALLOW_GIT.
+# GITFEED_SYNC_MIN, GITFEED_SYNC_MAX_MIN, GITFEED_ALLOW_GIT.
 - insert:
     - id: gitfeed
       name: 'gitfeed-native'
@@ -33,7 +33,13 @@
         adaptive: true
         # Ceiling of that backoff, in minutes (1440 = once a day).
         maxIntervalMinutes: 1440
-        # Enable the Pull/Sync actions and the git status line.
+        # Minutes between read-state syncs: local marks are committed and
+        # pushed after a short debounce, and a quiet reader only pulls. 0
+        # disables auto-sync; Pull and Sync stay manual.
+        syncMinutes: 10
+        # Ceiling of the sync backoff, in minutes.
+        syncMaxMinutes: 60
+        # Enable the Pull/Sync actions, auto-sync, and the git status line.
         allowGit: true
         # Register the `gitfeed` agent tool.
         tool: true

@@ -1,16 +1,13 @@
-// Per-feed refresh policy.
+// Per-feed clocks for the fetch job.
 //
-// The reader's schedule has two layers. A global minimum interval keeps any two
-// refresh runs apart (the plugin's `refreshMinutes`), and every feed carries its
-// own `nextAt`: a feed that keeps producing items stays at the minimum, while a
-// quiet or failing feed doubles its interval up to a ceiling. The state is a
-// property of this machine's network and habits, so it lives in the gitignored
-// `.local` cache and never enters the data repository.
+// The scheduler gives the fetch job one job-level interval, but a reader
+// subscribes to feeds that publish at very different rates. Each feed
+// therefore carries its own `nextAt`: a feed that keeps producing items stays
+// at the base interval, while a quiet or failing feed doubles its interval up
+// to the ceiling. The fetch job stores these clocks in its own payload inside
+// `.local/schedule.json`; they are machine-local and never committed.
 
-import { readJson, writeJson } from './store.js'
-import { pathsFor } from './settings.js'
-
-/** One feed's place in the refresh schedule. */
+/** One feed's place in the fetch schedule. */
 export interface FeedScheduleEntry {
   /** Minutes this feed waits between fetches. */
   intervalMin: number
@@ -22,12 +19,7 @@ export interface FeedScheduleEntry {
   lastFreshAt: number
 }
 
-export interface ScheduleState {
-  version: 1
-  feeds: Record<string, FeedScheduleEntry | undefined>
-  /** Last completed run, so a restart still reports when and what it did. */
-  lastRun?: import('../shared/types.js').LocalFetchRun | null
-}
+export type FeedClocks = Record<string, FeedScheduleEntry | undefined>
 
 /** What one run observed for one feed, as `runFetch` reports it. */
 export interface FeedOutcome {
@@ -35,67 +27,32 @@ export interface FeedOutcome {
   failed?: boolean
 }
 
-export function emptySchedule(): ScheduleState {
-  return { version: 1, feeds: {} }
-}
-
-function isEntry(value: unknown): value is FeedScheduleEntry {
-  if (!value || typeof value !== 'object') return false
-  const entry = value as Record<string, unknown>
-  return Number.isFinite(entry.intervalMin) && Number.isFinite(entry.nextAt)
-}
-
-/** Read the local schedule; a missing or unreadable file starts an empty one. */
-export async function readSchedule(root: string): Promise<ScheduleState> {
-  const raw = await readJson<Record<string, unknown> | null>(pathsFor(root).localSchedule, null)
-  if (!raw || raw.version !== 1) return emptySchedule()
-  const feeds: Record<string, FeedScheduleEntry | undefined> = {}
-  const source = raw.feeds
-  if (source && typeof source === 'object') {
-    for (const [id, value] of Object.entries(source as Record<string, unknown>)) {
-      if (isEntry(value)) feeds[id] = value
-    }
-  }
-  const lastRun = raw.lastRun
-  const state: ScheduleState = { version: 1, feeds: feeds }
-  if (lastRun && typeof lastRun === 'object') state.lastRun = lastRun as import('../shared/types.js').LocalFetchRun
-  return state
-}
-
-/** Persist the schedule in the gitignored cache. */
-export async function writeSchedule(root: string, state: ScheduleState): Promise<void> {
-  const feeds: Record<string, FeedScheduleEntry | undefined> = {}
-  for (const id of Object.keys(state.feeds).sort()) feeds[id] = state.feeds[id]
-  const payload: Record<string, unknown> = { version: 1, feeds: feeds }
-  if (state.lastRun) payload.lastRun = state.lastRun
-  await writeJson(pathsFor(root).localSchedule, payload)
-}
-
 /**
  * Feeds whose next fetch is due, in subscription order.
- * @param state the persisted schedule.
+ * @param clocks the fetch job's per-feed clocks.
  * @param feedIds the ids currently subscribed.
  * @param nowMs current epoch milliseconds.
  * @returns ids to fetch now.
  */
-export function dueFeeds(state: ScheduleState, feedIds: string[], nowMs: number): string[] {
+export function dueFeeds(clocks: FeedClocks, feedIds: string[], nowMs: number): string[] {
   return feedIds.filter(function (id) {
-    const entry = state.feeds[id]
+    const entry = clocks[id]
     return !entry || entry.nextAt <= nowMs
   })
 }
 
 /**
  * Earliest scheduled fetch across the subscribed feeds.
- * @param state the persisted schedule.
+ * @param clocks the fetch job's per-feed clocks.
  * @param feedIds the ids currently subscribed.
  * @param nowMs current epoch milliseconds; a feed with no entry is due now.
- * @returns epoch milliseconds, or null when the schedule is empty.
+ * @returns epoch milliseconds, or null when there is nothing subscribed.
  */
-export function nextDueAt(state: ScheduleState, feedIds: string[], nowMs: number): number | null {
+export function nextDueAt(clocks: FeedClocks, feedIds: string[], nowMs: number): number | null {
+  if (feedIds.length === 0) return null
   let earliest: number | null = null
   for (const id of feedIds) {
-    const entry = state.feeds[id]
+    const entry = clocks[id]
     if (!entry) return nowMs
     if (earliest === null || entry.nextAt < earliest) earliest = entry.nextAt
   }
@@ -103,18 +60,18 @@ export function nextDueAt(state: ScheduleState, feedIds: string[], nowMs: number
 }
 
 /**
- * Fold one run's outcome into the schedule.
+ * Fold one run's outcome into the per-feed clocks.
  *
- * A feed that produced items returns to the minimum interval; one that was
+ * A feed that produced items returns to the base interval; one that was
  * unchanged, not modified, or failed doubles its current interval. Feeds move
  * on independent clocks, which is what keeps a rarely updated source from
  * being polled on every run.
- * @param state the schedule to update in place.
+ * @param clocks the fetch job's per-feed clocks, updated in place.
  * @param outcomes per-feed results of the run.
  * @param options clock and interval bounds, all in minutes except `nowMs`.
  */
 export function applyRun(
-  state: ScheduleState,
+  clocks: FeedClocks,
   outcomes: Record<string, FeedOutcome>,
   options: { nowMs: number; baseMin: number; maxMin: number },
 ): void {
@@ -122,11 +79,11 @@ export function applyRun(
   const max = Math.max(base, Math.round(options.maxMin))
   for (const id of Object.keys(outcomes)) {
     const outcome = outcomes[id]
-    const prev = state.feeds[id]
+    const prev = clocks[id]
     const current = prev && prev.intervalMin > 0 ? prev.intervalMin : base
     const fresh = outcome.added > 0
     const intervalMin = fresh ? base : Math.min(max, Math.max(base, current * 2))
-    state.feeds[id] = {
+    clocks[id] = {
       intervalMin: intervalMin,
       nextAt: options.nowMs + intervalMin * 60000,
       quiet: fresh ? 0 : (prev ? prev.quiet + 1 : 1),
@@ -136,13 +93,13 @@ export function applyRun(
   }
 }
 
-/** Drop entries for feeds that are no longer subscribed. */
-export function pruneSchedule(state: ScheduleState, feedIds: string[]): number {
+/** Drop clocks for feeds that are no longer subscribed. */
+export function pruneSchedule(clocks: FeedClocks, feedIds: string[]): number {
   const live = new Set(feedIds)
   let dropped = 0
-  for (const id of Object.keys(state.feeds)) {
+  for (const id of Object.keys(clocks)) {
     if (live.has(id)) continue
-    Reflect.deleteProperty(state.feeds, id)
+    Reflect.deleteProperty(clocks, id)
     dropped++
   }
   return dropped

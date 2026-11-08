@@ -1,6 +1,6 @@
 /** The reader's single client state machine, shared by every surface. */
 
-import type { Feed, GitInfo, GroupBy, Item, LocalFetchInfo, ReaderPrefs } from '../shared/types.js'
+import type { Feed, GitInfo, GroupBy, Item, ReaderPrefs, ScheduleJobInfo } from '../shared/types.js'
 import { DEFAULT_LIST, DEFAULT_RAIL, LS, PREFIX } from './constants.js'
 import type { Translate } from './locales.js'
 import { tf } from './locales.js'
@@ -42,7 +42,7 @@ interface StateResponse {
   starred?: string[]
   reader?: ReaderPrefs
   git?: GitInfo | null
-  localFetch?: LocalFetchInfo | null
+  schedule?: ScheduleJobInfo[]
   repo?: string
   allowGit?: boolean
 }
@@ -61,7 +61,7 @@ export function createController(t: Translate): Controller {
     feedMap: new Map(),
     reader: { hideEmptyFeeds: true, markReadOnScroll: true, groupBy: 'none' },
     git: null,
-    localFetch: null,
+    schedule: [],
     version: null,
     repo: '',
     allowGit: true,
@@ -243,7 +243,7 @@ export function createController(t: Translate): Controller {
           error: null,
           loadedOnce: true,
           git: data.git || state.git,
-          localFetch: data.localFetch || state.localFetch,
+          schedule: Array.isArray(data.schedule) ? data.schedule : state.schedule,
           repo: data.repo || state.repo,
           allowGit: data.allowGit !== false,
         })
@@ -256,7 +256,7 @@ export function createController(t: Translate): Controller {
           loadedOnce: true,
           version: data.version || null,
           git: data.git || null,
-          localFetch: data.localFetch || null,
+          schedule: Array.isArray(data.schedule) ? data.schedule : [],
         })
         return
       }
@@ -278,7 +278,7 @@ export function createController(t: Translate): Controller {
         starred: new Set<string>(Array.isArray(data.starred) ? data.starred : []),
         reader: data.reader || state.reader,
         git: data.git || null,
-        localFetch: data.localFetch || null,
+        schedule: Array.isArray(data.schedule) ? data.schedule : [],
         version: data.version || null,
         repo: data.repo || state.repo,
         allowGit: data.allowGit !== false,

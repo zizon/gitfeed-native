@@ -2,7 +2,8 @@
 
 A personal RSS reader rendered as a **native DeepSeek Harness plugin**: a reader
 page in the right Sidebar (beside Files) and in the main panel, a Host-side
-refresh schedule, git sync, and one compact `gitfeed` agent tool.
+adaptive scheduler for feed refresh and read-state sync, and one compact
+`gitfeed` agent tool.
 
 The package is **code only**. The data it reads lives in a separate repository,
 so installing, updating, and sharing the plugin never touches subscriptions,
@@ -60,10 +61,12 @@ visible ✓ on every source with unread items and on every folder header, and
 each list group header offers `Mark {n} read`.
 
 Background refresh: the rail's second bar ends with the age of the last run
-(`⟳ 2m`; it pulses while a run is in flight and the Fetch button spins then),
-and the ⋯ menu's **Refresh** block shows the interval and the last result
-(`0 new · 35 failed`). The main page's status line carries the same detail in
-its tooltip.
+(`⟳ 2m`; it pulses while a run is in flight and the Fetch button spins then).
+The ⋯ menu's **Refresh** block shows the interval and the last result
+(`0 new · 35 failed`), and its **Sync** block shows the auto-sync interval,
+the next run, and the last result. The main page's status line carries
+`↻ 5m` for refresh and `⇄ 10m` for sync, both with the same detail in their
+tooltips.
 
 ## Where it lives in the Harness UI
 
@@ -91,8 +94,8 @@ double-click it to reset. The width is stored with the main page's list width.
 | main panel | `main` key `gitfeed` + `sidebar.panellist` icon |
 | agent tool | `ctx.tools.register({ name: 'gitfeed', ... })` |
 
-The route and the schedule are registered with `ctx.effect`, so both disappear
-when the row unloads. `mark`/`star` responses carry the new state version, which
+The route and the scheduler are registered with `ctx.effect`, so both
+disappear when the row unloads. `mark`/`star` responses carry the new state version, which
 lets the Client poll compactly after an optimistic update.
 
 ## Install
@@ -181,28 +184,53 @@ address (in the Web UI, remove the source and add it again). The new commit
 rebuilds through the same `prepare` script, and the approval key follows the new
 commit. The data root is untouched.
 
-## Fetching
+## Fetching and syncing
 
-### Local fast refresh
+### Adaptive scheduler
 
-While the reader is open, the Host plugin refreshes into the gitignored
-`.local/` cache:
+The Host plugin owns one scheduler for every periodic thing the reader does.
+Each job has a base interval and a ceiling: a run that produced something
+(items fetched, state committed or pulled) returns the job to its base
+interval, while a quiet or failing run doubles the interval, up to the
+ceiling. The scheduler sleeps until the earliest job is due instead of polling
+on a fixed tick, so the Refresh and Sync clocks share one timer.
 
-- at most every `refreshMinutes` (plugin config, default 5) — the *minimum*
-  interval between runs;
-- only after the reader made a request in the last `idleMinutes` (default 15),
+Two jobs are registered today. A new one implements `available`, `due`, and
+`run` and is registered next to them in `src/host/service.ts`.
+
+**Refresh** refills the gitignored `.local/` cache:
+
+- base interval `refreshMinutes` (default 5), ceiling `maxIntervalMinutes`
+  (default 1440, once a day);
+- only while the reader made a request in the last `idleMinutes` (default 15),
   so a forgotten panel does not hammer feeds overnight;
+- each run fetches only the feeds whose own clock is due. A feed that keeps
+  producing items stays on the base interval; a feed that answers 304,
+  produces nothing, or fails doubles its interval on every quiet run, up to
+  the ceiling, and drops back the moment it produces an item. That is what
+  keeps a barely-updated blog from being polled every five minutes;
 - never into the committed `data/` tree, so it cannot race the Actions job.
 
-Each run fetches only the feeds whose own interval is due. A feed that keeps
-producing items stays on `refreshMinutes`; a feed that answers 304, produces
-nothing, or fails doubles its interval on every quiet run, up to
-`maxIntervalMinutes` (default 1440, once a day), and drops back to the minimum
-the moment it produces an item. That is what keeps a barely-updated blog from
-being polled every five minutes. The per-feed clocks live in
-`.local/schedule.json` — machine-local, never committed. Set `adaptive: false`
-to fetch every feed on every run, or `refreshMinutes: 0` to disable the
-schedule entirely. **Fetch** in the reader still fetches everything.
+**Sync** publishes and repairs read state:
+
+- local marks, stars, and subscription changes start a short debounce, so a
+  session's marks are committed, rebased, and pushed about twenty seconds
+  after the last change; a burst of scroll marks coalesces into one commit;
+- on a quiet machine it backs off to `syncMaxMinutes` (default 60) and only
+  pulls, which is how a second device's marks and the data repository's
+  Actions commits arrive without pressing Pull;
+- it waits `syncMinutes` (default 10) before its first run, so a plugin
+  update does not push on its first second; that first run publishes any read
+  state that was already waiting for a manual Sync; `syncMinutes: 0` disables
+  auto-sync while Pull and Sync stay manual;
+- it needs `allowGit`, a git working tree, and an `origin` remote; otherwise
+  the job reports why it is off, using the repository facts the status line
+  already caches rather than shelling out per tick.
+
+Set `adaptive: false` to fetch every feed on every run. The job clocks and the
+per-feed clocks live in `.local/schedule.json` — machine-local, never
+committed, version 2; a version-1 file (the fetch-only format) is read as the
+Refresh job's state. **Fetch** in the reader still fetches everything.
 
 ### GitHub Actions in the data repository
 
@@ -392,12 +420,15 @@ so an override restates every key it should keep.
 | `idleMinutes` | 15 | stop scheduled refreshes after this long without a request |
 | `adaptive` | true | per-feed intervals: quiet or failing feeds back off |
 | `maxIntervalMinutes` | 1440 | ceiling of that backoff |
-| `allowGit` | true | expose Pull and Sync to the reader and the tool |
+| `syncMinutes` | 10 | minutes between read-state syncs; marks push after a ~20 s debounce and a quiet reader backs off to `syncMaxMinutes`; 0 disables auto-sync |
+| `syncMaxMinutes` | 60 | ceiling of the sync backoff |
+| `allowGit` | true | expose Pull and Sync, enable auto-sync, and show the git status line |
 | `tool` | true | register the `gitfeed` agent tool |
 
 Precedence: **environment variable > `config.json` > built-in default** for
 fetch/reader values; **environment variable > plugin config > built-in default**
-for `refreshMinutes`, `adaptive`, `maxIntervalMinutes` and `allowGit`.
+for `refreshMinutes`, `adaptive`, `maxIntervalMinutes`, `syncMinutes`,
+`syncMaxMinutes` and `allowGit`.
 
 | env | overrides |
 | --- | --- |
@@ -408,13 +439,15 @@ for `refreshMinutes`, `adaptive`, `maxIntervalMinutes` and `allowGit`.
 | `GITFEED_LOCAL_FETCH_MIN` | plugin `refreshMinutes` (`0` disables) |
 | `GITFEED_FETCH_ADAPTIVE` | plugin `adaptive` (`0` fetches every feed per run) |
 | `GITFEED_FETCH_MAX_MIN` | plugin `maxIntervalMinutes` |
+| `GITFEED_SYNC_MIN` | plugin `syncMinutes` (`0` disables auto-sync) |
+| `GITFEED_SYNC_MAX_MIN` | plugin `syncMaxMinutes` |
 | `GITFEED_ALLOW_GIT` | plugin `allowGit` (`0` disables) |
 
 ## Agent tool
 
 | action | parameters | result |
 | --- | --- | --- |
-| `status` | — | repo, version, feed/item/unread counts, git and refresh state |
+| `status` | — | repo, version, feed/item/unread counts, git and scheduler state |
 | `list` | `query`, `feed`, `unreadOnly`, `starredOnly`, `limit` | compact item rows with a short excerpt |
 | `get` | `id` | one item's plain-text summary (up to 12k chars) |
 | `mark` | `ids`, `read` | changed count |
@@ -457,9 +490,9 @@ shards.
 ```
 package.json                bundle metadata: dsh.bundle patch, dsh.client module, bin, files, prepare
 cordis.patch.yml            inserts the `gitfeed` Host row
-src/index.ts                typed Host entry: route, schedule, tool
+src/index.ts                typed Host entry: route, scheduler, tool
 src/cli.ts                  `gitfeed fetch | import-opml | init`
-src/host/                   settings, scaffold, store, OPML, XML, fetch, git, service, HTTP, tool
+src/host/                   settings, scaffold, store, OPML, XML, fetch, git, scheduler, jobs, service, HTTP, tool
 src/client/                 native reader: controller, hooks, components, styles, locales
 src/shared/                 item/feed/state types shared by both halves
 build.mjs                   tsc Host + esbuild Client into the loader envelope
@@ -489,9 +522,11 @@ node build.mjs                     # rebuild after an edit
 
 Then point the plugin at this checkout by installing the bundle (or, for an
 already installed profile, replace `node_modules/gitfeed-native` by a local
-install) and toggle **Plugins → gitfeed-native** off/on. The Host entry module
-is cached by the process, so a `dsh web` restart is the reliable reload; the
-Client bundle reloads on a page refresh once the plugin is re-activated.
+install) and toggle **Plugins → gitfeed-native** off/on. With HMR on, a linked
+checkout's changed modules are replaced on the next profile recomposition (any
+Plugin Manager change, or an edit to the profile patch), so a rebuilt `lib/`
+usually takes effect without a restart; a `dsh web` restart is the fallback.
+The Client bundle reloads on a page refresh once the plugin is re-activated.
 
 The build uses `tsc` for the ESM Host tree and `esbuild` for the Client bundle,
 both from `node_modules`. The Client resolves `react` and

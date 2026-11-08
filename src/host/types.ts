@@ -48,6 +48,8 @@ export interface GitfeedConfig {
   idleMinutes?: number
   adaptive?: boolean
   maxIntervalMinutes?: number
+  syncMinutes?: number
+  syncMaxMinutes?: number
   allowGit?: boolean
   tool?: boolean
 }
@@ -109,7 +111,7 @@ export interface ReadyState extends ReaderStateData {
   version: string
   unchanged?: boolean
   git: import('../shared/types.js').GitInfo | null
-  localFetch: import('../shared/types.js').LocalFetchInfo
+  schedule: import('../shared/types.js').ScheduleJobInfo[]
   generatedAt: string
   error?: string
 }

@@ -38,24 +38,32 @@ export interface GitInfo {
   error?: string
 }
 
-export interface LocalFetchRun {
+/** One completed run of a scheduled job. */
+export interface ScheduleJobRun {
   at: string
+  ok: boolean
+  /** The run produced new work: items, commits, or pulled changes. */
+  fresh: boolean
   summary: string
-  fresh: number
-  failed: number
-  code: number
-  /** Feeds the run attempted (an adaptive run touches only the due ones). */
-  feeds: number
+  /** Job-specific counters for the status line (fetch: added/failed/feeds). */
+  detail?: Record<string, number>
 }
 
-export interface LocalFetchInfo {
+/** One job of the reader's adaptive scheduler, as `/gitfeed/api/state` reports it. */
+export interface ScheduleJobInfo {
+  id: string
+  label: string
+  /** False when the job is registered but cannot run, for example without an origin remote. */
   enabled: boolean
+  /** The interval the job currently uses, after backoff. */
   intervalMs: number
+  /** Earliest run, or null when the job is disabled or never scheduled. */
+  nextDueAt: string | null
   lastRunAt: string | null
   running: boolean
-  last: LocalFetchRun | null
-  /** Earliest scheduled fetch, or null when nothing is tracked yet. */
-  nextDueAt: string | null
+  last: ScheduleJobRun | null
+  /** Why the job cannot run, when it is disabled. */
+  error: string | null
 }
 
 /** The state payload `/gitfeed/api/state` returns (full or compact). */
@@ -70,7 +78,7 @@ export interface StatePayload {
   repo: string
   allowGit: boolean
   git: GitInfo | null
-  localFetch: LocalFetchInfo
+  schedule: ScheduleJobInfo[]
   generatedAt: string
   error?: string
 }

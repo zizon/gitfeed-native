@@ -1,10 +1,10 @@
 /**
  * gitfeed as a native Harness Host plugin.
  *
- * The package's Host half owns the data root, the local refresh schedule,
- * git actions, and the `gitfeed` agent tool. Its Client half renders the reader
- * inside the Web app: a right-Sidebar page beside the file browser, plus a
- * full main-panel page.
+ * The package's Host half owns the data root, the adaptive scheduler (feed
+ * refresh and read-state sync), git actions, and the `gitfeed` agent tool.
+ * Its Client half renders the reader inside the Web app: a right-Sidebar page
+ * beside the file browser, plus a full main-panel page.
  *
  * The package is code only. The data it reads lives in a separate data
  * repository (by convention cloned to `~/gitfeed`), so installing or updating
@@ -68,6 +68,10 @@ export function apply(ctx: PluginContext, config?: GitfeedConfig) {
   const adaptive = envBool('GITFEED_FETCH_ADAPTIVE',  settings.adaptive)
   const configuredMax = settings.maxIntervalMinutes === undefined ? 1440 : settings.maxIntervalMinutes
   const maxIntervalMinutes = Math.max(1, envNumber('GITFEED_FETCH_MAX_MIN', Number.isFinite(configuredMax) ? configuredMax : 1440))
+  const configuredSync = settings.syncMinutes === undefined ? 10 : settings.syncMinutes
+  const syncMinutes = Math.max(0, envNumber('GITFEED_SYNC_MIN', Number.isFinite(configuredSync) ? configuredSync : 10))
+  const configuredSyncMax = settings.syncMaxMinutes === undefined ? 60 : settings.syncMaxMinutes
+  const syncMaxMinutes = Math.max(1, envNumber('GITFEED_SYNC_MAX_MIN', Number.isFinite(configuredSyncMax) ? configuredSyncMax : 60))
   const allowGit = envBool('GITFEED_ALLOW_GIT',  settings.allowGit)
   const tool =  settings.tool
   const service = createGitfeed({
@@ -76,6 +80,8 @@ export function apply(ctx: PluginContext, config?: GitfeedConfig) {
     idleMinutes: idleMinutes,
     adaptive: adaptive,
     maxIntervalMinutes: maxIntervalMinutes,
+    syncMinutes: syncMinutes,
+    syncMaxMinutes: syncMaxMinutes,
     allowGit: allowGit,
     logger: ctx.logger,
   })
@@ -97,7 +103,7 @@ export function apply(ctx: PluginContext, config?: GitfeedConfig) {
         service.dispose()
       }
     },
-    'gitfeed: refresh schedule',
+    'gitfeed: adaptive schedule',
   )
 
   if (tool) {
@@ -106,10 +112,14 @@ export function apply(ctx: PluginContext, config?: GitfeedConfig) {
     })
   }
 
-  ctx.logger.info(
-    'gitfeed: ' + root + (refreshMinutes > 0
-      ? ` — refreshing into .local/ every ${refreshMinutes} min`
-        + (adaptive ? ` (per-feed adaptive intervals, capped at ${maxIntervalMinutes} min)` : ' (all feeds each run)')
-      : ' — scheduled refresh disabled'),
-  )
+  const fetchText = refreshMinutes > 0
+    ? `refreshing into .local/ every ${refreshMinutes} min`
+      + (adaptive ? ` (per-feed adaptive intervals, capped at ${maxIntervalMinutes} min)` : ' (all feeds each run)')
+    : 'scheduled refresh disabled'
+  const syncText = allowGit === false
+    ? 'git actions disabled'
+    : syncMinutes > 0
+      ? `auto-syncing read state every ${syncMinutes} min (backoff to ${syncMaxMinutes} min)`
+      : 'auto-sync disabled'
+  ctx.logger.info('gitfeed: ' + root + ' — ' + fetchText + '; ' + syncText)
 }
