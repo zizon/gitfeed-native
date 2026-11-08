@@ -114,6 +114,26 @@ ok(feedA !== undefined && feedA.error === null, 'a recovered feed is not painted
 const listed = await service.listForTool({ limit: 3 })
 ok(listed.items.length === 3, 'the agent tool still lists rows')
 
+// A marking scope is not silently truncated: the reader sends every unread row
+// its list holds, and a request cut at a cap marks only some of them, which
+// then reappear on the next load.
+{
+  const bulkRoot = makeDataRoot({ feeds: [], items: [] })
+  const bulk = createGitfeed({
+    root: bulkRoot,
+    logger: log,
+    timers: nodeTimers(),
+    allowGit: false,
+    refreshMinutes: 0,
+    syncMinutes: 0,
+  })
+  const ids = Array.from({ length: 4200 }, (_, i) => `bulk-${i}`)
+  const result = await bulk.mark(ids, true)
+  ok(result.changed === 4200, 'a marking scope larger than the old cap is taken whole', result.changed)
+  bulk.dispose()
+  removeRoot(bulkRoot)
+}
+
 service.dispose()
 removeRoot(root)
 finish()

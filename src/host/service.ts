@@ -15,7 +15,6 @@ import type { FetchResult, GitActionResult, Logger, ReaderStateData, ReadyState,
 import type { FeedDefinition } from './types.js'
 import type { GitInfo, Item } from '../shared/types.js'
 
-const MAX_BODY_IDS = 4000
 /** A local mark is pushed after this much quiet, so scrolling marks coalesce. */
 const AUTO_SYNC_DEBOUNCE_MS = 20000
 /** Longest a continuously marking reader waits before a sync. */
@@ -80,7 +79,7 @@ function plainText(html: string | null | undefined): string {
 function checkedIds(ids: unknown): string[] {
   if (!Array.isArray(ids)) return []
   const clean: string[] = []
-  for (const id of ids.slice(0, MAX_BODY_IDS)) {
+  for (const id of ids) {
     if (typeof id !== 'string' || id.length === 0 || id.length >= 64) continue
     clean.push(id)
   }
@@ -137,8 +136,18 @@ export function createGitfeed(options: GitfeedOptions) {
     runner.touch()
   }
 
+  /** Drop what a fetch, a subscription change, or a git action invalidates. */
   function invalidate() {
     itemsCache = { version: null, items: null }
+    gitCache = { at: 0, value: null }
+  }
+
+  /**
+   * Drop only what a mark can move. Read and star ids are not part of the item
+   * model — that is what the separate itemsVersion is for — so a mark must not
+   * make the next payload re-read, re-filter, and re-sort every shard.
+   */
+  function invalidateGit() {
     gitCache = { at: 0, value: null }
   }
 
@@ -374,7 +383,7 @@ export function createGitfeed(options: GitfeedOptions) {
   async function mark(ids: unknown, read: boolean): Promise<{ ok: boolean; changed: number; version: string }> {
     touch()
     const changed = await setState(paths.read, ids, read)
-    invalidate()
+    invalidateGit()
     if (changed > 0) syncJob.nudge(AUTO_SYNC_DEBOUNCE_MS, AUTO_SYNC_MAX_WAIT_MS)
     return { ok: true, changed: changed, version: await fileVersion() }
   }
@@ -388,7 +397,7 @@ export function createGitfeed(options: GitfeedOptions) {
   async function star(ids: unknown, starred: boolean): Promise<{ ok: boolean; changed: number; version: string }> {
     touch()
     const changed = await setState(paths.starred, ids, starred)
-    invalidate()
+    invalidateGit()
     if (changed > 0) syncJob.nudge(AUTO_SYNC_DEBOUNCE_MS, AUTO_SYNC_MAX_WAIT_MS)
     return { ok: true, changed: changed, version: await fileVersion() }
   }
