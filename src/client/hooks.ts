@@ -68,7 +68,7 @@ export function useKeyboard(
   if (idRef.current === null) idRef.current = `gitfeed-keyboard-${++keyboardSeq}`
 
   useEffect(function () {
-    if (!enabled) return
+    if (enabled === false) return
     const id = idRef.current
     if (id === null) return
     const el = rootRef.current
@@ -94,7 +94,7 @@ export function useKeyboard(
 
   useEffect(function () {
     function onKey(event: KeyboardEvent) {
-      if (!enabled) return
+      if (enabled === false) return
       if (keyboardOwner.id !== idRef.current) return
       const target = event.target as HTMLElement | null
       const tag = target && target.tagName ? target.tagName.toLowerCase() : ''
