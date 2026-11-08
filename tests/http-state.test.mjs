@@ -1,6 +1,8 @@
 // The /state protocol through the real plugin entry: a payload without rows is
 // only valid when it names the item model the caller already holds.
 import http from 'node:http'
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
 import { makeDataRoot, removeRoot, sampleLibrary } from './fixtures.mjs'
 import { finish, nodeTimers, ok } from './harness.mjs'
 
@@ -28,8 +30,46 @@ await plugin.apply(ctx, { repo: root, allowGit: false, refreshMinutes: 0, syncMi
 const route = routes[0]
 ok(route && route.path === '/gitfeed/api' && route.kind === 'prefix', 'the plugin mounts its API prefix', route && route.path)
 
-const server = http.createServer((req, res) => route.handler(req, res))
+// A feed to subscribe to, served by the same server the plugin answers on, so
+// discovery and the initial fetch are real HTTP round trips.
+function feed(title) {
+  return `<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0"><channel>
+  <title>${title}</title>
+  <link>http://127.0.0.1:7797/</link>
+  <item>
+    <title>${title} item</title>
+    <link>http://127.0.0.1:7797/${title}</link>
+    <guid>${title}-1</guid>
+    <pubDate>${new Date().toUTCString()}</pubDate>
+    <description>body</description>
+  </item>
+</channel></rss>`
+}
+const FEEDS = { '/feed-a.xml': feed('alpha'), '/feed-b.xml': feed('beta') }
+
+const server = http.createServer((req, res) => {
+  const body = FEEDS[req.url]
+  if (body !== undefined) {
+    res.writeHead(200, { 'content-type': 'application/rss+xml' })
+    res.end(body)
+    return
+  }
+  route.handler(req, res)
+})
 await new Promise((resolve) => server.listen(7797, '127.0.0.1', resolve))
+
+async function post(url, body) {
+  const res = await fetch(`http://127.0.0.1:7797${url}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  const text = await res.text()
+  let parsed = null
+  try { parsed = JSON.parse(text) } catch { /* not json */ }
+  return { status: res.status, body: parsed }
+}
 
 async function get(url) {
   const res = await fetch(`http://127.0.0.1:7797${url}`, { headers: { 'content-type': 'application/json' } })
@@ -61,6 +101,18 @@ ok(marked.bytes < full.bytes, 'the rowless payload is smaller')
 
 const stale = await get('/gitfeed/api/state?version=nope&itemsVersion=some-older-model')
 ok(Array.isArray(stale.body.items), 'a stale item model always gets rows back')
+
+// Two subscribes at once: the subscription list is a read-modify-write, so
+// without a queue both reads see the same list and the second write drops the
+// first subscription.
+const [subA, subB] = await Promise.all([
+  post('/gitfeed/api/feeds', { url: 'http://127.0.0.1:7797/feed-a.xml', folder: 'News' }),
+  post('/gitfeed/api/feeds', { url: 'http://127.0.0.1:7797/feed-b.xml', folder: 'News' }),
+])
+const subscribed = JSON.parse(readFileSync(path.join(root, 'feeds.json'), 'utf8')).feeds
+const added = subscribed.filter((entry) => /feed-[ab]\.xml$/.test(entry.url))
+ok(subA.status === 200 && subB.status === 200, 'two subscribes at once both answer ok', [subA.status, subB.status, subA.body, subB.body])
+ok(added.length === 2, 'two subscribes at once both land in the list', added.map((entry) => entry.id))
 
 server.close()
 for (const fn of disposers) {

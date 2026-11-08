@@ -455,31 +455,38 @@ export function createGitfeed(options: GitfeedOptions) {
     if (!raw) throw new Error('a feed or site URL is required')
     const resolved = await resolveFeed(raw)
 
-    const feeds = await readFeeds(root)
-    const key = normalizeUrl(resolved.url)
-    for (const f of feeds) {
-      if (normalizeUrl(f.url) === key) throw new Error(`already subscribed to ${resolved.url}`)
-    }
+    // The subscription list is read-modify-write, so the whole step queues
+    // behind every other one: two subscribes at once would otherwise both read
+    // the same list and the second would drop the first. Discovery is done
+    // above, outside the queue, so a slow site does not hold it.
+    const entry = await serialize(async function () {
+      const feeds = await readFeeds(root)
+      const key = normalizeUrl(resolved.url)
+      for (const f of feeds) {
+        if (normalizeUrl(f.url) === key) throw new Error(`already subscribed to ${resolved.url}`)
+      }
 
-    let id = feedIdFor(resolved.url)
-    const used = new Set(feeds.map(function (f) { return f.id }))
-    const base = id
-    let n = 2
-    while (used.has(id)) id = `${base}-${n++}`
+      let id = feedIdFor(resolved.url)
+      const used = new Set(feeds.map(function (f) { return f.id }))
+      const base = id
+      let n = 2
+      while (used.has(id)) id = `${base}-${n++}`
 
-    const folder = (input?.folder || '').trim() || 'Uncategorized'
-    const entry: FeedDefinition = { id: id, url: resolved.url, title: resolved.title || id, folder: folder }
-    feeds.push(entry)
-    await writeFeeds(root, feeds)
+      const folder = (input?.folder || '').trim() || 'Uncategorized'
+      const added: FeedDefinition = { id: id, url: resolved.url, title: resolved.title || id, folder: folder }
+      feeds.push(added)
+      await writeFeeds(root, feeds)
+      return added
+    })
     invalidate()
     syncJob.nudge(AUTO_SYNC_DEBOUNCE_MS, AUTO_SYNC_MAX_WAIT_MS)
 
     // Pull this one feed into the local cache so it appears immediately. A
     // failure here still leaves the subscription in place.
     try {
-      await runLocalFetch({ only: id })
+      await runLocalFetch({ only: entry.id })
     } catch (err) {
-      logger.warn(`gitfeed: initial fetch for ${id} failed: ${errorText(err)}`)
+      logger.warn(`gitfeed: initial fetch for ${entry.id} failed: ${errorText(err)}`)
     }
     return entry
   }
@@ -493,19 +500,23 @@ export function createGitfeed(options: GitfeedOptions) {
     touch()
     const key = id || ''
     if (!key) throw new Error('feed id is required')
-    const feeds = await readFeeds(root)
-    const next = feeds.filter(function (f) { return f.id !== key })
-    if (next.length === feeds.length) throw new Error('no such feed')
-    await writeFeeds(root, next)
+    // One queue for every subscription mutation and every mark, so the list and
+    // the shards it rewrites cannot interleave with another one.
+    await serialize(async function () {
+      const feeds = await readFeeds(root)
+      const next = feeds.filter(function (f) { return f.id !== key })
+      if (next.length === feeds.length) throw new Error('no such feed')
+      await writeFeeds(root, next)
 
-    for (const dir of [paths.items, paths.localItems]) {
-      for (const file of await listShards(dir)) {
-        await updateNdjson<{ feed: string } | null>(file, function (rows) {
-          const kept = rows.filter(function (row) { return row && row.feed !== key })
-          return kept.length === rows.length ? null : kept
-        })
+      for (const dir of [paths.items, paths.localItems]) {
+        for (const file of await listShards(dir)) {
+          await updateNdjson<{ feed: string } | null>(file, function (rows) {
+            const kept = rows.filter(function (row) { return row && row.feed !== key })
+            return kept.length === rows.length ? null : kept
+          })
+        }
       }
-    }
+    })
     invalidate()
     syncJob.nudge(AUTO_SYNC_DEBOUNCE_MS, AUTO_SYNC_MAX_WAIT_MS)
     return { ok: true, removed: key }
