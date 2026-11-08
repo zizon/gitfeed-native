@@ -247,20 +247,25 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
   const count = list.length;
   const paneClass = "gf-listpane" + (wide ? " wide" : "") + (showDigest ? "" : " rows-plain");
 
-  // The bar follows the viewport: at the top it is the wide action for the
-  // whole view, and once scrolled into the list it narrows to the section
-  // under the edge (a group, the selected source, or that row's source).
+  // The bar follows the viewport, but the scope is picked from the strongest
+  // scope that is actually in effect: a search, then a selected source, then
+  // the group under the edge. A source always wins over grouping, so a folder
+  // that reaches past the current source can never be marked from inside it,
+  // and with neither grouping nor a source the label stays put instead of
+  // flipping with every row.
   const scope = useMemo(function (): MarkScope | null {
     if (!count) return null;
-    if (anchor.atTop) {
-      if (state.query.trim()) return { kind: "results", label: t("action.markResults"), n: counts.results };
-      if (state.feedId) {
-        return { kind: "source", label: tf(t, "action.markNamed", { name: controller.feedTitle(state.feedId) }), n: counts.source, feed: state.feedId };
-      }
-      return { kind: "all", label: t("action.markAll"), n: counts.all };
+    const searching = !!state.query.trim();
+    if (searching) return { kind: "results", label: t("action.markResults"), n: counts.results };
+    if (state.feedId) {
+      return {
+        kind: "source",
+        label: tf(t, "action.markNamed", { name: controller.feedTitle(state.feedId) }),
+        n: counts.source,
+        feed: state.feedId
+      };
     }
-    const entry = entries[anchor.index];
-    if (groupBy !== "none") {
+    if (!anchor.atTop && groupBy !== "none") {
       for (let i = Math.min(anchor.index, entries.length - 1); i >= 0; i--) {
         const found = entries[i];
         if (found.kind !== "group") continue;
@@ -269,20 +274,13 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
         return { kind: "group", label: tf(t, "action.markNamed", { name: name }), n: unread, group: found.group.key };
       }
     }
-    if (state.feedId) {
-      return { kind: "source", label: tf(t, "action.markNamed", { name: controller.feedTitle(state.feedId) }), n: counts.source, feed: state.feedId };
-    }
-    if (entry && entry.kind === "row") {
-      const feed = entry.item.feed;
-      return { kind: "feed", label: tf(t, "action.markNamed", { name: controller.feedTitle(feed) }), n: counts.byFeed.get(feed) || 0, feed: feed };
-    }
-    return { kind: "results", label: t("action.markResults"), n: counts.results };
-  }, [count, anchor, groupBy, state.query, state.feedId, state.read, state.items, counts, entries, controller, t]);
+    return { kind: "all", label: t("action.markAll"), n: counts.all };
+  }, [count, anchor, groupBy, state.query, state.feedId, state.read, counts, entries, controller, t]);
 
   function runScope() {
     if (!scope || !scope.n) return;
     if (scope.kind === "all") controller.markEverything();
-    else if (scope.kind === "source" || scope.kind === "feed") controller.markFeed(scope.feed as string);
+    else if (scope.kind === "source") controller.markFeed(scope.feed as string);
     else if (scope.kind === "group" && scope.group) controller.markGroup(scope.group);
     else controller.markAll();
   }

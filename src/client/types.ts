@@ -99,13 +99,11 @@ export interface MarkCounts {
   folderName: string | null;
   /** Unread items in the whole reader. */
   all: number;
-  /** Unread items per source, for naming one source under the viewport. */
-  byFeed: Map<string, number>;
 }
 
 /** One marking target the floating bar can switch to as the reader scrolls. */
 export interface MarkScope {
-  kind: "all" | "results" | "source" | "feed" | "group";
+  kind: "all" | "results" | "source" | "group";
   label: string;
   n: number;
   /** Source id for the source and feed scopes. */

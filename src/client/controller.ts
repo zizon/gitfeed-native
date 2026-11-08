@@ -474,15 +474,13 @@ export function createController(t: Translate): Controller {
     let source = 0
     let folderCount = 0
     let all = 0
-    const byFeed = new Map<string, number>()
     for (const item of state.items) {
       if (state.read.has(item.id)) continue
       all += 1
-      byFeed.set(item.feed, (byFeed.get(item.feed) || 0) + 1)
       if (state.feedId && item.feed === state.feedId) source += 1
       if (folder && feedFolderOf(item.feed) === folder) folderCount += 1
     }
-    return { results: results, source: source, folder: folderCount, all: all, folderName: folder, byFeed: byFeed }
+    return { results: results, source: source, folder: folderCount, all: all, folderName: folder }
   }
 
   /** Mark every unread item in the reader, whatever the scope on screen is. */

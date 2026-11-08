@@ -46,13 +46,14 @@ every article. Display prefs turn the digest off (rows then use the shorter
 two-line height); the choice is stored per browser.
 
 Marking read follows the viewport. A bar floats at the bottom of the list and
-its single target re-labels itself as the reader scrolls: at the top of the
-list it is the wide action for that whole view (**Mark all read**, or the
-selected source or search), and once scrolled into the list it narrows to the
-section under the edge — the group when grouping is on, otherwise the source of
-the row at the top (`Mark Hacker News read`). One click runs that scope, and
-the toast that follows carries **Undo**, which takes the mark back in one more
-click. The bar's ▾ lists every scope with its count for an explicit choice;
+its single target re-labels itself as the reader scrolls, always from the
+strongest scope that is actually in effect: an active search wins, then a
+selected source (`Mark Hacker News read`), then the group under the top edge
+when grouping is on (`Mark Fresh read`), and otherwise the view-wide
+`Mark all read`. A source therefore never widens to its folder, and with
+neither grouping nor a source the label stays put instead of flipping with
+every row. One click runs that scope, and the toast that follows carries
+**Undo**, which takes the mark back in one more click. The bar's ▾ lists every scope with its count for an explicit choice;
 there the library-wide entry sits behind a divider and needs a second,
 differently placed click. No key marks in bulk. The Feeds list carries a
 visible ✓ on every source with unread items and on every folder header, and
