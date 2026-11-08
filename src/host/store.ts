@@ -1,6 +1,12 @@
 // Tiny NDJSON/JSON helpers shared by the fetcher and the reader.
+//
+// Two rules hold for every write here. A file is replaced by rename, never
+// truncated in place, so a crash or a full disk leaves the previous contents
+// rather than half of the new ones. And a file has one writer at a time: the
+// fetch appends rows to a shard while an unsubscribe rewrites the same shard,
+// and an append that lands between that read and that write would vanish.
 
-import { readFile, writeFile, appendFile, mkdir, readdir } from 'node:fs/promises'
+import { readFile, writeFile, appendFile, mkdir, readdir, rename } from 'node:fs/promises'
 import path from 'node:path'
 
 export async function ensureDir(dir: string): Promise<void> {
@@ -15,9 +21,41 @@ export async function readJson<T>(file: string, fallback: T): Promise<T> {
   }
 }
 
-export async function writeJson(file: string, value: unknown): Promise<void> {
+/** One writer at a time, per file, for the life of the process. */
+const queues = new Map<string, Promise<void>>()
+
+/**
+ * Run one write after whatever is already queued for that file.
+ * @param file - absolute path whose queue to join.
+ * @param task - the write, which must not call back into this file's queue.
+ * @returns the task's value.
+ */
+function serialized<T>(file: string, task: () => Promise<T>): Promise<T> {
+  const previous = queues.get(file) ?? Promise.resolve()
+  const run = previous.then(task, task)
+  const tail = run.then(function () { }, function () { })
+  queues.set(file, tail)
+  void tail.then(function () { if (queues.get(file) === tail) queues.delete(file) })
+  return run
+}
+
+/**
+ * Replace a file's contents in one step: write a sibling, then rename over it.
+ *
+ * The temporary name is fixed per file, which the queue above makes safe: two
+ * writers would otherwise race on the same sibling and the loser's rename
+ * would fail. A crash between the two steps leaves that sibling behind, and the
+ * next write overwrites it, so it never accumulates.
+ */
+async function writeAtomic(file: string, text: string): Promise<void> {
   await ensureDir(path.dirname(file))
-  await writeFile(file, `${JSON.stringify(value, null, 2)}\n`)
+  const temp = `${file}.tmp`
+  await writeFile(temp, text)
+  await rename(temp, file)
+}
+
+export function writeJson(file: string, value: unknown): Promise<void> {
+  return serialized(file, function () { return writeAtomic(file, `${JSON.stringify(value, null, 2)}\n`) })
 }
 
 export async function readNdjson<T = Record<string, unknown>>(file: string): Promise<T[]> {
@@ -41,17 +79,38 @@ export async function readNdjson<T = Record<string, unknown>>(file: string): Pro
   return rows
 }
 
-export async function appendNdjson(file: string, rows: unknown[]): Promise<void> {
-  if (rows.length === 0) return
-  await ensureDir(path.dirname(file))
-  const text = `${rows.map(function (r) { return JSON.stringify(r) }).join('\n')}\n`
-  await appendFile(file, text)
+/** One shard's on-disk text: a row per line, trailing newline when not empty. */
+function ndjsonText(rows: unknown[]): string {
+  return rows.map(function (r) { return JSON.stringify(r) }).join('\n') + (rows.length ? '\n' : '')
 }
 
-export async function writeNdjson(file: string, rows: unknown[]): Promise<void> {
-  await ensureDir(path.dirname(file))
-  const text = rows.map(function (r) { return JSON.stringify(r) }).join('\n') + (rows.length ? '\n' : '')
-  await writeFile(file, text)
+export function appendNdjson(file: string, rows: unknown[]): Promise<void> {
+  if (rows.length === 0) return Promise.resolve()
+  return serialized(file, async function () {
+    await ensureDir(path.dirname(file))
+    await appendFile(file, ndjsonText(rows))
+  })
+}
+
+export function writeNdjson(file: string, rows: unknown[]): Promise<void> {
+  return serialized(file, function () { return writeAtomic(file, ndjsonText(rows)) })
+}
+
+/**
+ * Rewrite one file from the rows it holds right now, without an append
+ * slipping between the read and the write.
+ * @param file - absolute path.
+ * @param transform - the rows to keep, or null to leave the file untouched.
+ * @returns how many rows the rewrite removed; negative when it added some.
+ */
+export function updateNdjson<T>(file: string, transform: (rows: T[]) => T[] | null): Promise<number> {
+  return serialized(file, async function () {
+    const rows = await readNdjson<T>(file)
+    const next = transform(rows)
+    if (next === null) return 0
+    await writeAtomic(file, ndjsonText(next))
+    return rows.length - next.length
+  })
 }
 
 export async function listShards(dir: string): Promise<string[]> {
@@ -62,7 +121,7 @@ export async function listShards(dir: string): Promise<string[]> {
     return []
   }
   return names
-    .filter(function (n) { return n.endsWith('.ndjson') })
+    .filter(function (name) { return name.endsWith('.ndjson') })
     .sort()
-    .map(function (n) { return path.join(dir, n) })
+    .map(function (name) { return path.join(dir, name) })
 }

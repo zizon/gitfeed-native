@@ -42,6 +42,8 @@ const GITIGNORE = [
   '.DS_Store',
   '*.log',
   '.tmp/',
+  '# a half-written replacement, from an interrupted write',
+  '*.tmp',
   'node_modules/',
   '',
 ].join('\n')
