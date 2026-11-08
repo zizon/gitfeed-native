@@ -43,7 +43,7 @@
     "build": "node build.mjs",
     "typecheck": "node build.mjs --typecheck-only",
     "lint": "oxlint src",
-    "lint:fix": "oxlint src --fix"
+    "lint:fix": "oxlint src --fix && oxlint src --fix"
   },
   "devDependencies": {
     "@stylistic/eslint-plugin": "^5.10.0",

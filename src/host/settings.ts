@@ -107,7 +107,7 @@ export function readRepoConfig(root: string): RepoConfig {
     fileConfig = parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : {}
   } catch (err) {
     const failure = err as NodeJS.ErrnoException
-    if (failure.code !== 'ENOENT') throw new Error('config.json is not valid JSON: ' + failure.message)
+    if (failure.code !== 'ENOENT') throw new Error(`config.json is not valid JSON: ${failure.message}`)
   }
 
   const env = process.env

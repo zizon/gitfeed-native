@@ -60,7 +60,7 @@ export interface Tag {
 
 export function attr(attrs: string | null | undefined, name: string): string | null {
   if (!attrs) return null
-  const re = new RegExp(name + "\\s*=\\s*(\"([^\"]*)\"|'([^']*)')", 'i')
+  const re = new RegExp(`${name}\\s*=\\s*("([^"]*)"|'([^']*)')`, 'i')
   const m = re.exec(attrs)
   if (!m) return null
   const groups: Array<string | undefined> = m
@@ -70,7 +70,7 @@ export function attr(attrs: string | null | undefined, name: string): string | n
 
 export function findTag(xml: string | null | undefined, name: string): Tag | null {
   if (!xml) return null
-  const open = new RegExp('<' + name + '(?=[\\s/>])[^>]*>', 'i')
+  const open = new RegExp(`<${name}(?=[\\s/>])[^>]*>`, 'i')
   const m = open.exec(xml)
   if (!m) return null
   const tag = m[0]
@@ -78,7 +78,7 @@ export function findTag(xml: string | null | undefined, name: string): Tag | nul
   const attrs = tag.slice(name.length + 1, selfClosing ? tag.length - 2 : tag.length - 1)
   if (selfClosing) return { inner: '', attrs: attrs, selfClosing: true }
   const start = m.index + tag.length
-  const close = new RegExp('</' + name + '\\s*>', 'i').exec(xml.slice(start))
+  const close = new RegExp(`</${name}\\s*>`, 'i').exec(xml.slice(start))
   if (!close) return null
   return { inner: xml.slice(start, start + close.index), attrs: attrs, selfClosing: false }
 }

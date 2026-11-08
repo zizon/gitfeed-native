@@ -14,15 +14,15 @@ import { pathsFor } from './settings.js'
 /** Entries that do not make a directory "someone else's data". */
 const IGNORED_ENTRIES = new Set(['.git', '.DS_Store', '.local'])
 
-const FEEDS = JSON.stringify({
+const FEEDS = `${JSON.stringify({
   '$comment': 'Subscription list. Edit by hand, use Add feed in the reader, or run `gitfeed import-opml`; then Sync.',
   feeds: [],
-}, null, 2) + '\n'
+}, null, 2)}\n`
 
-const CONFIG = JSON.stringify({
+const CONFIG = `${JSON.stringify({
   fetch: { concurrency: 6, timeoutMs: 25000, keepMonths: 6, maxSummaryChars: 2500 },
   reader: { hideEmptyFeeds: true, markReadOnScroll: true, groupBy: 'none' },
-}, null, 2) + '\n'
+}, null, 2)}\n`
 
 const GITATTRIBUTES = [
   '# Read/star state is append-only (one id per line). Union merge means two',

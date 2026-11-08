@@ -149,7 +149,7 @@ export function createGitfeed(options: GitfeedOptions) {
         const info = await stat(file)
         hash.update(`${file}:${info.size}:${info.mtimeMs}\n`)
       } catch {
-        hash.update(file + ':missing\n')
+        hash.update(`${file}:missing\n`)
       }
     }
     return hash.digest('hex')
@@ -263,7 +263,7 @@ export function createGitfeed(options: GitfeedOptions) {
     }
     if (version === 'uninitialized') {
       return Object.assign({}, base, {
-        error: 'gitfeed: no feeds.json in ' + root + ' — point config.repo at a gitfeed data root, or let the bundle seed an empty directory',
+        error: `gitfeed: no feeds.json in ${root} — point config.repo at a gitfeed data root, or let the bundle seed an empty directory`,
         items: [], read: [], starred: [], feeds: [], reader: cfg.reader,
       })
     }
@@ -394,7 +394,7 @@ export function createGitfeed(options: GitfeedOptions) {
     const feeds = await readFeeds(root)
     const key = normalizeUrl(resolved.url)
     for (const f of feeds) {
-      if (normalizeUrl(f.url) === key) throw new Error('already subscribed to ' + resolved.url)
+      if (normalizeUrl(f.url) === key) throw new Error(`already subscribed to ${resolved.url}`)
     }
 
     let id = feedIdFor(resolved.url)
@@ -415,7 +415,7 @@ export function createGitfeed(options: GitfeedOptions) {
     try {
       await runLocalFetch({ only: id })
     } catch (err) {
-      logger.warn('gitfeed: initial fetch for ' + id + ' failed: ' + errorText(err))
+      logger.warn(`gitfeed: initial fetch for ${id} failed: ${errorText(err)}`)
     }
     return entry
   }
@@ -451,13 +451,11 @@ export function createGitfeed(options: GitfeedOptions) {
     if (!allowGit) throw new Error('git actions are disabled by the gitfeed plugin config (allowGit)')
     const info = await readGitInfo(root)
     if (!info.repo) {
-      throw new Error(
-        'gitfeed: ' + root + ' is a local copy, not a git working tree — clone your own repository there ' +
-        '(or point config.repo at one) to ' + name,
-      )
+      const localCopy = `gitfeed: ${root} is a local copy, not a git working tree`
+      throw new Error(`${localCopy} — clone your own repository there (or point config.repo at one) to ${name}`)
     }
     if (name === 'sync' && (info.remotes || []).indexOf('origin') === -1) {
-      throw new Error('gitfeed: ' + root + ' has no `origin` remote — add one with `git remote add origin <url>` and try Sync again')
+      throw new Error(`gitfeed: ${root} has no \`origin\` remote — add one with \`git remote add origin <url>\` and try Sync again`)
     }
     const run = await scheduler.runNow('git', { action: name })
     invalidate()
@@ -468,7 +466,7 @@ export function createGitfeed(options: GitfeedOptions) {
 
   async function snapshotNow(): Promise<{ cfg: RepoConfig; version: string; data: ReaderStateData }> {
     const version = await fileVersion()
-    if (version === 'uninitialized') throw new Error('gitfeed: no feeds.json in ' + root)
+    if (version === 'uninitialized') throw new Error(`gitfeed: no feeds.json in ${root}`)
     const cfg = settings()
     return { cfg: cfg, version: version, data: await buildSnapshot(cfg, version) }
   }
@@ -490,7 +488,7 @@ export function createGitfeed(options: GitfeedOptions) {
       if (unreadOnly && readSet.has(item.id)) continue
       if (starredOnly && !starredSet.has(item.id)) continue
       if (query) {
-        const hay = (item.title + ' ' + plainText(item.summary) + ' ' + (feedNames.get(item.feed) || item.feed)).toLowerCase()
+        const hay = (`${item.title} ${plainText(item.summary)} ${feedNames.get(item.feed) || item.feed}`).toLowerCase()
         if (hay.indexOf(query) === -1) continue
       }
       hits.push({
@@ -517,7 +515,7 @@ export function createGitfeed(options: GitfeedOptions) {
   async function getForTool(id: string) {
     const { data } = await snapshotNow()
     const item = data.items.find(function (candidate) { return candidate.id === id })
-    if (!item) throw new Error('no item with id ' + id)
+    if (!item) throw new Error(`no item with id ${id}`)
     const readSet = new Set(data.read)
     const starredSet = new Set(data.starred)
     return {

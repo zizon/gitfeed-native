@@ -195,7 +195,7 @@ export function createSyncJob(options: SyncJobOptions): ScheduledJob {
       else if (scope.action === 'sync') result = await options.sync()
       else if (info.dirty || ahead > 0) result = await options.sync()
       else result = await options.pull()
-      if (!result.ok) return { failed: true, summary: result.error || result.action + ' failed', value: result }
+      if (!result.ok) return { failed: true, summary: result.error || `${result.action} failed`, value: result }
       const after = await options.version()
       const pulled = after !== before
       const committed = result.committed === true

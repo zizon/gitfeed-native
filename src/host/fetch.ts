@@ -30,7 +30,7 @@ interface FeedMeta {
 }
 
 function itemId(feedId: string, key: string): string {
-  return crypto.createHash('sha1').update(feedId + '|' + key).digest('hex').slice(0, 16)
+  return crypto.createHash('sha1').update(`${feedId}|${key}`).digest('hex').slice(0, 16)
 }
 
 function parseDate(raw: string | null | undefined, now: Date): Date | null {
@@ -126,7 +126,7 @@ async function fetchOne(feed: FeedDefinition, prev: FeedMeta | undefined, now: D
   const items: Item[] = []
   for (let i = 0; i < parsed.items.length; i++) {
     const it = parsed.items[i]
-    const key = it.guid || it.link || (it.title + '|' + it.date)
+    const key = it.guid || it.link || (`${it.title}|${it.date}`)
     if (!key || seen.has(key)) continue
     seen.add(key)
     // Feeds without dates would otherwise all land on the same timestamp.
@@ -271,7 +271,7 @@ export async function runFetch(options: FetchOptions): Promise<FetchResult> {
   if (only) feeds = feeds.filter(function (feed) { return feed.id === only })
   if (wanted) feeds = feeds.filter(function (feed) { return wanted.has(feed.id) })
   if (feeds.length === 0) {
-    const message = only ? 'no feed with id ' + only : 'feeds.json contains no usable feeds'
+    const message = only ? `no feed with id ${only}` : 'feeds.json contains no usable feeds'
     log(message)
     return {
       code: 1, logs: logs, summary: message, feeds: 0, fresh: 0, unchanged: 0, expired: 0, failed: 0, perFeed: {},
@@ -334,7 +334,7 @@ export async function runFetch(options: FetchOptions): Promise<FetchResult> {
     if (r.notModified) {
       unchanged++
       perFeed[r.feed.id] = { added: 0, failed: false, notModified: true }
-      log('  ok   ' + r.feed.id.padEnd(18) + ' unchanged')
+      log(`  ok   ${r.feed.id.padEnd(18)} unchanged`)
       continue
     }
     let added = 0
@@ -368,8 +368,8 @@ export async function runFetch(options: FetchOptions): Promise<FetchResult> {
       const rows = (byMonth.get(key) ?? []).sort(function (a, b) {
         return a.date < b.date ? -1 : a.date > b.date ? 1 : 0
       })
-      await appendNdjson(path.join(itemsDir, key + '.ndjson'), rows)
-      log(`  write ${path.relative(root, path.join(itemsDir, key + '.ndjson'))}  +${rows.length}`)
+      await appendNdjson(path.join(itemsDir, `${key}.ndjson`), rows)
+      log(`  write ${path.relative(root, path.join(itemsDir, `${key}.ndjson`))}  +${rows.length}`)
     }
   }
 
@@ -381,8 +381,8 @@ export async function runFetch(options: FetchOptions): Promise<FetchResult> {
     if (dropped) log(`  prune ${dropped} shard(s) older than ${settings.fetch.keepMonths} months`)
   }
 
-  const summary = `${dryRun ? 'dry-run: ' : ''}${fresh.length} new item(s), `
-    + `${unchanged} unchanged, ${expired} past retention, ${failed} failed`
+  const counts = `${unchanged} unchanged, ${expired} past retention, ${failed} failed`
+  const summary = `${dryRun ? 'dry-run: ' : ''}${fresh.length} new item(s), ${counts}`
   log(summary)
   return {
     code: failed === feeds.length ? 1 : 0,

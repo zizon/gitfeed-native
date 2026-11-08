@@ -547,6 +547,13 @@ pnpm lint        # oxlint, including the type-aware rules
 Lint reads the single root `tsconfig.json`, so Host and Client files resolve
 from one project; `pnpm lint:fix` also applies the formatting rules.
 
+Strings are built with template literals, never `+`: `prefer-template` rejects
+concatenation, `no-useless-concat` catches the literal-only case that rule
+skips, and `@stylistic/template-curly-spacing` keeps `${…}` tight so the fixer
+cannot leave `${  value}` behind. `lint:fix` runs the fixer twice because the
+first pass rewrites concatenation and the second formats the interpolation it
+produced.
+
 ## Publishing checklist
 
 1. Confirm `git log` has no data files, secrets, or local paths.

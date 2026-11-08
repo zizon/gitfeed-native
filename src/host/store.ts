@@ -17,7 +17,7 @@ export async function readJson<T>(file: string, fallback: T): Promise<T> {
 
 export async function writeJson(file: string, value: unknown): Promise<void> {
   await ensureDir(path.dirname(file))
-  await writeFile(file, JSON.stringify(value, null, 2) + '\n')
+  await writeFile(file, `${JSON.stringify(value, null, 2)}\n`)
 }
 
 export async function readNdjson<T = Record<string, unknown>>(file: string): Promise<T[]> {
@@ -44,7 +44,7 @@ export async function readNdjson<T = Record<string, unknown>>(file: string): Pro
 export async function appendNdjson(file: string, rows: unknown[]): Promise<void> {
   if (rows.length === 0) return
   await ensureDir(path.dirname(file))
-  const text = rows.map(function (r) { return JSON.stringify(r) }).join('\n') + '\n'
+  const text = `${rows.map(function (r) { return JSON.stringify(r) }).join('\n')}\n`
   await appendFile(file, text)
 }
 

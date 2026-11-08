@@ -30,6 +30,7 @@
         "prefer-const": "error",
         "prefer-rest-params": "error",
         "prefer-spread": "error",
+        "prefer-template": "error",
         "no-array-constructor": "error",
         "no-unused-expressions": "error",
         "no-unused-vars": [
@@ -40,6 +41,7 @@
             "caughtErrorsIgnorePattern": "^_"
           }
         ],
+        "no-useless-concat": "error",
         "no-useless-constructor": "error",
         "no-restricted-properties": [
           "error",
@@ -179,6 +181,10 @@
         "@stylistic/eslint-plugin"
       ],
       "rules": {
+        "@stylistic/template-curly-spacing": [
+          "error",
+          "never"
+        ],
         "@stylistic/indent": [
           "error",
           2

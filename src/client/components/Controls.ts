@@ -21,12 +21,14 @@ export function IconButton({ icon, label, onClick, disabled, active, small, spin
   danger?: boolean
   className?: string
 }) {
-  const classes = 'gf-iconbtn'
-    + (small ? ' sm' : '')
-    + (active ? ' on' : '')
-    + (spin ? ' spin' : '')
-    + (danger ? ' danger' : '')
-    + (className ? ' ' + className : '')
+  const classes = [
+    'gf-iconbtn',
+    small ? 'sm' : '',
+    active ? 'on' : '',
+    spin ? 'spin' : '',
+    danger ? 'danger' : '',
+    className ?? '',
+  ].filter(Boolean).join(' ')
   const button = h('button', {
     type: 'button',
     className: classes,
@@ -48,7 +50,7 @@ export function EmptyState({ icon, title, hint, action, className, children }: {
   className?: string
   children?: ReactNode
 }) {
-  return h('div', { className: 'gf-placeholder' + (className ? ' ' + className : '') },
+  return h('div', { className: `gf-placeholder${className ? ` ${className}` : ''}` },
     icon ? h('div', { className: 'gf-placeholder-glyph' }, icon) : null,
     title ? h('div', { className: 'gf-placeholder-title' }, title) : null,
     hint ? h('p', { className: 'gf-placeholder-hint' }, hint) : null,

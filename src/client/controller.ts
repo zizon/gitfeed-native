@@ -170,7 +170,7 @@ export function createController(t: Translate): Controller {
     const key = `${item.id}:${item.summary ? item.summary.length : 0}`
     let text = plainCache.get(key)
     if (text === undefined) {
-      text = (item.title + ' ' + plainFromHtml(item.summary) + ' ' + feedTitleOf(item.feed)).toLowerCase()
+      text = (`${item.title} ${plainFromHtml(item.summary)} ${feedTitleOf(item.feed)}`).toLowerCase()
       if (plainCache.size > 4000) plainCache.clear()
       plainCache.set(key, text)
     }
@@ -228,7 +228,7 @@ export function createController(t: Translate): Controller {
     const force = options?.force === true
     loadPromise = (async function () {
       if (!state.loadedOnce) set({ status: 'loading' })
-      const url = PREFIX + '/state' + (!force && state.version ? `?version=${encodeURIComponent(state.version)}` : '')
+      const url = `${PREFIX}/state${!force && state.version ? `?version=${encodeURIComponent(state.version)}` : ''}`
       const res = await fetch(url, { cache: 'no-store', credentials: 'same-origin' })
       let data: StateResponse
       try {
@@ -607,7 +607,7 @@ export function createController(t: Translate): Controller {
     if (state.busy[name]) return
     setBusy(name, true)
     try {
-      const data = await request('/' + name, {})
+      const data = await request(`/${name}`, {})
       if (data.ok === false) {
         toast(tf(t, 'toast.failed', { error: data.error || data.output || name }), true)
       } else if (name === 'fetch') {
@@ -617,7 +617,7 @@ export function createController(t: Translate): Controller {
       } else if (name === 'sync') {
         toast(tf(t, 'toast.sync'))
       } else {
-        toast(name + ': ok')
+        toast(`${name}: ok`)
       }
       await load({ force: true })
     } catch (err) {

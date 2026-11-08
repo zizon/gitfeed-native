@@ -102,7 +102,7 @@ export function cleanTree(el: Element): void {
 }
 
 export function sanitize(html: string | null | undefined, base?: string | null): string {
-  const doc = new DOMParser().parseFromString("<div id='sandbox'>" + (html || '') + '</div>', 'text/html')
+  const doc = new DOMParser().parseFromString(`<div id='sandbox'>${html || ''}</div>`, 'text/html')
   const root = doc.getElementById('sandbox')
   if (!root) return ''
   cleanTree(root)
@@ -157,7 +157,7 @@ export function digestText(html: string | null | undefined, max = 240): string {
   if (text.length <= max) return text
   const cut = text.slice(0, max)
   const at = cut.lastIndexOf(' ')
-  return (at > max * 0.55 ? cut.slice(0, at) : cut).trimEnd() + '…'
+  return `${(at > max * 0.55 ? cut.slice(0, at) : cut).trimEnd()}…`
 }
 
 export function readStorage(key: string): string | null {

@@ -61,7 +61,7 @@ function parseArgv(argv: string[]): { flags: Flags; positional: string[] } {
     const arg = argv[i]
     function value(name: string): string {
       const next = argv.at(++i)
-      if (next === undefined || next.startsWith('--')) throw new Error('missing value for ' + name)
+      if (next === undefined || next.startsWith('--')) throw new Error(`missing value for ${name}`)
       return next
     }
     if (arg === '-h' || arg === '--help') flags.help = true
@@ -73,7 +73,7 @@ function parseArgv(argv: string[]): { flags: Flags; positional: string[] } {
     else if (arg.startsWith('--only=')) flags.only = arg.slice('--only='.length)
     else if (arg === '--data-dir') flags.dataDir = value('--data-dir')
     else if (arg.startsWith('--data-dir=')) flags.dataDir = arg.slice('--data-dir='.length)
-    else if (arg.startsWith('-') && arg !== '-') throw new Error('unknown option ' + arg)
+    else if (arg.startsWith('-') && arg !== '-') throw new Error(`unknown option ${arg}`)
     else positional.push(arg)
   }
   return { flags: flags, positional: positional }
@@ -109,7 +109,7 @@ async function commandImport(flags: Flags, positional: string[]): Promise<number
   if (summary.duplicates) console.log(`duplicates ${summary.duplicates} skipped`)
   if (summary.invalid) console.log(`invalid    ${summary.invalid} skipped`)
   for (const folder of Object.keys(summary.folders).sort()) {
-    console.log('  ' + String(summary.folders[folder]).padStart(4) + '  ' + folder)
+    console.log(`  ${String(summary.folders[folder]).padStart(4)}  ${folder}`)
   }
   return 0
 }
@@ -120,13 +120,13 @@ function commandInit(flags: Flags, positional: string[]): number {
   if (!result.seeded) {
     console.error(
       result.reason === 'present'
-        ? 'gitfeed: ' + target + ' already has feeds.json'
-        : 'gitfeed: ' + target + ' is not empty; refusing to write into it',
+        ? `gitfeed: ${target} already has feeds.json`
+        : `gitfeed: ${target} is not empty; refusing to write into it`,
     )
     return 1
   }
-  console.log('created ' + target)
-  console.log('  ' + starterFiles().join('  '))
+  console.log(`created ${target}`)
+  console.log(`  ${starterFiles().join('  ')}`)
   console.log("add a feed with `gitfeed import-opml <file>` or the reader's Add feed box")
   return 0
 }
@@ -144,7 +144,7 @@ export async function main(argv: string[]): Promise<number> {
     flags = parsed.flags
     positional = parsed.positional
   } catch (err) {
-    console.error('gitfeed: ' + message(err))
+    console.error(`gitfeed: ${message(err)}`)
     console.error(USAGE)
     return 2
   }
@@ -161,11 +161,11 @@ export async function main(argv: string[]): Promise<number> {
     if (command === 'fetch') return await commandFetch(flags)
     if (command === 'import-opml') return await commandImport(flags, positional)
     if (command === 'init') return commandInit(flags, positional)
-    console.error('gitfeed: unknown command ' + JSON.stringify(command))
+    console.error(`gitfeed: unknown command ${JSON.stringify(command)}`)
     console.error(USAGE)
     return 2
   } catch (err) {
-    console.error('gitfeed: ' + message(err))
+    console.error(`gitfeed: ${message(err)}`)
     return 1
   }
 }

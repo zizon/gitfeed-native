@@ -218,7 +218,7 @@ export function tf(t: Translate, key: string, params?: Record<string, string | n
   let text = t(key)
   if (params) {
     for (const name of Object.keys(params)) {
-      text = text.split('{' + name + '}').join(String(params[name]))
+      text = text.split(`{${name}}`).join(String(params[name]))
     }
   }
   return text

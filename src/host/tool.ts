@@ -53,10 +53,7 @@ const PARAMETERS = {
 }
 
 const DESCRIPTION =
-  "Read and manage the user's git-backed gitfeed RSS reader. Actions: status (counts, git and scheduler state), " +
-  "list (filter items by query, feed, unread, starred), get (one item's text by id), mark (read/unread), " +
-  'star, refresh (fetch feeds into the local cache), subscribe (URL, folder), unsubscribe (feed id), pull, sync. ' +
-  "Use status or list before acting, and prefer get to read an article's text."
+  "Read and manage the user's git-backed gitfeed RSS reader. Actions: status (counts, git and scheduler state), list (filter items by query, feed, unread, starred), get (one item's text by id), mark (read/unread), star, refresh (fetch feeds into the local cache), subscribe (URL, folder), unsubscribe (feed id), pull, sync. Use status or list before acting, and prefer get to read an article's text."
 
 async function run(service: GitfeedService, args: unknown) {
   const input = (args || {}) as GitfeedToolArgs
@@ -95,7 +92,7 @@ async function run(service: GitfeedService, args: unknown) {
     case 'sync':
       return service.sync()
     default:
-      throw new Error('unknown action ' + JSON.stringify(input.action))
+      throw new Error(`unknown action ${JSON.stringify(input.action)}`)
   }
 }
 

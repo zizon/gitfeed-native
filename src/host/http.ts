@@ -78,7 +78,7 @@ export function createHandler(service: GitfeedService) {
         return
       }
       const url = new URL(req.url || '/', 'http://gitfeed.local')
-      if (url.pathname !== PREFIX && url.pathname.indexOf(PREFIX + '/') !== 0) {
+      if (url.pathname !== PREFIX && url.pathname.indexOf(`${PREFIX}/`) !== 0) {
         sendJson(res, 404, { ok: false, error: 'no such endpoint' })
         return
       }

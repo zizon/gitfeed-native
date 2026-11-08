@@ -42,6 +42,37 @@ function RailMenu({ state, controller, t, onClose }: {
   }
   const fetchJob = jobOf(state, 'fetch')
   const syncJob = jobOf(state, 'git')
+  const fetchCadence = fetchJob && fetchJob.enabled
+    ? tf(t, 'status.autoEvery', { n: Math.max(1, Math.round(fetchJob.intervalMs / 60000)) })
+    : ''
+  const fetchNext = fetchJob && fetchJob.nextDueAt
+    ? ` · ${tf(t, 'status.nextIn', { age: fmtIn(fetchJob.nextDueAt) })}`
+    : ''
+  const fetchState = fetchJob
+    ? fetchJob.running
+      ? t('status.running')
+      : `${t('status.lastRefresh')}: ${fetchJob.lastRunAt ? fmtTime(fetchJob.lastRunAt) : t('status.never')}`
+    : ''
+  const fetchCounts = fetchJob && fetchJob.last && !fetchJob.running
+    ? [
+      tf(t, 'status.feedCount', { n: fetchJob.last.detail?.feeds ?? 0 }),
+      tf(t, 'status.fetchLine', {
+        fresh: fetchJob.last.detail?.added ?? 0,
+        failed: fetchJob.last.detail?.failed ?? 0,
+      }),
+    ].join(' · ')
+    : ''
+  const fetchInfo = `${fetchState}${fetchCounts ? ` · ${fetchCounts}` : ''}`
+  const syncCadence = syncJob && syncJob.enabled
+    ? tf(t, 'status.autoSyncEvery', { n: Math.max(1, Math.round(syncJob.intervalMs / 60000)) })
+    : ''
+  const syncNext = syncJob && syncJob.nextDueAt
+    ? ` · ${tf(t, 'status.nextIn', { age: fmtIn(syncJob.nextDueAt) })}`
+    : ''
+  const syncOk = syncJob && syncJob.last ? (syncJob.last.ok ? t('status.synced') : t('status.syncFailed')) : ''
+  const syncState = syncJob && syncJob.lastRunAt
+    ? `${t('status.lastSync')}: ${fmtTime(syncJob.lastRunAt)}${syncOk ? ` · ${syncOk}` : ''}`
+    : null
   return h(MenuSurface, { ref: ref, className: 'gf-popover gf-rail-menu' },
     h(DisplayPrefs, { state: state, controller: controller, t: t }),
     h('div', { className: 'gf-menu-sep' }),
@@ -64,35 +95,13 @@ function RailMenu({ state, controller, t, onClose }: {
     h('div', { className: 'gf-menu-sep' }),
     h('div', { className: 'gf-menu-label' }, t('menu.refresh')),
     h('div', { className: 'gf-menu-info' },
-      fetchJob && fetchJob.enabled
-        ? tf(t, 'status.autoEvery', { n: Math.max(1, Math.round(fetchJob.intervalMs / 60000)) })
-          + (fetchJob.nextDueAt ? ' · ' + tf(t, 'status.nextIn', { age: fmtIn(fetchJob.nextDueAt) }) : '')
-        : t('status.autoOff')),
-    fetchJob
-      ? h('div', { className: 'gf-menu-info' },
-        (fetchJob.running
-          ? t('status.running')
-          : t('status.lastRefresh') + ': ' + (fetchJob.lastRunAt ? fmtTime(fetchJob.lastRunAt) : t('status.never')))
-        + (fetchJob.last && !fetchJob.running
-          ? ' · ' + tf(t, 'status.feedCount', { n: fetchJob.last.detail?.feeds ?? 0 })
-            + ' · ' + tf(t, 'status.fetchLine', {
-            fresh: fetchJob.last.detail?.added ?? 0,
-            failed: fetchJob.last.detail?.failed ?? 0,
-          })
-          : ''))
-      : null,
+      fetchJob && fetchJob.enabled ? `${fetchCadence}${fetchNext}` : t('status.autoOff')),
+    fetchJob ? h('div', { className: 'gf-menu-info' }, fetchInfo) : null,
     h('div', { className: 'gf-menu-sep' }),
     h('div', { className: 'gf-menu-label' }, t('menu.sync')),
     h('div', { className: 'gf-menu-info', title: syncJob?.error ?? undefined },
-      syncJob && syncJob.enabled
-        ? tf(t, 'status.autoSyncEvery', { n: Math.max(1, Math.round(syncJob.intervalMs / 60000)) })
-          + (syncJob.nextDueAt ? ' · ' + tf(t, 'status.nextIn', { age: fmtIn(syncJob.nextDueAt) }) : '')
-        : t('status.autoSyncOff')),
-    syncJob && syncJob.lastRunAt
-      ? h('div', { className: 'gf-menu-info' },
-        t('status.lastSync') + ': ' + fmtTime(syncJob.lastRunAt)
-          + (syncJob.last ? ' · ' + (syncJob.last.ok ? t('status.synced') : t('status.syncFailed')) : ''))
-      : null,
+      syncJob && syncJob.enabled ? `${syncCadence}${syncNext}` : t('status.autoSyncOff')),
+    syncState ? h('div', { className: 'gf-menu-info' }, syncState) : null,
     h('div', { className: 'gf-menu-sep' }),
     h('div', { className: 'gf-menu-label' }, t('menu.repo')),
     h('div', { className: 'gf-menu-info' }, state.repo || '~'),

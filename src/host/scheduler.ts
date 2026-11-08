@@ -275,7 +275,7 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
         try {
           file = await readScheduleFile(root)
         } catch (err) {
-          logger.warn('gitfeed: could not read the schedule: ' + errorText(err))
+          logger.warn(`gitfeed: could not read the schedule: ${errorText(err)}`)
           file = { version: 2, jobs: {} }
         }
         for (const runtime of jobs.values()) {
@@ -307,7 +307,7 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
       try {
         await writeJson(pathsFor(root).localSchedule, payload)
       } catch (err) {
-        logger.warn('gitfeed: could not save the schedule: ' + errorText(err))
+        logger.warn(`gitfeed: could not save the schedule: ${errorText(err)}`)
       }
     }
     writing = writing.then(write, write)
@@ -376,12 +376,12 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
       try {
         outcome = await job.run({ now: now, state: state.data, scope: scope })
         if (outcome.failed === true) {
-          logger.warn('gitfeed: ' + job.id + ' failed: ' + (outcome.summary || 'unknown error'))
+          logger.warn(`gitfeed: ${job.id} failed: ${outcome.summary || 'unknown error'}`)
         }
       } catch (err) {
         const summary = errorText(err)
         outcome = { failed: true, summary: summary }
-        logger.warn('gitfeed: ' + job.id + ' job failed: ' + summary)
+        logger.warn(`gitfeed: ${job.id} job failed: ${summary}`)
       }
       applyOutcome(job, state, outcome, clock())
       await persist()
@@ -412,7 +412,7 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
         try {
           availability = await job.available()
         } catch (err) {
-          logger.warn('gitfeed: could not check ' + job.id + ': ' + errorText(err))
+          logger.warn(`gitfeed: could not check ${job.id}: ${errorText(err)}`)
           state.nextAt = now + base * 60000
           continue
         }
@@ -424,7 +424,7 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
         try {
           decision = await job.due(now, state.data)
         } catch (err) {
-          logger.warn('gitfeed: could not check ' + job.id + ': ' + errorText(err))
+          logger.warn(`gitfeed: could not check ${job.id}: ${errorText(err)}`)
           state.nextAt = now + base * 60000
           continue
         }
@@ -468,7 +468,7 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
 
   async function runNow(id: string, scope?: unknown): Promise<JobRunResult> {
     const runtime = jobs.get(id)
-    if (!runtime) throw new Error('gitfeed: no scheduled job ' + id)
+    if (!runtime) throw new Error(`gitfeed: no scheduled job ${id}`)
     await ensureLoaded()
     runtime.queued += 1
     const task = function (): Promise<JobRunResult> {

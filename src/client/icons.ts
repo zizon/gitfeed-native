@@ -58,6 +58,6 @@ export function IconUnreadDot({ filled, size }: IconProps & { filled?: boolean }
 
 /** Folder disclosure chevron; rotates in place, the shared glyph keeps the artwork. */
 export function Chevron({ open }: { open: boolean }) {
-  return h('span', { className: 'gf-chevron' + (open ? ' open' : ''), 'aria-hidden': true },
+  return h('span', { className: `gf-chevron${open ? ' open' : ''}`, 'aria-hidden': true },
     h(IconChevronRightOutlineRegular, { size: 12 }))
 }

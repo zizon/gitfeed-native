@@ -61,7 +61,7 @@ export function Article({ state, controller, t, compact }: ArticleProps) {
   const meta: string[] = []
   meta.push(feed ? feed.title : item.feed)
   meta.push(fmtDate(item.date))
-  if (item.author) meta.push(t('article.by') + ' ' + item.author)
+  if (item.author) meta.push(`${t('article.by')} ${item.author}`)
 
   const topBar = h('div', { className: 'gf-article-top' },
     compact ? h(IconButton, {
@@ -121,5 +121,5 @@ export function Article({ state, controller, t, compact }: ArticleProps) {
       h(IconChevronRightOutlineRegular, { size: 14 })))
     : null
 
-  return h('div', { className: 'gf-article' + (compact ? ' compact' : '') }, topBar, scroller, nextFloat)
+  return h('div', { className: `gf-article${compact ? ' compact' : ''}` }, topBar, scroller, nextFloat)
 }

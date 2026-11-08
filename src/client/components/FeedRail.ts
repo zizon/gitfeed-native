@@ -57,7 +57,7 @@ export function FeedRail({ state, controller, t, compact, onPick }: FeedRailProp
   // A feed or folder that was on screen stays on screen until the scope
   // changes. Dropping rows the moment their last unread item is marked read
   // made the whole tree shift under the pointer mid-click.
-  const scopeKey = state.filter + '\u0000' + (state.feedId || '')
+  const scopeKey = `${state.filter}\u0000${state.feedId || ''}`
   const seenRef = useRef<{ key: string; feeds: Set<string>; folders: Set<string> }>({
     key: '', feeds: new Set(), folders: new Set(),
   })
@@ -98,7 +98,7 @@ export function FeedRail({ state, controller, t, compact, onPick }: FeedRailProp
 
   const rows: ReactNode[] = [h('div', {
     key: 'all',
-    className: 'gf-feed' + (state.feedId ? '' : ' on'),
+    className: `gf-feed${state.feedId ? '' : ' on'}`,
     role: 'button',
     tabIndex: 0,
     onClick: function () { pick(null) },
@@ -195,7 +195,7 @@ export function FeedRail({ state, controller, t, compact, onPick }: FeedRailProp
       }
       children.push(h('div', {
         key: feed.id,
-        className: 'gf-feed' + (state.feedId === feed.id ? ' on' : '') + (feed.error ? ' error' : ''),
+        className: `gf-feed${state.feedId === feed.id ? ' on' : ''}${feed.error ? ' error' : ''}`,
         role: 'button',
         tabIndex: 0,
         title: feed.error || feed.url || '',
@@ -209,20 +209,20 @@ export function FeedRail({ state, controller, t, compact, onPick }: FeedRailProp
       h('span', { className: 'count' }, count ? String(count) : ''),
       count ? h(IconButton, {
         icon: h(IconCheckOutlineRegular, { size: 14 }),
-        label: t('action.markSource') + ': ' + feed.title,
+        label: `${t('action.markSource')}: ${feed.title}`,
         small: true,
         className: 'gf-rail-check',
         onClick: function (event) { event.stopPropagation(); controller.markFeed(feed.id) },
       }) : null,
       h(IconButton, {
         icon: h(IconCloseOutlineRegular, { size: 14 }),
-        label: t('action.remove') + ': ' + feed.title,
+        label: `${t('action.remove')}: ${feed.title}`,
         small: true,
         className: 'gf-rail-x',
         onClick: function (event) { event.stopPropagation(); setPendingRemove(feed.id) },
       })))
     }
-    rows.push(h('div', { key: 'folder:' + name, className: 'gf-folder' },
+    rows.push(h('div', { key: `folder:${name}`, className: 'gf-folder' },
       h('div', {
         className: 'gf-folder-head',
         role: 'button',
@@ -237,7 +237,7 @@ export function FeedRail({ state, controller, t, compact, onPick }: FeedRailProp
       h('span', { className: 'gf-folder-name' }, name),
       unread ? h(IconButton, {
         icon: h(IconCheckOutlineRegular, { size: 14 }),
-        label: t('action.markFolder') + ': ' + name,
+        label: `${t('action.markFolder')}: ${name}`,
         small: true,
         className: 'gf-rail-check',
         onClick: function (event) { event.stopPropagation(); controller.markFolder(name) },
@@ -250,7 +250,7 @@ export function FeedRail({ state, controller, t, compact, onPick }: FeedRailProp
     rows.push(h(EmptyState, { key: 'empty', className: 'compact', hint: t('empty.rail') }))
   }
 
-  return h('div', { className: 'gf-feedrail' + (compact ? ' compact' : '') },
+  return h('div', { className: `gf-feedrail${compact ? ' compact' : ''}` },
     h('div', { className: 'gf-rail-head' },
       h('span', { className: 'gf-rail-title' }, t('rail.guideTitle')),
       h(IconButton, {

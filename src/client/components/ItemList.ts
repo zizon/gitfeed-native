@@ -101,7 +101,7 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
     })
     const out: Entry[] = []
     for (const group of ordered) {
-      out.push({ kind: 'group', key: 'group:' + group.key, group: group, h: GROUP_H })
+      out.push({ kind: 'group', key: `group:${group.key}`, group: group, h: GROUP_H })
       for (const item of group.items) out.push({ kind: 'row', key: item.id, item: item, h: rowH })
     }
     return out
@@ -195,7 +195,7 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
   }, [compute])
 
   useEffect(function () {
-    const key = groupBy + '\u0000' + state.query + '\u0000' + (state.feedId || '')
+    const key = `${groupBy}\u0000${state.query}\u0000${state.feedId || ''}`
     if (lastKey.current !== key) {
       lastKey.current = key
       const el = viewportRef.current
@@ -260,7 +260,7 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
     const digest = showDigest ? controller.digest(item) : ''
     return h('div', {
       key: entry.key,
-      className: 'gf-row' + (unread ? ' unread' : '') + (state.current === item.id ? ' active' : ''),
+      className: `gf-row${unread ? ' unread' : ''}${state.current === item.id ? ' active' : ''}`,
       role: 'button',
       tabIndex: -1,
       'aria-current': state.current === item.id ? 'true' : undefined,
@@ -277,7 +277,7 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
   })
 
   const count = list.length
-  const paneClass = 'gf-listpane' + (wide ? ' wide' : '') + (showDigest ? '' : ' rows-plain')
+  const paneClass = `gf-listpane${wide ? ' wide' : ''}${showDigest ? '' : ' rows-plain'}`
 
   // The bar follows the viewport, but the scope is picked from the strongest
   // scope that is actually in effect: a search, then a selected source, then
@@ -361,7 +361,7 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
   const header = h('div', { className: 'gf-listbar' },
     h('span', { className: 'gf-count-label' }, tf(t, 'items.count', { n: count })))
 
-  const markBar = h('div', { className: 'gf-markfloat' + (scope && scope.n ? '' : ' off') },
+  const markBar = h('div', { className: `gf-markfloat${scope && scope.n ? '' : ' off'}` },
     h(Button, {
       variant: 'ghost',
       size: 'sm',

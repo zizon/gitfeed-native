@@ -32,7 +32,7 @@ export function FilterTabs({ filter, controller, t, compact }: {
     ['all', 'filter.all', 'a'],
     ['starred', 'filter.starred', 's'],
   ]
-  return h('div', { className: 'gf-pills' + (compact ? ' compact' : ''), role: 'group', 'aria-label': t('filter.label') },
+  return h('div', { className: `gf-pills${compact ? ' compact' : ''}`, role: 'group', 'aria-label': t('filter.label') },
     items.map(function (entry) {
       return h(Pill, {
         key: entry[0],
@@ -65,7 +65,7 @@ export function SearchBox({ controller, t, value, inputRef, compact }: {
   }
   return h(Input, {
     ref: inputRef,
-    className: 'gf-search' + (compact ? ' compact' : ''),
+    className: `gf-search${compact ? ' compact' : ''}`,
     type: 'search',
     icon: h(IconSearchOutlineRegular, { size: 16 }),
     value: text,
@@ -146,7 +146,7 @@ export function GitStatus({ state, t }: { state: ClientState; t: Translate }) {
     else if (git.dirty) nodes.push(h('span', { key: 'dirty', className: 'gf-warn' }, t('status.dirty')))
   }
   if (fetchJob && fetchJob.enabled) {
-    const detail = [t('status.lastRefresh') + ': ' + (fetchJob.lastRunAt ? fmtTime(fetchJob.lastRunAt) : t('status.never'))]
+    const detail = [`${t('status.lastRefresh')}: ${fetchJob.lastRunAt ? fmtTime(fetchJob.lastRunAt) : t('status.never')}`]
     if (fetchJob.last) {
       detail.push(tf(t, 'status.fetchLine', {
         fresh: fetchJob.last.detail?.added ?? 0,
@@ -164,7 +164,7 @@ export function GitStatus({ state, t }: { state: ClientState; t: Translate }) {
     const detail = [
       tf(t, 'status.autoSyncEvery', { n: Math.max(1, Math.round(syncJob.intervalMs / 60000)) }),
       syncJob.nextDueAt ? tf(t, 'status.nextIn', { age: fmtIn(syncJob.nextDueAt) }) : '',
-      t('status.lastSync') + ': ' + (syncJob.lastRunAt ? fmtTime(syncJob.lastRunAt) : t('status.never')),
+      `${t('status.lastSync')}: ${syncJob.lastRunAt ? fmtTime(syncJob.lastRunAt) : t('status.never')}`,
       syncJob.last ? (syncJob.last.ok ? t('status.synced') : t('status.syncFailed')) : '',
     ].filter(Boolean).join(' · ')
     nodes.push(h('span', {
@@ -235,12 +235,12 @@ export function RefreshState({ state, t }: { state: ClientState; t: Translate })
   const title = [
     tf(t, 'status.autoEvery', { n: Math.max(1, Math.round(job.intervalMs / 60000)) }),
     job.nextDueAt ? tf(t, 'status.nextIn', { age: fmtIn(job.nextDueAt) }) : '',
-    t('status.lastRefresh') + ': ' + age,
+    `${t('status.lastRefresh')}: ${age}`,
     run ? tf(t, 'status.feedCount', { n: run.detail?.feeds ?? 0 }) : '',
     run ? tf(t, 'status.fetchLine', { fresh: run.detail?.added ?? 0, failed: run.detail?.failed ?? 0 }) : '',
   ].filter(Boolean).join(' · ')
   return h('span', {
-    className: 'gf-refresh-state' + (job.running ? ' running' : broken ? ' warn' : ''),
+    className: `gf-refresh-state${job.running ? ' running' : broken ? ' warn' : ''}`,
     title: title,
     'aria-label': title,
     role: 'status',
@@ -254,7 +254,7 @@ export function EmptyArticle({ state, t }: { state: ClientState; t: Translate })
   return h(EmptyState, {
     icon: h(IconRss, { size: 28 }),
     title: t('page.title'),
-    hint: tf(t, 'items.count', { n: state.items.length }) + ' · ' + tf(t, 'unread.count', { n: unread }),
+    hint: `${tf(t, 'items.count', { n: state.items.length })} · ${tf(t, 'unread.count', { n: unread })}`,
   },
   h('p', { className: 'gf-placeholder-hint' }, t('empty.articleHint')))
 }

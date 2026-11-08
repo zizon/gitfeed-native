@@ -55,12 +55,12 @@ export function apply(ctx: PluginContext, config?: GitfeedConfig) {
   try {
     const seeded = scaffoldData(root)
     if (seeded.seeded) {
-      ctx.logger.info('gitfeed: created a starter data root at ' + root)
+      ctx.logger.info(`gitfeed: created a starter data root at ${root}`)
     } else if (seeded.reason === 'not-empty') {
-      ctx.logger.warn('gitfeed: ' + root + ' has no feeds.json and is not empty; leaving it untouched')
+      ctx.logger.warn(`gitfeed: ${root} has no feeds.json and is not empty; leaving it untouched`)
     }
   } catch (err) {
-    ctx.logger.warn('gitfeed: could not scaffold ' + root + ': ' + String((err as Error).message || err))
+    ctx.logger.warn(`gitfeed: could not scaffold ${root}: ${String((err as Error).message || err)}`)
   }
   const configuredRefresh = settings.refreshMinutes === undefined ? 5 : settings.refreshMinutes
   const refreshMinutes = Math.max(0, envNumber('GITFEED_LOCAL_FETCH_MIN', configuredRefresh || 0))
@@ -112,14 +112,16 @@ export function apply(ctx: PluginContext, config?: GitfeedConfig) {
     })
   }
 
+  const fetchDetail = adaptive
+    ? ` (per-feed adaptive intervals, capped at ${maxIntervalMinutes} min)`
+    : ' (all feeds each run)'
   const fetchText = refreshMinutes > 0
-    ? `refreshing into .local/ every ${refreshMinutes} min`
-      + (adaptive ? ` (per-feed adaptive intervals, capped at ${maxIntervalMinutes} min)` : ' (all feeds each run)')
+    ? `refreshing into .local/ every ${refreshMinutes} min${fetchDetail}`
     : 'scheduled refresh disabled'
   const syncText = allowGit === false
     ? 'git actions disabled'
     : syncMinutes > 0
       ? `auto-syncing read state every ${syncMinutes} min (backoff to ${syncMaxMinutes} min)`
       : 'auto-sync disabled'
-  ctx.logger.info('gitfeed: ' + root + ' — ' + fetchText + '; ' + syncText)
+  ctx.logger.info(`gitfeed: ${root} — ${fetchText}; ${syncText}`)
 }
