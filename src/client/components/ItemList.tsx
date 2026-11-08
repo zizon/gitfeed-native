@@ -8,35 +8,14 @@ import {
   Menu,
   MenuItemButton,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { Item } from '../../shared/types.js'
 import { GROUP_H, ROW_H, ROW_H_PLAIN } from '../constants.js'
-import { lowerBound } from '../hooks.js'
+import { entriesOf } from '../derive.js'
+import type { Entry, GroupEntry } from '../derive.js'
+import { groupFloorOf, offsetIndex, windowOf } from '../window.js'
 import type { ItemListProps, MarkScope } from '../types.js'
 import { fmtTime } from '../util.js'
 import { IconStar } from '../icons.js'
 import { EmptyState, IconButton } from './Controls.js'
-
-interface Group {
-  key: string
-  label: string
-  items: Item[]
-}
-
-interface RowEntry {
-  kind: 'row'
-  key: string
-  item: Item
-  h: number
-}
-
-interface GroupEntry {
-  kind: 'group'
-  key: string
-  group: Group
-  h: number
-}
-
-type Entry = RowEntry | GroupEntry
 
 /** One menu row: the scope label on the left and what it would touch on the right. */
 function scopeLabel(label: string, n: number) {
@@ -55,7 +34,7 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
   const showDigest = state.showDigest === null ? true : state.showDigest
   const rowH = showDigest ? ROW_H : ROW_H_PLAIN
   const viewportRef = useRef<HTMLDivElement>(null)
-  const [range, setRange] = useState({ start: 0, end: 24 })
+  const [range, setRange] = useState<{ start: number; end: number; headerIndex: number | null }>({ start: 0, end: 24, headerIndex: null })
   const rangeRef = useRef(range)
   rangeRef.current = range
   const raf = useRef(0)
@@ -88,53 +67,23 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
   }, [state.items, state.read, state.version, state.listEpoch, state.feedId, state.query, state.filter, controller])
 
   const entries = useMemo<Entry[]>(function () {
-    if (groupBy === 'none') {
-      return list.map(function (item) { return { kind: 'row', key: item.id, item: item, h: rowH } })
-    }
-    const groups = new Map<string, Group>()
-    for (const item of list) {
-      const key = groupBy === 'feed' ? item.feed : controller.feedFolder(item.feed)
-      if (!groups.has(key)) {
-        groups.set(key, {
-          key: key,
-          label: groupBy === 'feed' ? controller.feedTitle(item.feed) : key,
-          items: [],
-        })
-      }
-      const bucket = groups.get(key)
-      if (bucket) bucket.items.push(item)
-    }
-    // Sections hold one order: by name, the way the rail lists folders and
-    // feeds. Ordering by size re-ranked every section whenever a fetch landed,
-    // so the section being read could move somewhere else under the pointer.
-    const ordered = Array.from(groups.values()).sort(function (a, b) {
-      return a.label.localeCompare(b.label) || a.key.localeCompare(b.key)
-    })
-    const out: Entry[] = []
-    for (const group of ordered) {
-      out.push({ kind: 'group', key: `group:${group.key}`, group: group, h: GROUP_H })
-      for (const item of group.items) out.push({ kind: 'row', key: item.id, item: item, h: rowH })
-    }
-    return out
-  }, [list, groupBy, controller, state.feedMap, rowH])
+    return entriesOf(
+      list,
+      groupBy,
+      rowH,
+      GROUP_H,
+      function (id) { return controller.feedTitle(id) },
+      function (id) { return controller.feedFolder(id) },
+    )
+  }, [list, groupBy, controller, rowH])
 
   const offsets = useMemo(function () {
-    const out = new Array<number>(entries.length + 1)
-    out[0] = 0
-    for (let i = 0; i < entries.length; i++) out[i + 1] = out[i] + entries[i].h
-    return out
+    return offsetIndex(entries)
   }, [entries])
 
   /** Which group entry covers each entry, so a section header can stay mounted. */
   const groupFloor = useMemo(function () {
-    const out = new Array<number>(entries.length)
-    let owner = -1
-    for (let i = 0; i < entries.length; i++) {
-      const entry = entries[i]
-      if (entry.kind === 'group') owner = i
-      out[i] = owner
-    }
-    return out
+    return groupFloorOf(entries)
   }, [entries])
 
   const itemIndex = useMemo(function () {
@@ -168,43 +117,30 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
     const top = el.scrollTop
     const prevTop = lastTop.current
     lastTop.current = top
-    const height = el.clientHeight || 600
-    const visibleStart = lowerBound(offsets, top)
-    const visibleEnd = Math.min(entries.length, lowerBound(offsets, top + height) + 1)
-    let start = Math.max(0, visibleStart - 4)
-    const index = Math.min(entries.length - 1, lowerBound(offsets, top + 1))
-    // Keep the header of the section under the viewport edge in the tree, so
-    // the sticky rule can hold it at the top instead of scrolling it away.
-    const floor = groupBy === 'none' ? -1 : groupFloor[index] ?? -1
-    if (floor > -1 && floor < start) start = floor
-    const end = Math.min(entries.length, visibleEnd + 4)
-    setRange(function (current) {
-      return current.start === start && current.end === end ? current : { start: start, end: end }
+    const next = windowOf({
+      entries: entries,
+      offsets: offsets,
+      groupFloor: groupFloor,
+      prevTop: prevTop,
+      top: top,
+      height: el.clientHeight || 600,
+      groupBy: groupBy,
+      markOnScroll: markOnScroll,
     })
-    const atTop = top <= 12
-    // At the very top new rows should simply appear; anywhere else the entry
-    // under the viewport edge is the landmark that must not move.
-    const anchorIndex = Math.min(entries.length - 1, lowerBound(offsets, top))
-    const anchorEntry = atTop ? undefined : entries[anchorIndex]
-    scrollAnchor.current = anchorEntry
-      ? { key: anchorEntry.key, delta: Math.max(0, top - offsets[anchorIndex]) }
-      : null
+    setRange(function (current) {
+      if (current.start === next.start && current.end === next.end && current.headerIndex === next.headerIndex) {
+        return current
+      }
+      return { start: next.start, end: next.end, headerIndex: next.headerIndex }
+    })
+    scrollAnchor.current = next.anchor
     let jumped = false
     if (programmatic.current !== null) {
       jumped = Math.abs(programmatic.current - top) < 1
       programmatic.current = null
     }
-    if (!markOnScroll || jumped) return
-    // Rows the viewport top passed on the way down are read, including the
-    // ones a scrollbar drag skipped over without ever rendering them.
-    if (top <= prevTop) return
-    const from = lowerBound(offsets, prevTop)
-    const to = lowerBound(offsets, top)
-    const markIds: string[] = []
-    for (let i = from; i < to; i++) {
-      const entry = entries[i]
-      if (entry.kind === 'row' && !state.read.has(entry.item.id)) markIds.push(entry.item.id)
-    }
+    if (jumped) return
+    const markIds = next.passedIds.filter(function (id) { return !state.read.has(id) })
     if (markIds.length) controller.mark(markIds, true)
   }, [offsets, entries, groupFloor, groupBy, markOnScroll, state.read, controller])
 
@@ -278,75 +214,90 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
   const slice = entries.slice(range.start, range.end)
   const top = offsets[range.start] || 0
   const bottom = Math.max(0, total - (offsets[range.end] || total))
+  /** The section header covering the band while it sits above the mounted rows. */
+  const pinned = range.headerIndex === null ? undefined : entries[range.headerIndex]
+
+  /**
+   * One section header: its name, and the two things done *while reading a
+   * feed* — mark the section read, and stop following it. A folder section can
+   * only be marked. The same markup renders in place and pinned at the top of
+   * the band, so the pinned bar never drifts from the row it stands for.
+   * @param entry - the section header entry.
+   * @returns the header's children.
+   */
+  function sectionHeader(entry: GroupEntry) {
+    const groupUnread = entry.group.items.filter(function (item) { return !state.read.has(item.id) }).length
+    const feedId = groupBy === 'feed' ? entry.group.key : ''
+    const confirming = feedId !== '' && pendingUnsub === feedId
+    return (
+      <>
+        <span className="gf-group-name">
+          {confirming ? t('confirm.unsubscribe') : entry.group.label}
+        </span>
+        <div className="gf-group-actions">
+          {confirming
+            ? [
+              <Button
+                key="cancel"
+                variant="ghost"
+                size="sm"
+                className="gf-group-read"
+                onClick={function () { setPendingUnsub(null) }}
+              >
+                {t('action.cancel')}
+              </Button>,
+              <Button
+                key="remove"
+                variant="ghost"
+                size="sm"
+                className="gf-group-read gf-danger"
+                disabled={state.busy.remove}
+                title={t('confirm.unsubscribeHint')}
+                onClick={function () {
+                  setPendingUnsub(null)
+                  void controller.removeFeed(feedId)
+                }}
+              >
+                {t('action.remove')}
+              </Button>,
+            ]
+            : [
+              feedId
+                ? (
+                  <Button
+                    key="unsub"
+                    variant="ghost"
+                    size="sm"
+                    className="gf-group-unsub"
+                    title={t('confirm.unsubscribeHint')}
+                    onClick={function () { setPendingUnsub(feedId) }}
+                  >
+                    {t('action.remove')}
+                  </Button>
+                )
+                : null,
+              <Button
+                key="mark"
+                variant="ghost"
+                size="sm"
+                className="gf-group-read"
+                disabled={!groupUnread}
+                title={t('action.markGroup')}
+                onClick={function () { controller.markGroup(entry.group.key) }}
+              >
+                {groupUnread ? t('action.markGroupCount', { n: groupUnread }) : t('action.markGroup')}
+              </Button>,
+            ]}
+        </div>
+      </>
+    )
+  }
 
   const listRows = slice.map(function (entry) {
     if (entry.kind === 'group') {
-      const groupUnread = entry.group.items.filter(function (item) { return !state.read.has(item.id) }).length
-      // The section row is where the reader already is, so both things done
-      // *while reading a feed* live here: mark the section read, and stop
-      // following the feed. A folder section can only be marked.
-      const feedId = groupBy === 'feed' ? entry.group.key : ''
-      const confirming = feedId !== '' && pendingUnsub === feedId
       return (
         <div key={entry.key} className="gf-group">
-          <span className="gf-group-name">
-            {confirming ? t('confirm.unsubscribe') : entry.group.label}
-          </span>
-          <div className="gf-group-actions">
-            {confirming
-              ? [
-                <Button
-                  key="cancel"
-                  variant="ghost"
-                  size="sm"
-                  className="gf-group-read"
-                  onClick={function () { setPendingUnsub(null) }}
-                >
-                  {t('action.cancel')}
-                </Button>,
-                <Button
-                  key="remove"
-                  variant="ghost"
-                  size="sm"
-                  className="gf-group-read gf-danger"
-                  disabled={state.busy.remove}
-                  title={t('confirm.unsubscribeHint')}
-                  onClick={function () {
-                    setPendingUnsub(null)
-                    void controller.removeFeed(feedId)
-                  }}
-                >
-                  {t('action.remove')}
-                </Button>,
-              ]
-              : [
-                feedId
-                  ? (
-                    <Button
-                      key="unsub"
-                      variant="ghost"
-                      size="sm"
-                      className="gf-group-unsub"
-                      title={t('confirm.unsubscribeHint')}
-                      onClick={function () { setPendingUnsub(feedId) }}
-                    >
-                      {t('action.remove')}
-                    </Button>
-                  )
-                  : null,
-                <Button
-                  key="mark"
-                  variant="ghost"
-                  size="sm"
-                  className="gf-group-read"
-                  disabled={!groupUnread}
-                  title={t('action.markGroup')}
-                  onClick={function () { controller.markGroup(entry.group.key) }}
-                >
-                  {groupUnread ? t('action.markGroupCount', { n: groupUnread }) : t('action.markGroup')}
-                </Button>,
-              ]}
-          </div>
+          {sectionHeader(entry)}
         </div>
       )
     }
@@ -510,10 +461,15 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
   return (
     <div className={paneClass}>
       {header}
-      <div className="gf-scroll" ref={viewportRef} onScroll={onScroll}>
-        <div style={{ height: top }} />
-        {listRows}
-        <div style={{ height: bottom }} />
+      <div className="gf-scrollwrap">
+        <div className="gf-scroll" ref={viewportRef} onScroll={onScroll}>
+          <div style={{ height: top }} />
+          {listRows}
+          <div style={{ height: bottom }} />
+        </div>
+        {pinned && pinned.kind === 'group'
+          ? <div className="gf-group gf-group-pinned">{sectionHeader(pinned)}</div>
+          : null}
       </div>
       {markBar}
     </div>

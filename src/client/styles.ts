@@ -243,8 +243,9 @@ export const CSS = `
   border-bottom: 0.5px solid var(--dsw-alias-border-l1);
 }
 .gf-count-label { flex: 1; color: var(--dsw-alias-label-tertiary); font-size: 11px; line-height: 16px; }
+.gf-scrollwrap { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; position: relative; }
 .gf-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; position: relative; }
-.gf-listpane > .gf-scroll { padding-bottom: 52px; }
+.gf-listpane .gf-scroll { padding-bottom: 52px; }
 
 .gf-group {
   position: sticky;
@@ -262,6 +263,18 @@ export const CSS = `
   line-height: 16px;
   font-weight: 500;
 }
+/* The header of the section the viewport sits in, while that header's own row
+   is above the mounted band. It holds the top edge instead of pulling the rows
+   back to it, so a section of thousands of rows costs one header, not all of
+   them. */
+.gf-group-pinned {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 3;
+}
+
 .gf-group-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gf-group-actions { margin-left: auto; display: flex; align-items: center; gap: 4px; }
 .gf-group-unsub { color: var(--dsw-alias-label-tertiary); }

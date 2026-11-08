@@ -152,14 +152,3 @@ export function useKeyboard(
     return function () { window.removeEventListener('keydown', onKey) }
   }, [controller, searchRef, enabled])
 }
-
-export function lowerBound(offsets: number[], y: number): number {
-  let lo = 0
-  let hi = offsets.length - 1
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1
-    if (offsets[mid + 1] <= y) lo = mid + 1
-    else hi = mid
-  }
-  return lo
-}

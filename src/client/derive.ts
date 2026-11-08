@@ -75,6 +75,73 @@ export function listOf(view: ReaderView, haystack: Haystack): Item[] {
   })
 }
 
+/** One section of the list when grouping is on. */
+export interface Group {
+  key: string
+  label: string
+  items: Item[]
+}
+
+/** One rendered row. */
+export interface RowEntry {
+  kind: 'row'
+  key: string
+  item: Item
+  h: number
+}
+
+/** One rendered section header. */
+export interface GroupEntry {
+  kind: 'group'
+  key: string
+  group: Group
+  h: number
+}
+
+export type Entry = RowEntry | GroupEntry
+
+/**
+ * The rows the list renders, section headers included.
+ * @param list - the rows the filter left, in archive order.
+ * @param groupBy - `none`, `folder`, or `feed`.
+ * @param rowHeight - one row's height at the current density.
+ * @param groupHeight - one section header's height.
+ * @param titleOf - a source's display name.
+ * @param folderOf - the folder a source groups under.
+ * @returns the flattened entries the viewport windows over.
+ */
+export function entriesOf(
+  list: readonly Item[],
+  groupBy: string,
+  rowHeight: number,
+  groupHeight: number,
+  titleOf: (feedId: string) => string,
+  folderOf: (feedId: string) => string,
+): Entry[] {
+  if (groupBy === 'none') {
+    return list.map(function (item) { return { kind: 'row', key: item.id, item: item, h: rowHeight } })
+  }
+  const groups = new Map<string, Group>()
+  for (const item of list) {
+    const key = groupBy === 'feed' ? item.feed : folderOf(item.feed)
+    const bucket = groups.get(key)
+    if (bucket) bucket.items.push(item)
+    else groups.set(key, { key: key, label: groupBy === 'feed' ? titleOf(item.feed) : key, items: [item] })
+  }
+  // Sections hold one order: by name, the way the rail lists folders and feeds.
+  // Ordering by size re-ranked every section whenever a fetch landed, so the
+  // section being read could move somewhere else under the pointer.
+  const ordered = Array.from(groups.values()).sort(function (a, b) {
+    return a.label.localeCompare(b.label) || a.key.localeCompare(b.key)
+  })
+  const out: Entry[] = []
+  for (const group of ordered) {
+    out.push({ kind: 'group', key: `group:${group.key}`, group: group, h: groupHeight })
+    for (const item of group.items) out.push({ kind: 'row', key: item.id, item: item, h: rowHeight })
+  }
+  return out
+}
+
 /**
  * What each marking scope would touch, so the menu can state the size before
  * it acts.
