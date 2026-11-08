@@ -40,7 +40,9 @@ the runner stores those, wakes at the deadline, and renders the status line.
 The doubling rule lives with the job (per feed for Refresh, one interval for
 Sync), which is also why the stored row is four fields and not seven.
 
-**The interface is four verbs, none of them a lifecycle.**
+**Six verbs, and none of them a lifecycle.** Two belong to the runner (`add`,
+`touch`), two to the handle a job keeps (`runNow`, `nudge`), and the last two
+are the read and the teardown.
 
 | verb | who calls it | what it does |
 |---|---|---|

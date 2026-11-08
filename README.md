@@ -96,8 +96,8 @@ double-click it to reset. The width is stored with the main page's list width.
 | main panel | `main` key `gitfeed` + `sidebar.panellist` icon |
 | agent tool | `ctx.tools.register({ name: 'gitfeed', ... })` |
 
-The route and the job runner are registered with `ctx.effect`, so both
-disappear when the row unloads. `mark`/`star` responses carry the new state version, which
+The API route is registered with `ctx.effect` and the scheduler takes its
+timers from `ctx.timeout`, so both disappear when the row unloads. `mark`/`star` responses carry the new state version, which
 lets the Client poll compactly after an optimistic update.
 
 ## Install
@@ -236,8 +236,9 @@ committed, version 2; a version-1 file (the fetch-only format) is read as the
 Refresh job's state. **Fetch** in the reader still fetches everything.
 
 The cadence policy is the jobs'; the clock is the Harness's. The plugin
-declares `inject: ['timer']` and takes each job's wake-up from
-`ctx.timer.timeout` (`@deepseek-ai/cordis-plugin-timer`) on the plugin's fiber:
+declares `inject: ['timer']` and takes each job's wake-up from `ctx.timeout`
+(`@deepseek-ai/cordis-plugin-timer`, the mixin on the injected `timer` service,
+which is what `src/index.ts` calls) on the plugin's fiber:
 when a deadline moves, the old timer is disposed and a new one is armed, and a
 reload or dispose cancels whatever is pending with the rest of the plugin. What
 the timer service does not provide — per-feed backoff, the activity gate, the
@@ -388,8 +389,9 @@ reaches them. The plugin ships no CSS for those controls.
   the rail menu, `Switch` for the display prefs, `Toast` for transient
   banners with an inline **Undo**, and the product `Icon*` set for the
   chevrons, checks, close, refresh, plus, ellipsis, and open-original glyphs.
-- **Kept custom, deliberately**: feed and item rows, the sticky group header,
-  the float that follows the list's scroll edge, and the article's
+- **Kept custom, deliberately**: feed and item rows, the section header (sticky
+  in flow, re-rendered as a pinned bar when its own row is above the mounted
+  band), the float that follows the list's scroll edge, and the article's
   `Next →` capsule — the atom set has no list-row, group-header, or
   floating-bar primitive, so these are a small token-styled sheet rather than
   copies of a shared control. The RSS mark, the star, and the unread dot are

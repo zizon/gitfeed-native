@@ -55,6 +55,49 @@ ok(calls.length === 3 && calls[2].feeds.length === 2, 'manual Fetch ignores the 
 const manualStatus = await schedA.status()
 ok(manualStatus[0].last.ok === true && manualStatus[0].last.detail.feeds === 2, 'manual run is reported in the job status')
 
+// ---------- C3: a job sleeps through an idle window and wakes on a request ----------
+const rootE = mkdtempSync(path.join(tmpdir(), 'gitfeed-idle-'))
+const callsE = []
+const idleJob = createFetchJob({
+  refreshMinutes: 1, maxIntervalMinutes: 4, adaptive: true, idleMinutes: 1,
+  loadFeeds: async () => [{ id: 'a', url: 'x', title: null, folder: null }],
+  fetch: async () => {
+    callsE.push(1)
+    return {
+      code: 0, logs: [], summary: 'test', feeds: 1, fresh: 0, unchanged: 1, expired: 0, failed: 0,
+      perFeed: { a: { added: 0, failed: false, notModified: true } },
+    }
+  },
+})
+const schedE = createJobRunner({ timers: clock.timers, root: rootE, logger: log, idleMinutes: 1, now: clock.now })
+schedE.add(idleJob)
+await clock.advance(0)
+ok(callsE.length === 1, 'the first deadline runs while the reader is here')
+// Three minutes of nothing: the deadline passes with no reader request.
+await clock.advance(180000)
+ok(callsE.length === 1, 'a gated job does not fetch while nobody is reading', callsE.length)
+const asleep = await schedE.status()
+ok(asleep[0].nextDueAt !== null, 'the deadline is still reported while the job sleeps', asleep[0].nextDueAt)
+schedE.touch()
+await clock.advance(0)
+ok(callsE.length === 2, 'the next reader request wakes it and it catches up', callsE.length)
+
+// ---------- C9: a failing run is a warning, not a crash ----------
+const rootF = mkdtempSync(path.join(tmpdir(), 'gitfeed-fail-'))
+const schedF = createJobRunner({ timers: clock.timers, root: rootF, logger: log, idleMinutes: 0, now: clock.now })
+schedF.add({
+  id: 'broken', label: 'Broken', baseMin: 1, maxMin: 4,
+  initial: () => ({}),
+  available: async () => ({ ok: true }),
+  due: async () => ({ run: true }),
+  run: async () => { throw new Error('boom') },
+})
+await clock.advance(0)
+const failedStatus = await schedF.status()
+ok(failedStatus[0].last !== null && failedStatus[0].last.ok === false, 'a throwing run is recorded as failed, not thrown', failedStatus[0].last)
+ok(failedStatus[0].nextDueAt !== null, 'and the job stays armed for the next deadline', failedStatus[0].nextDueAt)
+ok(failedStatus[0].last.summary === 'boom', 'the failure carries its reason', failedStatus[0].last.summary)
+
 // ---------- C7: the clocks survive a restart ----------
 const schedA2 = createJobRunner({ timers: clock.timers, root: rootA, logger: log, idleMinutes: 15, now: clock.now })
 schedA2.add(fetchJob)
