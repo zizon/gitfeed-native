@@ -1,6 +1,6 @@
 /** Fixed-height virtualized item list with group headers and read-on-scroll. */
 
-import { h, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from '../react.js'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from '../react.js'
 import type { ReactNode } from '../react.js'
 import {
   Button,
@@ -40,9 +40,12 @@ type Entry = RowEntry | GroupEntry
 
 /** One menu row: the scope label on the left and what it would touch on the right. */
 function scopeLabel(label: string, n: number) {
-  return h('span', { className: 'gf-menu-row' },
-    h('span', null, label),
-    h('span', { className: 'gf-menu-count' }, String(n)))
+  return (
+    <span className="gf-menu-row">
+      <span>{label}</span>
+      <span className="gf-menu-count">{String(n)}</span>
+    </span>
+  )
 }
 
 export function ItemList({ state, controller, t, wide }: ItemListProps) {
@@ -284,75 +287,102 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
       // following the feed. A folder section can only be marked.
       const feedId = groupBy === 'feed' ? entry.group.key : ''
       const confirming = feedId !== '' && pendingUnsub === feedId
-      return h('div', { key: entry.key, className: 'gf-group' },
-        h('span', { className: 'gf-group-name' }, confirming ? t('confirm.unsubscribe') : entry.group.label),
-        h('div', { className: 'gf-group-actions' },
-          confirming
-            ? [
-              h(Button, {
-                key: 'cancel',
-                variant: 'ghost',
-                size: 'sm',
-                className: 'gf-group-read',
-                onClick: function () { setPendingUnsub(null) },
-              }, t('action.cancel')),
-              h(Button, {
-                key: 'remove',
-                variant: 'ghost',
-                size: 'sm',
-                className: 'gf-group-read gf-danger',
-                disabled: state.busy.remove,
-                title: t('confirm.unsubscribeHint'),
-                onClick: function () {
-                  setPendingUnsub(null)
-                  void controller.removeFeed(feedId)
-                },
-              }, t('action.remove')),
-            ]
-            : [
-              feedId
-                ? h(Button, {
-                  key: 'unsub',
-                  variant: 'ghost',
-                  size: 'sm',
-                  className: 'gf-group-unsub',
-                  title: t('confirm.unsubscribeHint'),
-                  onClick: function () { setPendingUnsub(feedId) },
-                }, t('action.remove'))
-                : null,
-              h(Button, {
-                key: 'mark',
-                variant: 'ghost',
-                size: 'sm',
-                className: 'gf-group-read',
-                disabled: !groupUnread,
-                title: t('action.markGroup'),
-                onClick: function () { controller.markGroup(entry.group.key) },
-              }, groupUnread ? t('action.markGroupCount', { n: groupUnread }) : t('action.markGroup')),
-            ]))
+      return (
+        <div key={entry.key} className="gf-group">
+          <span className="gf-group-name">
+            {confirming ? t('confirm.unsubscribe') : entry.group.label}
+          </span>
+          <div className="gf-group-actions">
+            {confirming
+              ? [
+                <Button
+                  key="cancel"
+                  variant="ghost"
+                  size="sm"
+                  className="gf-group-read"
+                  onClick={function () { setPendingUnsub(null) }}
+                >
+                  {t('action.cancel')}
+                </Button>,
+                <Button
+                  key="remove"
+                  variant="ghost"
+                  size="sm"
+                  className="gf-group-read gf-danger"
+                  disabled={state.busy.remove}
+                  title={t('confirm.unsubscribeHint')}
+                  onClick={function () {
+                    setPendingUnsub(null)
+                    void controller.removeFeed(feedId)
+                  }}
+                >
+                  {t('action.remove')}
+                </Button>,
+              ]
+              : [
+                feedId
+                  ? (
+                    <Button
+                      key="unsub"
+                      variant="ghost"
+                      size="sm"
+                      className="gf-group-unsub"
+                      title={t('confirm.unsubscribeHint')}
+                      onClick={function () { setPendingUnsub(feedId) }}
+                    >
+                      {t('action.remove')}
+                    </Button>
+                  )
+                  : null,
+                <Button
+                  key="mark"
+                  variant="ghost"
+                  size="sm"
+                  className="gf-group-read"
+                  disabled={!groupUnread}
+                  title={t('action.markGroup')}
+                  onClick={function () { controller.markGroup(entry.group.key) }}
+                >
+                  {groupUnread ? t('action.markGroupCount', { n: groupUnread }) : t('action.markGroup')}
+                </Button>,
+              ]}
+          </div>
+        </div>
+      )
     }
     const item = entry.item
     const unread = !state.read.has(item.id)
     const starred = state.starred.has(item.id)
     const digest = showDigest ? controller.digest(item) : ''
-    return h('div', {
-      key: entry.key,
-      className: `gf-row${unread ? ' unread' : ''}${state.current === item.id ? ' active' : ''}${state.fresh.has(item.id) ? ' gf-row-in' : ''}`,
-      role: 'button',
-      tabIndex: -1,
-      'aria-current': state.current === item.id ? 'true' : undefined,
-      onClick: function () { controller.select(item.id) },
-    },
-    h('div', { className: 'gf-row-title' },
-      unread ? h('span', { className: 'gf-dot', 'aria-hidden': true }) : null,
-      h('span', { className: 't' }, item.title || '(untitled)'),
-      starred ? h('span', { className: 'gf-star', title: t('action.unstar') }, h(IconStar, { filled: true, size: 12 })) : null),
-    h('div', { className: 'gf-row-meta' },
-      // Every row under a source section would repeat the name the sticky
-      // header already carries; only an ungrouped list needs it per row.
-      groupBy === 'feed' ? null : h('span', { className: 'feed-name' }, controller.feedTitle(item.feed)),
-      h('span', { className: 'when' }, fmtTime(item.date))),
-    digest ? h('div', { className: 'gf-row-digest' }, digest) : null)
+    return (
+      <div
+        key={entry.key}
+        className={`gf-row${unread ? ' unread' : ''}${state.current === item.id ? ' active' : ''}${state.fresh.has(item.id) ? ' gf-row-in' : ''}`}
+        role="button"
+        tabIndex={-1}
+        aria-current={state.current === item.id ? 'true' : undefined}
+        onClick={function () { controller.select(item.id) }}
+      >
+        <div className="gf-row-title">
+          {unread ? <span className="gf-dot" aria-hidden="true" /> : null}
+          <span className="t">{item.title || '(untitled)'}</span>
+          {starred
+            ? (
+              <span className="gf-star" title={t('action.unstar')}>
+                <IconStar filled size={12} />
+              </span>
+            )
+            : null}
+        </div>
+        <div className="gf-row-meta">
+          {/* Every row under a source section would repeat the name the sticky
+              header already carries; only an ungrouped list needs it per row. */}
+          {groupBy === 'feed' ? null : <span className="feed-name">{controller.feedTitle(item.feed)}</span>}
+          <span className="when">{fmtTime(item.date)}</span>
+        </div>
+        {digest ? <div className="gf-row-digest">{digest}</div> : null}
+      </div>
+    )
   })
 
   const count = list.length
@@ -384,74 +414,108 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
   // reach — every unread item in the library — and only when that differs.
   const markRows: ReactNode[] = []
   if (counts.all > 0 && counts.all !== (scope ? scope.n : 0)) {
-    markRows.push(h(MenuItemButton, {
-      key: 'everything',
-      danger: true,
-      onSelect: function () {
-        if (!markArmed) {
-          setMarkArmed(true)
-          return
-        }
-        closeMark()
-        controller.markEverything()
-      },
-    }, scopeLabel(markArmed ? t('action.markAllConfirm', { n: counts.all }) : t('action.markEverything'), counts.all)))
+    markRows.push(
+      <MenuItemButton
+        key="everything"
+        danger
+        onSelect={function () {
+          if (!markArmed) {
+            setMarkArmed(true)
+            return
+          }
+          closeMark()
+          controller.markEverything()
+        }}
+      >
+        {scopeLabel(markArmed ? t('action.markAllConfirm', { n: counts.all }) : t('action.markEverything'), counts.all)}
+      </MenuItemButton>,
+    )
   }
 
-  const header = h('div', { className: 'gf-listbar' },
-    h('span', { className: 'gf-count-label' }, t('items.count', { n: count })))
+  const header = (
+    <div className="gf-listbar">
+      <span className="gf-count-label">{t('items.count', { n: count })}</span>
+    </div>
+  )
 
-  const markBar = !scope ? null : h('div', { className: `gf-markfloat${scope.n ? '' : ' off'}` },
-    h(Button, {
-      variant: 'ghost',
-      size: 'sm',
-      className: 'gf-markfloat-main',
-      disabled: !scope.n,
-      title: scope.label,
-      onClick: runScope,
-    },
-    h('span', { className: 'gf-markfloat-label' }, scope.label),
-    h('span', { className: 'gf-markfloat-count' }, String(scope.n))),
-    markRows.length > 0
-      ? h(Menu, {
-        open: markOpen,
-        side: 'top',
-        align: 'end',
-        onClose: closeMark,
-        className: 'gf-markfloat-more',
-        anchor: h(IconButton, {
-          icon: h(IconChevronDownOutlineRegular, { size: 14 }),
-          label: t('action.markPick'),
-          small: true,
-          hasPopup: 'menu',
-          expanded: markOpen,
-          onClick: function () {
-            if (markOpen) closeMark()
-            else { setMarkOpen(true); setMarkArmed(false) }
-          },
-        }),
-        children: markRows,
-      })
-      : null)
+  const markBar = !scope
+    ? null
+    : (
+      <div className={`gf-markfloat${scope.n ? '' : ' off'}`}>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="gf-markfloat-main"
+          disabled={!scope.n}
+          title={scope.label}
+          onClick={runScope}
+        >
+          <span className="gf-markfloat-label">{scope.label}</span>
+          <span className="gf-markfloat-count">{String(scope.n)}</span>
+        </Button>
+        {markRows.length > 0
+          ? (
+            <Menu
+              open={markOpen}
+              side="top"
+              align="end"
+              onClose={closeMark}
+              className="gf-markfloat-more"
+              anchor={(
+                <IconButton
+                  icon={<IconChevronDownOutlineRegular size={14} />}
+                  label={t('action.markPick')}
+                  small
+                  hasPopup="menu"
+                  expanded={markOpen}
+                  onClick={function () {
+                    if (markOpen) closeMark()
+                    else { setMarkOpen(true); setMarkArmed(false) }
+                  }}
+                />
+              )}
+            >
+              {markRows}
+            </Menu>
+          )
+          : null}
+      </div>
+    )
 
   if (state.status === 'loading' && !state.items.length) {
-    return h('div', { className: paneClass }, header,
-      h(EmptyState, { className: 'compact', hint: t('status.loading') }))
+    return (
+      <div className={paneClass}>
+        {header}
+        <EmptyState className="compact" hint={t('status.loading')} />
+      </div>
+    )
   }
   if (state.status === 'error' && !state.items.length) {
-    return h('div', { className: paneClass }, header,
-      h(EmptyState, { className: 'compact', hint: state.error || t('status.error') }))
+    return (
+      <div className={paneClass}>
+        {header}
+        <EmptyState className="compact" hint={state.error || t('status.error')} />
+      </div>
+    )
   }
   if (!count) {
-    return h('div', { className: paneClass }, header,
-      h(EmptyState, { className: 'compact', hint: state.items.length ? t('empty.nothing') : t('empty.noItems') }))
+    return (
+      <div className={paneClass}>
+        {header}
+        <EmptyState className="compact" hint={state.items.length ? t('empty.nothing') : t('empty.noItems')} />
+      </div>
+    )
   }
 
-  return h('div', { className: paneClass },
-    header,
-    h('div', { className: 'gf-scroll', ref: viewportRef, onScroll: onScroll },
-      h('div', { style: { height: top } }),
-      listRows,
-      h('div', { style: { height: bottom } })),
-    markBar)
+  return (
+    <div className={paneClass}>
+      {header}
+      <div className="gf-scroll" ref={viewportRef} onScroll={onScroll}>
+        <div style={{ height: top }} />
+        {listRows}
+        <div style={{ height: bottom }} />
+      </div>
+      {markBar}
+    </div>
+  )
 }

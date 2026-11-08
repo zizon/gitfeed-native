@@ -1,8 +1,6 @@
 /** The subset of React the reader uses. The bundle externalizes `react`. */
 
 export {
-  createElement as h,
-  Fragment,
   useCallback,
   useEffect,
   useId,

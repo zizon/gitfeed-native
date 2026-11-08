@@ -14,6 +14,8 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
   export type ButtonVariant = 'primary' | 'ghost' | 'outline' | 'toolbar'
 
   export interface ButtonProps {
+    /** The label the button renders as its text. */
+    children?: ReactNode
     variant?: ButtonVariant
     size?: 'md' | 'sm'
     icon?: ReactNode
@@ -30,6 +32,8 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
   export const Button: (props: ButtonProps) => ReactElement
 
   export interface PillProps {
+    /** The label the pill renders as its text. */
+    children?: ReactNode
     active?: boolean
     className?: string
     disabled?: boolean
@@ -126,6 +130,8 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
   export const Menu: (props: MenuProps) => ReactElement
 
   export interface MenuItemButtonProps {
+    /** The row's content. */
+    children?: ReactNode
     disabled?: boolean
     disabledReason?: string
     danger?: boolean
@@ -137,6 +143,8 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
 
   export interface MenuSurfaceProps {
     ref?: Ref<HTMLDivElement>
+    /** Popover content. */
+    children?: ReactNode
     className?: string
     compact?: boolean
     phase?: 'enter' | 'dismiss' | 'replace'

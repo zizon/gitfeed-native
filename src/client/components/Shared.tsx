@@ -1,6 +1,6 @@
 /** Small controls shared by the page, rail, and article surfaces. */
 
-import { Fragment, h, useEffect, useRef, useState } from '../react.js'
+import { useEffect, useRef, useState } from '../react.js'
 import type { ReactNode } from '../react.js'
 import {
   Button,
@@ -30,16 +30,23 @@ export function FilterTabs({ filter, controller, t, compact }: {
     ['all', 'filter.all', 'a'],
     ['starred', 'filter.starred', 's'],
   ]
-  return h('div', { className: `gf-pills${compact ? ' compact' : ''}`, role: 'group', 'aria-label': t('filter.label') },
-    items.map(function (entry) {
-      return h(Pill, {
-        key: entry[0],
-        active: filter === entry[0],
-        title: entry[2],
-        'aria-pressed': filter === entry[0],
-        onClick: function () { controller.setFilter(entry[0]) },
-      }, t(entry[1]))
-    }))
+  return (
+    <div className={`gf-pills${compact ? ' compact' : ''}`} role="group" aria-label={t('filter.label')}>
+      {items.map(function (entry) {
+        return (
+          <Pill
+            key={entry[0]}
+            active={filter === entry[0]}
+            title={entry[2]}
+            aria-pressed={filter === entry[0]}
+            onClick={function () { controller.setFilter(entry[0]) }}
+          >
+            {t(entry[1])}
+          </Pill>
+        )
+      })}
+    </div>
+  )
 }
 
 export function SearchBox({ controller, t, value, inputRef, compact }: {
@@ -61,24 +68,29 @@ export function SearchBox({ controller, t, value, inputRef, compact }: {
     clearTimeout(timer.current)
     timer.current = window.setTimeout(function () { controller.setQuery(next) }, 120)
   }
-  return h(Input, {
-    ref: inputRef,
-    className: `gf-search${compact ? ' compact' : ''}`,
-    type: 'search',
-    icon: h(IconSearchOutlineRegular, { size: 16 }),
-    value: text,
-    placeholder: t('search.placeholder'),
-    'aria-label': t('search.placeholder'),
-    spellCheck: false,
-    autoComplete: 'off',
-    onChange: onChange,
-  })
+  return (
+    <Input
+      ref={inputRef}
+      className={`gf-search${compact ? ' compact' : ''}`}
+      type="search"
+      icon={<IconSearchOutlineRegular size={16} />}
+      value={text}
+      placeholder={t('search.placeholder')}
+      aria-label={t('search.placeholder')}
+      spellCheck={false}
+      autoComplete="off"
+      onChange={onChange}
+    />
+  )
 }
 
 function prefRow(label: string, control: ReactNode) {
-  return h('div', { className: 'gf-prefrow' },
-    h('span', { className: 'gf-prefrow-label' }, label),
-    control)
+  return (
+    <div className="gf-prefrow">
+      <span className="gf-prefrow-label">{label}</span>
+      {control}
+    </div>
+  )
 }
 
 export function DisplayPrefs({ state, controller, t }: {
@@ -95,34 +107,51 @@ export function DisplayPrefs({ state, controller, t }: {
     ['folder', 'pref.folder'],
     ['feed', 'pref.feed'],
   ]
-  return h(Fragment, null,
-    h('div', { className: 'gf-prefgroup' },
-      h('div', { className: 'gf-prefgroup-label' }, t('pref.display')),
-      prefRow(t('pref.hideEmpty'), h(Switch, {
-        checked: hideEmpty,
-        label: t('pref.hideEmpty'),
-        onChange: function (value) { controller.setHideEmpty(value) },
-      })),
-      prefRow(t('pref.markOnScroll'), h(Switch, {
-        checked: markOnScroll,
-        label: t('pref.markOnScroll'),
-        onChange: function (value) { controller.setMarkOnScroll(value) },
-      })),
-      prefRow(t('pref.showDigest'), h(Switch, {
-        checked: showDigest,
-        label: t('pref.showDigest'),
-        onChange: function (value) { controller.setShowDigest(value) },
-      }))),
-    h('div', { className: 'gf-prefgroup' },
-      h('div', { className: 'gf-prefgroup-label' }, t('pref.groupBy')),
-      h('div', { className: 'gf-pills' }, modes.map(function (entry) {
-        return h(Pill, {
-          key: entry[0],
-          active: groupBy === entry[0],
-          'aria-pressed': groupBy === entry[0],
-          onClick: function () { controller.setGroupBy(entry[0]) },
-        }, t(entry[1]))
-      }))))
+  return (
+    <>
+      <div className="gf-prefgroup">
+        <div className="gf-prefgroup-label">{t('pref.display')}</div>
+        {prefRow(t('pref.hideEmpty'), (
+          <Switch
+            checked={hideEmpty}
+            label={t('pref.hideEmpty')}
+            onChange={function (value) { controller.setHideEmpty(value) }}
+          />
+        ))}
+        {prefRow(t('pref.markOnScroll'), (
+          <Switch
+            checked={markOnScroll}
+            label={t('pref.markOnScroll')}
+            onChange={function (value) { controller.setMarkOnScroll(value) }}
+          />
+        ))}
+        {prefRow(t('pref.showDigest'), (
+          <Switch
+            checked={showDigest}
+            label={t('pref.showDigest')}
+            onChange={function (value) { controller.setShowDigest(value) }}
+          />
+        ))}
+      </div>
+      <div className="gf-prefgroup">
+        <div className="gf-prefgroup-label">{t('pref.groupBy')}</div>
+        <div className="gf-pills">
+          {modes.map(function (entry) {
+            return (
+              <Pill
+                key={entry[0]}
+                active={groupBy === entry[0]}
+                aria-pressed={groupBy === entry[0]}
+                onClick={function () { controller.setGroupBy(entry[0]) }}
+              >
+                {t(entry[1])}
+              </Pill>
+            )
+          })}
+        </div>
+      </div>
+    </>
+  )
 }
 
 /** One job of the reader's scheduler, by id; the fetch job drives the refresh UI. */
@@ -136,12 +165,12 @@ export function GitStatus({ state, t }: { state: ClientState; t: Translate }) {
   const syncJob = jobOf(state, 'git')
   const nodes: ReactNode[] = []
   if (!git || !git.repo) {
-    nodes.push(h('span', { key: 'nogit', className: 'gf-muted' }, t('status.noGit')))
+    nodes.push(<span key="nogit" className="gf-muted">{t('status.noGit')}</span>)
   } else {
-    nodes.push(h('b', { key: 'branch' }, git.branch || '?'))
-    if (git.behind) nodes.push(h('span', { key: 'behind', className: 'gf-warn' }, t('status.behind', { n: git.behind })))
-    else if (git.ahead) nodes.push(h('span', { key: 'ahead' }, t('status.ahead', { n: git.ahead })))
-    else if (git.dirty) nodes.push(h('span', { key: 'dirty', className: 'gf-warn' }, t('status.dirty')))
+    nodes.push(<b key="branch">{git.branch || '?'}</b>)
+    if (git.behind) nodes.push(<span key="behind" className="gf-warn">{t('status.behind', { n: git.behind })}</span>)
+    else if (git.ahead) nodes.push(<span key="ahead">{t('status.ahead', { n: git.ahead })}</span>)
+    else if (git.dirty) nodes.push(<span key="dirty" className="gf-warn">{t('status.dirty')}</span>)
   }
   if (fetchJob && fetchJob.enabled) {
     const detail = [`${t('status.lastRefresh')}: ${fetchJob.lastRunAt ? fmtTime(fetchJob.lastRunAt) : t('status.never')}`]
@@ -151,13 +180,17 @@ export function GitStatus({ state, t }: { state: ClientState; t: Translate }) {
         failed: fetchJob.last.detail?.failed ?? 0,
       }))
     }
-    nodes.push(h('span', {
-      key: 'auto',
-      className: fetchJob.last && !fetchJob.last.ok ? 'gf-warn' : undefined,
-      title: detail.join(' · '),
-    }, t('status.autoEvery', { n: Math.max(1, Math.round(fetchJob.intervalMs / 60000)) })))
+    nodes.push(
+      <span
+        key="auto"
+        className={fetchJob.last && !fetchJob.last.ok ? 'gf-warn' : undefined}
+        title={detail.join(' · ')}
+      >
+        {t('status.autoEvery', { n: Math.max(1, Math.round(fetchJob.intervalMs / 60000)) })}
+      </span>,
+    )
   }
-  if (fetchJob && fetchJob.running) nodes.push(h('span', { key: 'running', className: 'gf-muted' }, t('status.running')))
+  if (fetchJob && fetchJob.running) nodes.push(<span key="running" className="gf-muted">{t('status.running')}</span>)
   if (syncJob && syncJob.enabled) {
     const detail = [
       t('status.autoSyncEvery', { n: Math.max(1, Math.round(syncJob.intervalMs / 60000)) }),
@@ -165,13 +198,17 @@ export function GitStatus({ state, t }: { state: ClientState; t: Translate }) {
       `${t('status.lastSync')}: ${syncJob.lastRunAt ? fmtTime(syncJob.lastRunAt) : t('status.never')}`,
       syncJob.last ? (syncJob.last.ok ? t('status.synced') : t('status.syncFailed')) : '',
     ].filter(Boolean).join(' · ')
-    nodes.push(h('span', {
-      key: 'sync',
-      className: syncJob.last && !syncJob.last.ok ? 'gf-warn' : undefined,
-      title: detail,
-    }, `⇄ ${Math.max(1, Math.round(syncJob.intervalMs / 60000))}m`))
+    nodes.push(
+      <span
+        key="sync"
+        className={syncJob.last && !syncJob.last.ok ? 'gf-warn' : undefined}
+        title={detail}
+      >
+        {`⇄ ${Math.max(1, Math.round(syncJob.intervalMs / 60000))}m`}
+      </span>,
+    )
   }
-  return h('div', { className: 'gf-status' }, nodes)
+  return <div className="gf-status">{nodes}</div>
 }
 
 /**
@@ -193,14 +230,16 @@ export function Toasts({ toast, controller, t }: {
       },
     }]
     : undefined
-  return h(Toast, {
-    key: String(toast.at),
-    text: toast.text,
-    icon: toast.error ? h(IconWarningOutlineRegular, { size: 16 }) : undefined,
-    holdMs: toast.undo ? 7000 : 4000,
-    actions: actions,
-    onDone: function () { controller.dismissToast() },
-  })
+  return (
+    <Toast
+      key={String(toast.at)}
+      text={toast.text}
+      icon={toast.error ? <IconWarningOutlineRegular size={16} /> : undefined}
+      holdMs={toast.undo ? 7000 : 4000}
+      actions={actions}
+      onDone={function () { controller.dismissToast() }}
+    />
+  )
 }
 
 export function ErrorState({ state, controller, t }: {
@@ -208,17 +247,24 @@ export function ErrorState({ state, controller, t }: {
   controller: Controller
   t: Translate
 }) {
-  return h(EmptyState, {
-    icon: h(IconRss, { size: 28 }),
-    title: t('error.title'),
-    action: h(Button, {
-      variant: 'primary',
-      size: 'sm',
-      onClick: function () { void controller.load({ force: true }) },
-    }, t('action.retry')),
-  },
-  h('p', { className: 'gf-placeholder-hint error' }, state.error),
-  state.repo ? h('p', { className: 'gf-placeholder-hint' }, state.repo) : null)
+  return (
+    <EmptyState
+      icon={<IconRss size={28} />}
+      title={t('error.title')}
+      action={(
+        <Button
+          variant="primary"
+          size="sm"
+          onClick={function () { void controller.load({ force: true }) }}
+        >
+          {t('action.retry')}
+        </Button>
+      )}
+    >
+      <p className="gf-placeholder-hint error">{state.error}</p>
+      {state.repo ? <p className="gf-placeholder-hint">{state.repo}</p> : null}
+    </EmptyState>
+  )
 }
 
 /** Compact background-refresh indicator: age of the last run, and a warn tint when it failed. */
@@ -239,21 +285,24 @@ export function RefreshState({ state, t }: { state: ClientState; t: Translate })
   ].filter(Boolean).join(' · ')
   // No glyph: the refresh button a few pixels above already carries one, and a
   // second arrow that does not act reads as a second button.
-  return h('span', {
-    className: `gf-refresh-state${job.running ? ' running' : broken ? ' warn' : ''}`,
-    title: title,
-    'aria-label': title,
-    role: 'status',
-  },
-  job.running ? '…' : age)
+  return (
+    <span
+      className={`gf-refresh-state${job.running ? ' running' : broken ? ' warn' : ''}`}
+      title={title}
+      aria-label={title}
+      role="status"
+    >
+      {job.running ? '…' : age}
+    </span>
+  )
 }
 
 export function EmptyArticle({ t }: { state: ClientState; t: Translate }) {
   // The list bar already states the counts; this pane only needs to say what to
   // do next.
-  return h(EmptyState, {
-    icon: h(IconRss, { size: 28 }),
-    title: t('page.title'),
-  },
-  h('p', { className: 'gf-placeholder-hint' }, t('empty.articleHint')))
+  return (
+    <EmptyState icon={<IconRss size={28} />} title={t('page.title')}>
+      <p className="gf-placeholder-hint">{t('empty.articleHint')}</p>
+    </EmptyState>
+  )
 }
