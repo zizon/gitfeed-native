@@ -92,7 +92,8 @@ export function createHandler(service: GitfeedService) {
 
       if (route === '/state' && (method === 'GET' || method === 'HEAD')) {
         const known = url.searchParams.get('version') || undefined
-        const state = await service.getState(known)
+        const knownItems = url.searchParams.get('itemsVersion') || undefined
+        const state = await service.getState(known, knownItems)
         if (method === 'HEAD') {
           sendEmpty(res, 200)
           return

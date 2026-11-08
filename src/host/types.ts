@@ -110,6 +110,10 @@ export interface ReaderStateData {
 export interface ReadyState extends ReaderStateData {
   version: string
   unchanged?: boolean
+  /** Fingerprint of the item shards alone; read and star marks do not move it. */
+  itemsVersion?: string
+  /** The caller holds `itemsVersion`, so this payload carries no item rows. */
+  itemsUnchanged?: boolean
   git: import('../shared/types.js').GitInfo | null
   schedule: import('../shared/types.js').ScheduleJobInfo[]
   generatedAt: string

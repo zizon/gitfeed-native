@@ -1,6 +1,6 @@
 /** Fixed-height virtualized item list with group headers and read-on-scroll. */
 
-import { h, useCallback, useEffect, useMemo, useRef, useState } from '../react.js'
+import { h, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from '../react.js'
 import type { ReactNode } from '../react.js'
 import {
   Button,
@@ -63,6 +63,12 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
   const lastTop = useRef(0)
   /** Scroll offset this surface moved to on its own, which must not mark anything. */
   const programmatic = useRef<number | null>(null)
+  /**
+   * The entry at the viewport top and how far into it the viewport sits. When a
+   * refresh inserts rows above, the list is put back on this entry, so the
+   * reader keeps looking at the same rows instead of at whatever slid down.
+   */
+  const scrollAnchor = useRef<{ key: string; delta: number } | null>(null)
   /** The scope menu for marking read; it shows its counts before acting. */
   const [markOpen, setMarkOpen] = useState(false)
   /** Only the whole-library entry needs a second, differently placed click. */
@@ -96,8 +102,11 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
       const bucket = groups.get(key)
       if (bucket) bucket.items.push(item)
     }
+    // Sections hold one order: by name, the way the rail lists folders and
+    // feeds. Ordering by size re-ranked every section whenever a fetch landed,
+    // so the section being read could move somewhere else under the pointer.
     const ordered = Array.from(groups.values()).sort(function (a, b) {
-      return b.items.length - a.items.length || a.label.localeCompare(b.label)
+      return a.label.localeCompare(b.label) || a.key.localeCompare(b.key)
     })
     const out: Entry[] = []
     for (const group of ordered) {
@@ -135,6 +144,13 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
     return map
   }, [entries])
 
+  /** Every entry key to its row offset, for putting the viewport back in place. */
+  const keyIndex = useMemo(function () {
+    const map = new Map<string, number>()
+    for (let i = 0; i < entries.length; i++) map.set(entries[i].key, i)
+    return map
+  }, [entries])
+
   const total = offsets[entries.length] || 0
 
   // Scroll position this surface wrote itself (a filter reset, revealing the
@@ -167,6 +183,13 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
     setAnchor(function (current) {
       return current.atTop === atTop && current.index === index ? current : { atTop: atTop, index: index }
     })
+    // At the very top new rows should simply appear; anywhere else the entry
+    // under the viewport edge is the landmark that must not move.
+    const anchorIndex = Math.min(entries.length - 1, lowerBound(offsets, top))
+    const anchorEntry = atTop ? undefined : entries[anchorIndex]
+    scrollAnchor.current = anchorEntry
+      ? { key: anchorEntry.key, delta: Math.max(0, top - offsets[anchorIndex]) }
+      : null
     let jumped = false
     if (programmatic.current !== null) {
       jumped = Math.abs(programmatic.current - top) < 1
@@ -193,6 +216,24 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
       compute()
     })
   }, [compute])
+
+  /** The entry list the scroll anchor was captured against. */
+  const anchoredFor = useRef<Entry[] | null>(null)
+  // The rows were rebuilt under a live scroll position: put the entry that was
+  // under the viewport edge back where it was, before the browser paints.
+  useLayoutEffect(function () {
+    const el = viewportRef.current
+    const previous = anchoredFor.current
+    anchoredFor.current = entries
+    const held = scrollAnchor.current
+    if (!el || !held || !previous || previous === entries) return
+    const index = keyIndex.get(held.key)
+    if (index === undefined) return
+    const target = Math.max(0, (offsets[index] || 0) + held.delta)
+    if (Math.abs(target - el.scrollTop) < 1) return
+    scrollTo(el, target)
+    lastTop.current = el.scrollTop
+  }, [entries, offsets, keyIndex])
 
   useEffect(function () {
     const key = `${groupBy}\u0000${state.query}\u0000${state.feedId || ''}`
@@ -260,7 +301,7 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
     const digest = showDigest ? controller.digest(item) : ''
     return h('div', {
       key: entry.key,
-      className: `gf-row${unread ? ' unread' : ''}${state.current === item.id ? ' active' : ''}`,
+      className: `gf-row${unread ? ' unread' : ''}${state.current === item.id ? ' active' : ''}${state.fresh.has(item.id) ? ' gf-row-in' : ''}`,
       role: 'button',
       tabIndex: -1,
       'aria-current': state.current === item.id ? 'true' : undefined,

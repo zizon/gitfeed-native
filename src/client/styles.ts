@@ -275,6 +275,16 @@ export const CSS = `
 }
 .gf-listpane.rows-plain .gf-row { height: 46px; }
 .gf-row.active { background: var(--dsw-alias-interactive-bg-active); }
+/* A row that landed while the reader was open fades in where it belongs
+   instead of appearing as a hard cut in the middle of a scroll. */
+.gf-row.gf-row-in { animation: gf-row-in 260ms ease-out both; }
+@keyframes gf-row-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .gf-row.gf-row-in { animation: none; }
+}
 @media (hover: hover) {
   .gf-row:hover { background: var(--dsw-alias-interactive-bg-hover); }
 }

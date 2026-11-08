@@ -86,6 +86,17 @@ function checkedIds(ids: unknown): string[] {
 }
 
 /**
+ * Newest first, with the id as a tie-break: two items that share a timestamp
+ * would otherwise keep whatever order the shards happened to read in, and a
+ * refresh could swap them under the reader.
+ */
+function compareItems(a: Item, b: Item): number {
+  if (a.date !== b.date) return a.date < b.date ? 1 : -1
+  if (a.id !== b.id) return a.id < b.id ? -1 : 1
+  return 0
+}
+
+/**
  * Create the Host-side reader for one checkout.
  * @param {object} options
  * @param {string} options.root absolute gitfeed checkout.
@@ -108,7 +119,14 @@ export function createGitfeed(options: GitfeedOptions) {
     ? Math.max(1, Number(options.syncMaxMinutes))
     : 60
 
-  let snapshotCache: { version: string | null; data: ReaderStateData | null } = { version: null, data: null }
+  /**
+   * The item model has its own version: read and star marks bump the state
+   * version without touching the items, and re-reading, re-sorting, and
+   * re-sending thousands of rows because a mark landed is what made polling
+   * expensive. The client sends this back, so an unchanged model travels as a
+   * flag instead of a payload.
+   */
+  let itemsCache: { version: string | null; items: Item[] | null } = { version: null, items: null }
   let gitCache: { at: number; value: GitInfo | null } = { at: 0, value: null }
   let writeQueue = Promise.resolve()
   let disposed = false
@@ -118,7 +136,7 @@ export function createGitfeed(options: GitfeedOptions) {
   }
 
   function invalidate() {
-    snapshotCache = { version: null, data: null }
+    itemsCache = { version: null, items: null }
     gitCache = { at: 0, value: null }
   }
 
@@ -132,17 +150,8 @@ export function createGitfeed(options: GitfeedOptions) {
     return readRepoConfig(root)
   }
 
-  async function fileVersion(): Promise<string> {
-    const files = [paths.config, paths.feeds, paths.meta, paths.read, paths.starred, paths.localMeta]
-    let feedsExists = true
-    try {
-      await stat(paths.feeds)
-    } catch {
-      feedsExists = false
-    }
-    if (!feedsExists) return 'uninitialized'
-    files.push(...await listShards(paths.items))
-    files.push(...await listShards(paths.localItems))
+  /** A stable fingerprint of the named files, by size and modification time. */
+  async function statVersion(files: string[]): Promise<string> {
     const hash = crypto.createHash('sha1')
     for (const file of files) {
       try {
@@ -155,19 +164,32 @@ export function createGitfeed(options: GitfeedOptions) {
     return hash.digest('hex')
   }
 
-  async function gitInfo(): Promise<GitInfo> {
-    if (gitCache.value && Date.now() - gitCache.at < 3000) return gitCache.value
-    const value = await readGitInfo(root)
-    gitCache = { at: Date.now(), value: value }
-    return value
+  /** Item shards in a fixed order: committed data first, then the local cache. */
+  async function itemShards(): Promise<string[]> {
+    return (await listShards(paths.items)).concat(await listShards(paths.localItems))
   }
 
-  async function buildSnapshot(cfg: RepoConfig, version: string): Promise<ReaderStateData> {
-    if (snapshotCache.version === version && snapshotCache.data) return snapshotCache.data
+  async function fileVersion(): Promise<string> {
+    const files = [paths.config, paths.feeds, paths.meta, paths.read, paths.starred, paths.localMeta]
+    let feedsExists = true
+    try {
+      await stat(paths.feeds)
+    } catch {
+      feedsExists = false
+    }
+    if (!feedsExists) return 'uninitialized'
+    files.push(...await itemShards())
+    return statVersion(files)
+  }
+
+  /** The item model, read from disk only when its own fingerprints moved. */
+  async function buildItems(): Promise<{ version: string; items: Item[] }> {
+    const shards = await itemShards()
+    const version = await statVersion(shards)
+    if (itemsCache.version === version && itemsCache.items) return { version: version, items: itemsCache.items }
 
     const items: Item[] = []
     const seenItems = new Set<string>()
-    const shards = (await listShards(paths.items)).concat(await listShards(paths.localItems))
     for (const file of shards) {
       const rows = await readNdjson<Item | null>(file)
       for (const row of rows) {
@@ -176,8 +198,19 @@ export function createGitfeed(options: GitfeedOptions) {
         items.push(row)
       }
     }
-    items.sort(function (a, b) { return a.date < b.date ? 1 : a.date > b.date ? -1 : 0 })
+    items.sort(compareItems)
+    itemsCache = { version: version, items: items }
+    return { version: version, items: items }
+  }
 
+  async function gitInfo(): Promise<GitInfo> {
+    if (gitCache.value && Date.now() - gitCache.at < 3000) return gitCache.value
+    const value = await readGitInfo(root)
+    gitCache = { at: Date.now(), value: value }
+    return value
+  }
+
+  async function buildSnapshot(cfg: RepoConfig, items: Item[]): Promise<ReaderStateData> {
     const read: string[] = []
     for (const row of await readNdjson<{ id: string } | null>(paths.read)) if (row && row.id) read.push(row.id)
     const starred: string[] = []
@@ -224,17 +257,18 @@ export function createGitfeed(options: GitfeedOptions) {
       repo: root,
       allowGit: allowGit,
     }
-    snapshotCache = { version: version, data: data }
     return data
   }
 
   /**
    * Read the complete reader state, or only its volatile facts when the caller
-   * already holds this version.
-   * @param {string} [knownVersion] version the caller rendered last.
+   * already holds this version, or the item model when the caller already holds
+   * that model's version.
+   * @param {string} [knownVersion] state version the caller rendered last.
+   * @param {string} [knownItemsVersion] item-model version the caller holds.
    * @returns {Promise<object>} state payload.
    */
-  async function getState(knownVersion?: string): Promise<StateResponse> {
+  async function getState(knownVersion?: string, knownItemsVersion?: string): Promise<StateResponse> {
     touch()
     const version = await fileVersion()
     let cfg
@@ -268,8 +302,18 @@ export function createGitfeed(options: GitfeedOptions) {
       })
     }
     if (knownVersion && knownVersion === version) return Object.assign({ unchanged: true }, base)
-    const data = await buildSnapshot(cfg, version)
-    return Object.assign({}, base, data)
+    const model = await buildItems()
+    const data = await buildSnapshot(cfg, model.items)
+    if (knownItemsVersion && knownItemsVersion === model.version) {
+      // The reader already holds this item model: send the marks and feeds that
+      // moved, and a flag instead of thousands of unchanged rows.
+      return Object.assign({}, base, data, {
+        itemsVersion: model.version,
+        itemsUnchanged: true,
+        items: undefined,
+      })
+    }
+    return Object.assign({}, base, data, { itemsVersion: model.version })
   }
 
   async function setState(file: string, ids: unknown, value: boolean): Promise<number> {
@@ -468,7 +512,8 @@ export function createGitfeed(options: GitfeedOptions) {
     const version = await fileVersion()
     if (version === 'uninitialized') throw new Error(`gitfeed: no feeds.json in ${root}`)
     const cfg = settings()
-    return { cfg: cfg, version: version, data: await buildSnapshot(cfg, version) }
+    const model = await buildItems()
+    return { cfg: cfg, version: version, data: await buildSnapshot(cfg, model.items) }
   }
 
   async function listForTool(input: ListToolInput | null | undefined) {

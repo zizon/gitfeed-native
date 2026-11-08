@@ -36,6 +36,8 @@ interface StateResponse {
   unchanged?: boolean
   error?: string
   version?: string
+  itemsVersion?: string
+  itemsUnchanged?: boolean
   items?: Item[]
   feeds?: Feed[]
   read?: string[]
@@ -47,6 +49,12 @@ interface StateResponse {
   allowGit?: boolean
 }
 
+function sameSet(current: Set<string>, next: Set<string>): boolean {
+  if (current.size !== next.size) return false
+  for (const id of next) if (!current.has(id)) return false
+  return true
+}
+
 export function createController(t: Translate): Controller {
   let state: ClientState = {
     status: 'idle',
@@ -55,6 +63,8 @@ export function createController(t: Translate): Controller {
     loadedOnce: false,
     items: [],
     byId: new Map(),
+    itemsVersion: null,
+    fresh: new Set(),
     read: new Set(),
     starred: new Set(),
     feeds: [],
@@ -94,6 +104,7 @@ export function createController(t: Translate): Controller {
   let pollTimer: ReturnType<typeof setInterval> | null = null
   let toastTimer: ReturnType<typeof setTimeout> | null = null
   let flushTimer: ReturnType<typeof setTimeout> | null = null
+  let freshTimer: ReturnType<typeof setTimeout> | null = null
   let disposed = false
   const pendingRead = new Set<string>()
   const pendingUnread = new Set<string>()
@@ -148,7 +159,11 @@ export function createController(t: Translate): Controller {
   }
 
   function getList(): Item[] {
-    const key = [state.filter, state.query, state.feedId || '', state.version || '', state.listEpoch].join('\u0000')
+    // The epoch covers every rebuild the rows can see: a new item model, or a
+    // changed read/star set. The state version is not part of the key, because
+    // it also moves for git and schedule polling, and rebuilding the rows for
+    // those would hand the list a fresh array on every quiet refresh.
+    const key = [state.filter, state.query, state.feedId || '', state.listEpoch].join('\u0000')
     if (listCache.key !== key) {
       listCache = { key: key, items: filterItems() }
     }
@@ -228,7 +243,10 @@ export function createController(t: Translate): Controller {
     const force = options?.force === true
     loadPromise = (async function () {
       if (!state.loadedOnce) set({ status: 'loading' })
-      const url = `${PREFIX}/state${!force && state.version ? `?version=${encodeURIComponent(state.version)}` : ''}`
+      const params: string[] = []
+      if (!force && state.version) params.push(`version=${encodeURIComponent(state.version)}`)
+      if (state.itemsVersion) params.push(`itemsVersion=${encodeURIComponent(state.itemsVersion)}`)
+      const url = `${PREFIX}/state${params.length ? `?${params.join('&')}` : ''}`
       const res = await fetch(url, { cache: 'no-store', credentials: 'same-origin' })
       let data: StateResponse
       try {
@@ -260,11 +278,29 @@ export function createController(t: Translate): Controller {
         })
         return
       }
-      const items: Item[] = Array.isArray(data.items) ? data.items : []
-      const feeds: Feed[] = Array.isArray(data.feeds) ? data.feeds : []
-      const byId = new Map<string, Item>(items.map(function (item): [string, Item] { return [item.id, item] }))
+      // Rows travel only with the item model they belong to. A payload without
+      // them is usable just when it names the model this reader already holds;
+      // anything else means a mid-update race, so ask again from scratch.
+      const replaceItems = Array.isArray(data.items)
+      if (!replaceItems && data.itemsVersion !== state.itemsVersion) {
+        setTimeout(function () { load({ force: true }).catch(function () { }) }, 0)
+        return
+      }
+      const items = replaceItems ? (data.items as Item[]) : state.items
+      const byId = replaceItems
+        ? new Map<string, Item>(items.map(function (item): [string, Item] { return [item.id, item] }))
+        : state.byId
+      // Rows that landed while the reader was already open: the list fades
+      // them in instead of reflowing the page under the pointer.
+      const fresh = new Set<string>()
+      if (replaceItems && state.loadedOnce) {
+        for (const item of items) if (!state.byId.has(item.id)) fresh.add(item.id)
+      }
+      const read = new Set<string>(Array.isArray(data.read) ? data.read : state.read)
+      const starred = new Set<string>(Array.isArray(data.starred) ? data.starred : state.starred)
+      const feeds: Feed[] = Array.isArray(data.feeds) ? data.feeds : state.feeds
       const feedMap = new Map<string, Feed>(feeds.map(function (feed): [string, Feed] { return [feed.id, feed] }))
-      plainCache.clear()
+      if (replaceItems) plainCache.clear()
       set({
         status: 'ready',
         error: null,
@@ -272,10 +308,12 @@ export function createController(t: Translate): Controller {
         loadedOnce: true,
         items: items,
         byId: byId,
+        itemsVersion: data.itemsVersion || state.itemsVersion,
+        fresh: fresh,
         feeds: feeds,
         feedMap: feedMap,
-        read: new Set<string>(Array.isArray(data.read) ? data.read : []),
-        starred: new Set<string>(Array.isArray(data.starred) ? data.starred : []),
+        read: read,
+        starred: starred,
         reader: data.reader || state.reader,
         git: data.git || null,
         schedule: Array.isArray(data.schedule) ? data.schedule : [],
@@ -283,8 +321,17 @@ export function createController(t: Translate): Controller {
         repo: data.repo || state.repo,
         allowGit: data.allowGit !== false,
         current: state.current && byId.has(state.current) ? state.current : null,
-        listEpoch: state.listEpoch + 1,
+        listEpoch: replaceItems || !sameSet(state.read, read) || !sameSet(state.starred, starred)
+          ? state.listEpoch + 1
+          : state.listEpoch,
       })
+      if (fresh.size) {
+        if (freshTimer) clearTimeout(freshTimer)
+        freshTimer = setTimeout(function () {
+          freshTimer = null
+          if (state.fresh.size) set({ fresh: new Set() })
+        }, 1600)
+      }
     })().catch(function (err: unknown) {
       const text = messageOf(err)
       if (state.loadedOnce) {
@@ -667,6 +714,7 @@ export function createController(t: Translate): Controller {
     }
     if (toastTimer) clearTimeout(toastTimer)
     if (flushTimer) clearTimeout(flushTimer)
+    if (freshTimer) clearTimeout(freshTimer)
     listeners.clear()
   }
 

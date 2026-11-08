@@ -237,6 +237,16 @@ per-feed clocks live in `.local/schedule.json` — machine-local, never
 committed, version 2; a version-1 file (the fetch-only format) is read as the
 Refresh job's state. **Fetch** in the reader still fetches everything.
 
+The Harness ships two scheduling-shaped services, and neither replaces this
+one. `ctx.timer` (`@deepseek-ai/cordis-plugin-timer`) is a disposal-aware
+`timeout`/`interval`/`throttle`/`debounce` wrapper: a wake-up, not a policy,
+and its timers cannot `unref()`, so a pending one would hold the Host process
+open. `ctx.schedule` (`@deepseek-ai/dsh-schedule`) is durable and knows Cron
+and RRULE, but every occurrence it delivers becomes an Agent turn in a
+Session — using it would spend a model call per refresh and drop the adaptive,
+per-feed, activity-gated behaviour above. This scheduler only needs wall-clock
+wakes, so it keeps its own policy and its own machine-local state.
+
 ### GitHub Actions in the data repository
 
 `gitfeed init` writes the job into a new data root, and `gitfeed ci` writes it
@@ -310,8 +320,7 @@ not carry its own theme setting.
   A row that is marked read stays in the Unread list until the scope changes
   (filter, search, or source), so nothing shifts under the pointer while
   reading; a feed or folder that was on screen stays in the Feeds list for the
-  same reason.
-- **Read on scroll**: a row counts as read only after the viewport top passed
+  same reason.- **Read on scroll**: a row counts as read only after the viewport top passed
   it while moving down; rows a scrollbar drag skipped over are included.
 - **Article**: sanitized feed HTML (element allowlist, `href`/`src`/`alt`/
   `title` only, http(s)/mailto URLs only), star, mark unread, open original.
@@ -330,6 +339,33 @@ not carry its own theme setting.
   Bulk marking is deliberately not on a key.
 
 Pane widths and open folders are remembered per browser.
+
+### A list that does not move
+
+A refresh lands while someone is reading, so the list is built to absorb one:
+
+- **Sections hold one order.** Grouped sections are ordered by name — the way
+  the rail lists folders and sources — instead of being re-ranked by item
+  count. Ranking by size meant that every fetch, and every read mark under the
+  Unread filter, could move the section being read somewhere else; a section
+  that grows or shrinks now stays where it is.
+- **The viewport is anchored to a row.** When rows are inserted above the
+  viewport, the list is put back on the entry that was under its top edge, so
+  the text being read does not slide down the screen. At the very top the new
+  rows push in as expected instead.
+- **New rows fade in once.** Rows that arrived while the page was open get a
+  short fade (`gf-row-in`), then the class is dropped; a quiet poll animates
+  nothing, and neither does scrolling through the virtualized list.
+- **Ties are broken by id**, on the Host (`compareItems`), so two items that
+  share a timestamp cannot swap places between reloads.
+
+For the client, the item rows and the read/star state travel separately: the
+Host reports an `itemsVersion` next to the state `version`, and a poll that
+changes only marks is answered with those marks, the feeds, and
+`itemsUnchanged: true` — the reader keeps its row array untouched. On a
+3,200-item root a poll that carried a mark was 4.8 MB before and is about
+115 KB now, and a poll that changes nothing keeps the same list array all the
+way down.
 
 ### Design language
 

@@ -21,6 +21,10 @@ export interface ClientState {
   loadedOnce: boolean
   items: Item[]
   byId: Map<string, Item>
+  /** Version of the item model these rows came from; marks do not move it. */
+  itemsVersion: string | null
+  /** Rows that arrived while the reader was open, so their first paint fades. */
+  fresh: Set<string>
   read: Set<string>
   starred: Set<string>
   feeds: Feed[]
