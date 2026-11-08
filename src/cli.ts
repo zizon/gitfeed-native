@@ -4,7 +4,7 @@
  * The plugin package is code only, so the data repository — which is usually
  * private and holds `feeds.json`, `config.json`, and `data/` — needs a way to
  * run the fetcher without checking the code out. This CLI imports the same
- * `lib/host` modules the native plugin uses, so GitHub Actions, cron, and the
+ * `lib/host` modules the native plugin uses, so cron, the agent tool, and the
  * reader cannot drift.
  *
  * It runs from a checkout of the data repository (`--root` defaults to the

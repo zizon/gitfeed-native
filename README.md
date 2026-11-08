@@ -30,8 +30,8 @@ Why split them:
   a machine or a user.
 
 The plugin still dogfoods: this checkout is developed against the real data
-repository, and the CLI in this package is what the data repository's
-GitHub Actions job runs.
+repository, and the CLI in this package runs the same `lib/host` fetcher the
+reader uses.
 
 ## Quick start
 
@@ -209,7 +209,7 @@ Two jobs are registered today. A new one implements `available`, `due`, and
   produces nothing, or fails doubles its interval on every quiet run, up to
   the ceiling, and drops back the moment it produces an item. That is what
   keeps a barely-updated blog from being polled every five minutes;
-- never into the committed `data/` tree, so it cannot race the Actions job.
+- never into the committed `data/` tree, so a refresh cannot race a commit.
 
 **Sync** publishes and repairs read state:
 
@@ -217,8 +217,7 @@ Two jobs are registered today. A new one implements `available`, `due`, and
   session's marks are committed, rebased, and pushed about twenty seconds
   after the last change; a burst of scroll marks coalesces into one commit;
 - on a quiet machine it backs off to `syncMaxMinutes` (default 60) and only
-  pulls, which is how a second device's marks and the data repository's
-  Actions commits arrive without pressing Pull;
+  pulls, which is how a second device's marks arrive without pressing Pull;
 - it waits `syncMinutes` (default 10) before its first run, so a plugin
   update does not push on its first second; that first run publishes any read
   state that was already waiting for a manual Sync; `syncMinutes: 0` disables
@@ -231,50 +230,6 @@ Set `adaptive: false` to fetch every feed on every run. The job clocks and the
 per-feed clocks live in `.local/schedule.json` — machine-local, never
 committed, version 2; a version-1 file (the fetch-only format) is read as the
 Refresh job's state. **Fetch** in the reader still fetches everything.
-
-### GitHub Actions in the data repository
-
-The data repository owns the cloud fetch job (the code repository cannot: it has
-no data). A minimal workflow:
-
-```yaml
-name: fetch
-
-on:
-  schedule: [{ cron: "1,31 * * * *" }]
-  workflow_dispatch:
-
-permissions:
-  contents: write
-
-concurrency:
-  group: fetch
-  cancel-in-progress: false
-
-jobs:
-  fetch:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
-        with: { node-version: 22 }
-      - run: npx --yes --package=github:zizon/gitfeed-native gitfeed fetch
-      - name: Commit new items
-        run: |
-          git config user.name "gitfeed"
-          git config user.email "gitfeed@users.noreply.github.com"
-          git add data
-          git diff --staged --quiet && exit 0
-          git commit -m "feed: $(date -u +%Y-%m-%dT%H:%MZ)"
-          git pull --rebase --autostash
-          git push
-```
-
-`npx` needs the plugin repository to be readable from the job: public, or a
-token/deploy key for a private one. GitHub disables scheduled workflows in forks
-until you enable them, and private repositories bill Actions minutes (the npm
-install of a git package is the expensive part; hourly is the safe cadence on
-the free tier, 30-minute runs fit a paid plan).
 
 ### CLI
 
@@ -297,7 +252,11 @@ From a checkout without installing global bin:
 node bin/gitfeed.mjs fetch --root ~/gitfeed
 ```
 
-### Cron instead of Actions
+### Cron
+
+Fetching is local: it runs on the machine that has the checkout — the reader
+refreshes while a panel is open, and this cron entry keeps the committed
+`data/` tree current while it is not:
 
 ```bash
 */30 * * * * cd $HOME/gitfeed \
@@ -306,6 +265,10 @@ node bin/gitfeed.mjs fetch --root ~/gitfeed
   && git commit -qm "feed: $(date -u +%FT%TZ)" \
   && git push || true
 ```
+
+There is no server-side fetch job and the data repository has no workflow: the
+scheduler and this CLI are the only fetchers, and **Sync** or the cron entry is
+what writes to the remote.
 
 ## Reading UI
 
@@ -560,16 +523,16 @@ produced.
 2. Flip this repository to public (`gh repo edit --visibility public --accept-visibility-change-consequences`).
 3. Update the install spec in the README (and in any profile) from the SSH form
    to `github:zizon/gitfeed-native`.
-4. In the data repository: uncomment the `schedule:` line in
-   `.github/workflows/fetch.yml` (it installs the CLI with `npx` from the now
-   public repository).
-5. Tag the release and reinstall the bundle in the profiles that use it.
+4. Tag the release and reinstall the bundle in the profiles that use it.
 
 ## Limitations
 
 - **Only what the feed gives you.** Some feeds publish a teaser; "Open
   original" is one click away.
 - **Not offline.** Images are hotlinked from the origin.
+- **Fetching is local.** Nothing runs in the cloud: items arrive when a machine
+  with the data checkout refreshes, or when cron runs the CLI. A closed laptop
+  fetches nothing.
 - **Loopback only.** The API is served by the Harness web server and refuses
   cross-origin requests; it is not designed to be exposed publicly.
 - **The right Sidebar needs a session.** The main-panel page works without one.

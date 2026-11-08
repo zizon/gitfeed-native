@@ -7,8 +7,7 @@
 // `git` publishes and repairs read state: after a read mark or a subscription
 // change the service nudges it forward, so it commits, rebases, and pushes
 // within seconds; on a quiet machine it backs off and only pulls, which is how
-// a second device's marks and the data repository's Actions commits arrive
-// without a manual Sync.
+// a second device's marks arrive without a manual Sync.
 
 import type { FeedDefinition, FetchResult, GitActionResult } from './types.js'
 import type { GitInfo } from '../shared/types.js'

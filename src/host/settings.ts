@@ -1,9 +1,9 @@
 // One place for every knob the plugin shares with the data root.
 //
 // The data root's config.json stays authoritative for fetching and reader
-// defaults, exactly as it is for the GitHub Actions job in the data
-// repository. Environment variables keep their old precedence so the plugin
-// can be pointed at another checkout without editing the profile patch.
+// defaults, and the plugin and the CLI read the same file. Environment
+// variables keep their old precedence so the plugin can be pointed at another
+// checkout without editing the profile patch.
 
 import os from 'node:os'
 import path from 'node:path'
