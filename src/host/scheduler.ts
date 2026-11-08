@@ -1,11 +1,11 @@
 // One adaptive scheduler for every periodic thing the reader does.
 //
 // A job declares a base interval and a ceiling; the scheduler owns the policy,
-// not the clock. It wakes for the earliest job that is due, skips jobs the
-// reader has not touched recently when the job asks for that, runs what is
-// ready, and folds each result back into that job's interval: a run that
-// produced something returns the job to its base interval, while a quiet or
-// failing run doubles it, up to the ceiling. A job can also return its own
+// not the clock. Every heartbeat it looks at each job, skips jobs the reader
+// has not touched recently when the job asks for that, runs what is due, and
+// folds each result back into that job's interval: a run that produced
+// something returns the job to its base interval, while a quiet or failing run
+// doubles it, up to the ceiling. A job can also return its own
 // `nextAt` (the fetch job keeps one clock per feed), and `debounce` waits out a
 // burst of local changes before running, which is how a read mark turns into a
 // sync about twenty seconds after the last mark instead of one commit per mark.
