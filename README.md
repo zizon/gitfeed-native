@@ -318,7 +318,8 @@ not carry its own theme setting.
   feed's items from both stores.
 - **List**: one line per item, grouped by folder or source on request, with a
   `Mark {n} read` button on each group whose header sticks to the top while
-  its group is in view. Rows are virtualized at fixed heights.
+  its group is in view. A group that is a source also carries `Unsubscribe`,
+  which asks before removing that feed and its items. Rows are virtualized at fixed heights.
   A row that is marked read stays in the Unread list until the scope changes
   (filter, search, or source), so nothing shifts under the pointer while
   reading; a feed or folder that was on screen stays in the Feeds list for the

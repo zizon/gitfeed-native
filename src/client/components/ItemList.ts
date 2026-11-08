@@ -73,6 +73,8 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
   const [markOpen, setMarkOpen] = useState(false)
   /** Only the whole-library entry needs a second, differently placed click. */
   const [markArmed, setMarkArmed] = useState(false)
+  /** The feed whose section header is asking before unsubscribing. */
+  const [pendingUnsub, setPendingUnsub] = useState<string | null>(null)
   /** Where the viewport sits: at the top, or inside a row/section. */
   const [anchor, setAnchor] = useState({ atTop: true, index: 0 })
   function closeMark() {
@@ -283,17 +285,57 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
   const listRows = slice.map(function (entry) {
     if (entry.kind === 'group') {
       const groupUnread = entry.group.items.filter(function (item) { return !state.read.has(item.id) }).length
-      return h('div', { key: entry.key, className: 'gf-group' },
-        h('span', { className: 'gf-group-name' }, entry.group.label),
+      // A section grouped by source is the source's own row, so it carries the
+      // source's actions too: mark the section read, and unsubscribe from it.
+      const feedId = groupBy === 'feed' ? entry.group.key : ''
+      const confirming = feedId !== '' && pendingUnsub === feedId
+      return h('div', { key: entry.key, className: `gf-group${confirming ? ' confirming' : ''}` },
+        h('span', { className: 'gf-group-name' }, confirming ? t('confirm.unsubscribe') : entry.group.label),
         h('span', { className: 'gf-group-count' }, String(entry.group.items.length)),
-        h(Button, {
-          variant: 'ghost',
-          size: 'sm',
-          className: 'gf-group-read',
-          disabled: !groupUnread,
-          title: t('action.markGroup'),
-          onClick: function () { controller.markGroup(entry.group.key) },
-        }, groupUnread ? tf(t, 'action.markGroupCount', { n: groupUnread }) : t('action.markGroup')))
+        h('div', { className: 'gf-group-actions' },
+          confirming
+            ? [
+              h(Button, {
+                key: 'cancel',
+                variant: 'ghost',
+                size: 'sm',
+                className: 'gf-group-read',
+                onClick: function () { setPendingUnsub(null) },
+              }, t('action.cancel')),
+              h(Button, {
+                key: 'remove',
+                variant: 'ghost',
+                size: 'sm',
+                className: 'gf-group-read gf-danger',
+                disabled: state.busy.remove,
+                title: t('confirm.unsubscribeHint'),
+                onClick: function () {
+                  setPendingUnsub(null)
+                  void controller.removeFeed(feedId)
+                },
+              }, t('action.remove')),
+            ]
+            : [
+              feedId
+                ? h(Button, {
+                  key: 'unsub',
+                  variant: 'ghost',
+                  size: 'sm',
+                  className: 'gf-group-unsub',
+                  title: t('confirm.unsubscribeHint'),
+                  onClick: function () { setPendingUnsub(feedId) },
+                }, t('action.remove'))
+                : null,
+              h(Button, {
+                key: 'mark',
+                variant: 'ghost',
+                size: 'sm',
+                className: 'gf-group-read',
+                disabled: !groupUnread,
+                title: t('action.markGroup'),
+                onClick: function () { controller.markGroup(entry.group.key) },
+              }, groupUnread ? tf(t, 'action.markGroupCount', { n: groupUnread }) : t('action.markGroup')),
+            ]))
     }
     const item = entry.item
     const unread = !state.read.has(item.id)
