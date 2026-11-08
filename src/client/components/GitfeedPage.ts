@@ -12,7 +12,6 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { DEFAULT_LIST, DEFAULT_RAIL } from '../constants.js'
 import { useKeyboard, useMount, useOutsideClose, useReader } from '../hooks.js'
-import { tf } from '../locales.js'
 import type { GitfeedPageProps } from '../types.js'
 import { clamp } from '../util.js'
 import { IconRss } from '../icons.js'
@@ -102,7 +101,7 @@ export function GitfeedPage({ controller, t }: GitfeedPageProps) {
         size: 'sm',
         icon: h(IconDownloadOutlineRegular, { size: 14 }),
         disabled: state.busy.pull || !state.allowGit || !state.git || !state.git.repo,
-        title: state.git && state.git.behind ? tf(t, 'status.behind', { n: state.git.behind }) : t('action.pull'),
+        title: state.git && state.git.behind ? t('status.behind', { n: state.git.behind }) : t('action.pull'),
         onClick: function () { void controller.runAction('pull') },
       }, t('action.pull')),
       h(Button, {
@@ -120,7 +119,7 @@ export function GitfeedPage({ controller, t }: GitfeedPageProps) {
         title: state.git && state.git.dirty ? t('status.dirty') : t('action.sync'),
         onClick: function () { void controller.runAction('sync') },
       }, t('action.sync')))),
-  state.loadError ? h('div', { className: 'gf-banner' }, tf(t, 'status.banner', { error: state.loadError })) : null,
+  state.loadError ? h('div', { className: 'gf-banner' }, t('status.banner', { error: state.loadError })) : null,
   h('div', { className: 'gf-body' },
     h(FeedRail, { state: state, controller: controller, t: t }),
     h('div', {

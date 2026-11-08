@@ -11,7 +11,6 @@ import {
 import type { Item } from '../../shared/types.js'
 import { GROUP_H, ROW_H, ROW_H_PLAIN } from '../constants.js'
 import { lowerBound } from '../hooks.js'
-import { tf } from '../locales.js'
 import type { ItemListProps, MarkScope } from '../types.js'
 import { fmtTime } from '../util.js'
 import { IconStar } from '../icons.js'
@@ -329,7 +328,7 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
                 disabled: !groupUnread,
                 title: t('action.markGroup'),
                 onClick: function () { controller.markGroup(entry.group.key) },
-              }, groupUnread ? tf(t, 'action.markGroupCount', { n: groupUnread }) : t('action.markGroup')),
+              }, groupUnread ? t('action.markGroupCount', { n: groupUnread }) : t('action.markGroup')),
             ]))
     }
     const item = entry.item
@@ -396,11 +395,11 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
         closeMark()
         controller.markEverything()
       },
-    }, scopeLabel(markArmed ? tf(t, 'action.markAllConfirm', { n: counts.all }) : t('action.markEverything'), counts.all)))
+    }, scopeLabel(markArmed ? t('action.markAllConfirm', { n: counts.all }) : t('action.markEverything'), counts.all)))
   }
 
   const header = h('div', { className: 'gf-listbar' },
-    h('span', { className: 'gf-count-label' }, tf(t, 'items.count', { n: count })))
+    h('span', { className: 'gf-count-label' }, t('items.count', { n: count })))
 
   const markBar = !scope ? null : h('div', { className: `gf-markfloat${scope.n ? '' : ' off'}` },
     h(Button, {

@@ -14,7 +14,6 @@ import {
 import type { ClientState, Controller, Toast as ToastState } from '../types.js'
 import type { ScheduleJobInfo } from '../../shared/types.js'
 import type { Translate } from '../locales.js'
-import { tf } from '../locales.js'
 import { IconRss } from '../icons.js'
 import { EmptyState } from './Controls.js'
 import { fmtIn, fmtTime } from '../util.js'
@@ -140,14 +139,14 @@ export function GitStatus({ state, t }: { state: ClientState; t: Translate }) {
     nodes.push(h('span', { key: 'nogit', className: 'gf-muted' }, t('status.noGit')))
   } else {
     nodes.push(h('b', { key: 'branch' }, git.branch || '?'))
-    if (git.behind) nodes.push(h('span', { key: 'behind', className: 'gf-warn' }, tf(t, 'status.behind', { n: git.behind })))
-    else if (git.ahead) nodes.push(h('span', { key: 'ahead' }, tf(t, 'status.ahead', { n: git.ahead })))
+    if (git.behind) nodes.push(h('span', { key: 'behind', className: 'gf-warn' }, t('status.behind', { n: git.behind })))
+    else if (git.ahead) nodes.push(h('span', { key: 'ahead' }, t('status.ahead', { n: git.ahead })))
     else if (git.dirty) nodes.push(h('span', { key: 'dirty', className: 'gf-warn' }, t('status.dirty')))
   }
   if (fetchJob && fetchJob.enabled) {
     const detail = [`${t('status.lastRefresh')}: ${fetchJob.lastRunAt ? fmtTime(fetchJob.lastRunAt) : t('status.never')}`]
     if (fetchJob.last) {
-      detail.push(tf(t, 'status.fetchLine', {
+      detail.push(t('status.fetchLine', {
         fresh: fetchJob.last.detail?.added ?? 0,
         failed: fetchJob.last.detail?.failed ?? 0,
       }))
@@ -156,13 +155,13 @@ export function GitStatus({ state, t }: { state: ClientState; t: Translate }) {
       key: 'auto',
       className: fetchJob.last && !fetchJob.last.ok ? 'gf-warn' : undefined,
       title: detail.join(' · '),
-    }, tf(t, 'status.autoEvery', { n: Math.max(1, Math.round(fetchJob.intervalMs / 60000)) })))
+    }, t('status.autoEvery', { n: Math.max(1, Math.round(fetchJob.intervalMs / 60000)) })))
   }
   if (fetchJob && fetchJob.running) nodes.push(h('span', { key: 'running', className: 'gf-muted' }, t('status.running')))
   if (syncJob && syncJob.enabled) {
     const detail = [
-      tf(t, 'status.autoSyncEvery', { n: Math.max(1, Math.round(syncJob.intervalMs / 60000)) }),
-      syncJob.nextDueAt ? tf(t, 'status.nextIn', { age: fmtIn(syncJob.nextDueAt) }) : '',
+      t('status.autoSyncEvery', { n: Math.max(1, Math.round(syncJob.intervalMs / 60000)) }),
+      syncJob.nextDueAt ? t('status.nextIn', { age: fmtIn(syncJob.nextDueAt) }) : '',
       `${t('status.lastSync')}: ${syncJob.lastRunAt ? fmtTime(syncJob.lastRunAt) : t('status.never')}`,
       syncJob.last ? (syncJob.last.ok ? t('status.synced') : t('status.syncFailed')) : '',
     ].filter(Boolean).join(' · ')
@@ -232,11 +231,11 @@ export function RefreshState({ state, t }: { state: ClientState; t: Translate })
   const broken = run ? !run.ok : false
   const age = job.lastRunAt ? fmtTime(job.lastRunAt) : t('status.never')
   const title = [
-    tf(t, 'status.autoEvery', { n: Math.max(1, Math.round(job.intervalMs / 60000)) }),
-    job.nextDueAt ? tf(t, 'status.nextIn', { age: fmtIn(job.nextDueAt) }) : '',
+    t('status.autoEvery', { n: Math.max(1, Math.round(job.intervalMs / 60000)) }),
+    job.nextDueAt ? t('status.nextIn', { age: fmtIn(job.nextDueAt) }) : '',
     `${t('status.lastRefresh')}: ${age}`,
-    run ? tf(t, 'status.feedCount', { n: run.detail?.feeds ?? 0 }) : '',
-    run ? tf(t, 'status.fetchLine', { fresh: run.detail?.added ?? 0, failed: run.detail?.failed ?? 0 }) : '',
+    run ? t('status.feedCount', { n: run.detail?.feeds ?? 0 }) : '',
+    run ? t('status.fetchLine', { fresh: run.detail?.added ?? 0, failed: run.detail?.failed ?? 0 }) : '',
   ].filter(Boolean).join(' · ')
   // No glyph: the refresh button a few pixels above already carries one, and a
   // second arrow that does not act reads as a second button.

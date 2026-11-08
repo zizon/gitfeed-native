@@ -11,7 +11,6 @@ import {
 import { Chevron } from '../icons.js'
 import { DEFAULT_LIST } from '../constants.js'
 import { useElementWidth, useKeyboard, useMount, useOutsideClose, useReader } from '../hooks.js'
-import { tf } from '../locales.js'
 import { fmtIn, fmtTime } from '../util.js'
 import type { ClientState, GitfeedRailProps } from '../types.js'
 import type { Controller } from '../types.js'
@@ -43,10 +42,10 @@ function RailMenu({ state, controller, t, onClose }: {
   const fetchJob = jobOf(state, 'fetch')
   const syncJob = jobOf(state, 'git')
   const fetchCadence = fetchJob && fetchJob.enabled
-    ? tf(t, 'status.autoEvery', { n: Math.max(1, Math.round(fetchJob.intervalMs / 60000)) })
+    ? t('status.autoEvery', { n: Math.max(1, Math.round(fetchJob.intervalMs / 60000)) })
     : ''
   const fetchNext = fetchJob && fetchJob.nextDueAt
-    ? ` · ${tf(t, 'status.nextIn', { age: fmtIn(fetchJob.nextDueAt) })}`
+    ? ` · ${t('status.nextIn', { age: fmtIn(fetchJob.nextDueAt) })}`
     : ''
   const fetchState = fetchJob
     ? fetchJob.running
@@ -55,8 +54,8 @@ function RailMenu({ state, controller, t, onClose }: {
     : ''
   const fetchCounts = fetchJob && fetchJob.last && !fetchJob.running
     ? [
-      tf(t, 'status.feedCount', { n: fetchJob.last.detail?.feeds ?? 0 }),
-      tf(t, 'status.fetchLine', {
+      t('status.feedCount', { n: fetchJob.last.detail?.feeds ?? 0 }),
+      t('status.fetchLine', {
         fresh: fetchJob.last.detail?.added ?? 0,
         failed: fetchJob.last.detail?.failed ?? 0,
       }),
@@ -64,10 +63,10 @@ function RailMenu({ state, controller, t, onClose }: {
     : ''
   const fetchInfo = `${fetchState}${fetchCounts ? ` · ${fetchCounts}` : ''}`
   const syncCadence = syncJob && syncJob.enabled
-    ? tf(t, 'status.autoSyncEvery', { n: Math.max(1, Math.round(syncJob.intervalMs / 60000)) })
+    ? t('status.autoSyncEvery', { n: Math.max(1, Math.round(syncJob.intervalMs / 60000)) })
     : ''
   const syncNext = syncJob && syncJob.nextDueAt
-    ? ` · ${tf(t, 'status.nextIn', { age: fmtIn(syncJob.nextDueAt) })}`
+    ? ` · ${t('status.nextIn', { age: fmtIn(syncJob.nextDueAt) })}`
     : ''
   const syncOk = syncJob && syncJob.last ? (syncJob.last.ok ? t('status.synced') : t('status.syncFailed')) : ''
   const syncState = syncJob && syncJob.lastRunAt
@@ -170,7 +169,7 @@ export function GitfeedRail({ controller, t, useTabInfo }: GitfeedRailProps) {
       h(FilterTabs, { filter: state.filter, controller: controller, t: t, compact: true }),
       h(SearchBox, { controller: controller, t: t, value: state.query, inputRef: searchRef, compact: true }),
       h(RefreshState, { state: state, t: t })),
-    state.loadError ? h('div', { className: 'gf-banner' }, tf(t, 'status.banner', { error: state.loadError })) : null,
+    state.loadError ? h('div', { className: 'gf-banner' }, t('status.banner', { error: state.loadError })) : null,
     state.status === 'error' && !state.items.length
       ? h(ErrorState, { state: state, controller: controller, t: t })
       // An open article splits the rail; with nothing open the list owns the

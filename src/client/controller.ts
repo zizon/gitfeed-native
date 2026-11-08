@@ -3,7 +3,6 @@
 import type { Feed, GitInfo, GroupBy, Item, ReaderPrefs, ScheduleJobInfo } from '../shared/types.js'
 import { DEFAULT_LIST, DEFAULT_RAIL, LS, PREFIX } from './constants.js'
 import type { Translate } from './locales.js'
-import { tf } from './locales.js'
 import type { ClientState, Controller, Filter, MarkCounts } from './types.js'
 import {
   clamp,
@@ -336,7 +335,7 @@ export function createController(t: Translate): Controller {
       const text = messageOf(err)
       if (state.loadedOnce) {
         set({ loadError: text })
-        toast(tf(t, 'toast.failed', { error: text }), true)
+        toast(t('toast.failed', { error: text }), true)
       } else {
         set({ status: 'error', error: text, loadError: text, loadedOnce: true })
       }
@@ -361,7 +360,7 @@ export function createController(t: Translate): Controller {
       if (last?.version) set({ version: last.version })
       load().catch(function () { })
     }).catch(function (err: unknown) {
-      toast(tf(t, 'toast.readFailed', { error: messageOf(err) }), true)
+      toast(t('toast.readFailed', { error: messageOf(err) }), true)
       load({ force: true }).catch(function () { })
     })
   }
@@ -476,7 +475,7 @@ export function createController(t: Translate): Controller {
       if (on) revert.delete(id)
       else revert.add(id)
       set({ starred: revert })
-      toast(tf(t, 'toast.failed', { error: messageOf(err) }), true)
+      toast(t('toast.failed', { error: messageOf(err) }), true)
     })
   }
 
@@ -505,7 +504,7 @@ export function createController(t: Translate): Controller {
     lastScopeMark = { ids: ids.slice(), read: true }
     mark(ids, true, false)
     bumpList()
-    toast(tf(t, 'toast.marked', { n: ids.length }), false, true)
+    toast(t('toast.marked', { n: ids.length }), false, true)
   }
 
   function markAll(): void {
@@ -543,7 +542,7 @@ export function createController(t: Translate): Controller {
     if (!last || !last.ids.length) return
     mark(last.ids, !last.read, false)
     bumpList()
-    toast(tf(t, 'toast.unmarked', { n: last.ids.length }))
+    toast(t('toast.unmarked', { n: last.ids.length }))
   }
 
   /**
@@ -621,11 +620,11 @@ export function createController(t: Translate): Controller {
     try {
       const data = await request('/feeds', { url: url, folder: folder })
       if (data.ok === false) throw new Error(data.error || 'could not add feed')
-      toast(tf(t, 'toast.subscribed', { name: (data.feed && (data.feed.title || data.feed.url)) || url }))
+      toast(t('toast.subscribed', { name: (data.feed && (data.feed.title || data.feed.url)) || url }))
       await load({ force: true })
       return true
     } catch (err) {
-      toast(tf(t, 'toast.failed', { error: messageOf(err) }), true)
+      toast(t('toast.failed', { error: messageOf(err) }), true)
       return false
     } finally {
       setBusy('add', false)
@@ -639,11 +638,11 @@ export function createController(t: Translate): Controller {
       const data = await request('/feeds/remove', { id: id })
       if (data.ok === false) throw new Error(data.error || 'could not remove feed')
       if (state.feedId === id) set({ feedId: null })
-      toast(tf(t, 'toast.unsubscribed', { name: feedTitleOf(id) }))
+      toast(t('toast.unsubscribed', { name: feedTitleOf(id) }))
       await load({ force: true })
       return true
     } catch (err) {
-      toast(tf(t, 'toast.failed', { error: messageOf(err) }), true)
+      toast(t('toast.failed', { error: messageOf(err) }), true)
       return false
     } finally {
       setBusy('remove', false)
@@ -656,19 +655,19 @@ export function createController(t: Translate): Controller {
     try {
       const data = await request(`/${name}`, {})
       if (data.ok === false) {
-        toast(tf(t, 'toast.failed', { error: data.error || data.output || name }), true)
+        toast(t('toast.failed', { error: data.error || data.output || name }), true)
       } else if (name === 'fetch') {
-        toast(tf(t, 'toast.fetch', { summary: data.output || 'ok' }))
+        toast(t('toast.fetch', { summary: data.output || 'ok' }))
       } else if (name === 'pull') {
-        toast(tf(t, 'toast.pull'))
+        toast(t('toast.pull'))
       } else if (name === 'sync') {
-        toast(tf(t, 'toast.sync'))
+        toast(t('toast.sync'))
       } else {
         toast(`${name}: ok`)
       }
       await load({ force: true })
     } catch (err) {
-      toast(tf(t, 'toast.failed', { error: messageOf(err) }), true)
+      toast(t('toast.failed', { error: messageOf(err) }), true)
     } finally {
       setBusy(name, false)
     }

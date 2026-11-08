@@ -204,16 +204,15 @@ export const ZH: Record<keyof typeof EN, string> = {
   'hint.shortcuts': 'j / k 移动 · m 已读 · s 加星 · o 打开 · / 搜索 · u 未读',
 }
 
-export type Translate = (key: string) => string
+/**
+ * A dictionary key and its optional `{name}` template params. The locale
+ * service fills the placeholders, so no caller formats a string itself.
+ */
+export type Translate = (key: string, params?: Record<string, string | number>) => string
 
-export const DICTS = { en: EN, zh: ZH, ja: EN, es: EN, fr: EN, de: EN, ru: EN, pt: EN }
-
-export function tf(t: Translate, key: string, params?: Record<string, string | number>): string {
-  let text = t(key)
-  if (params) {
-    for (const name of Object.keys(params)) {
-      text = text.split(`{${name}}`).join(String(params[name]))
-    }
-  }
-  return text
-}
+/**
+ * The two dictionaries this package translates. Every other Harness language
+ * reaches the English text through the locale service's fallback chain, so a
+ * missing language is a normal lookup miss, not an entry that maps to `EN`.
+ */
+export const DICTS = { en: EN, zh: ZH }
