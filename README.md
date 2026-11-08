@@ -522,7 +522,7 @@ src/host/                   settings, scaffold, store, OPML, XML, fetch, git, ru
 tests/                      behaviour suites, fixtures, and the runner (`pnpm test`)
 docs/jobs.md                runner contract, primitives, and the ratchet
 docs/cloud-sync.md          why the GitHub Actions job was removed, and restoring it
-src/client/                 native reader: controller, derivations, prefs, hooks, components, styles, locales
+src/client/                 native reader: controller, transport, derivations, prefs, hooks, components, styles, locales
 src/shared/                 item/feed/state types shared by both halves
 build.mjs                   tsc Host + esbuild Client into the loader envelope
 tsconfig.host.json          Host compiler face (includes the CLI)
