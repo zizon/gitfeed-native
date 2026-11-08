@@ -75,6 +75,8 @@ export function createController(t: Translate): Controller {
    * which is what made the list jump on every mark.
    */
   const stickyRead = new Set<string>()
+  /** The last explicit scope mark, so a too-wide action can be taken back. */
+  let lastScopeMark: { ids: string[]; read: boolean } | null = null
   let visibilityHandler = null
 
   function get(): ClientState {
@@ -98,13 +100,14 @@ export function createController(t: Translate): Controller {
     set({ busy: busy })
   }
 
-  function toast(text: string, error?: boolean): void {
+  function toast(text: string, error?: boolean, undo?: boolean): void {
     if (toastTimer) clearTimeout(toastTimer)
-    set({ toast: { text: text, error: !!error, at: Date.now() } })
+    set({ toast: { text: text, error: !!error, at: Date.now(), undo: !!undo } })
+    // An undoable mark stays on screen long enough to be taken back.
     toastTimer = setTimeout(function () {
       toastTimer = null
       set({ toast: null })
-    }, error ? 8000 : 3500)
+    }, error || undo ? 8000 : 3500)
   }
 
   function getList(): Item[] {
@@ -409,50 +412,54 @@ export function createController(t: Translate): Controller {
     set({ query: '', feedId: null })
   }
 
-  function markAll(): void {
-    const list = getList()
-    if (!list.length) return
-    const ids = list.map(function (item) { return item.id })
-    const unread = list.filter(function (item) { return !state.read.has(item.id) }).length
-    if (!unread) return
+  /**
+   * Run one explicit scope mark: read rows leave the list, the toast offers to
+   * take it back, and only the most recent one can be undone.
+   */
+  function runScopeMark(ids: string[]): void {
+    if (!ids.length) return
+    lastScopeMark = { ids: ids.slice(), read: true }
     mark(ids, true, false)
     bumpList()
-    toast(tf(t, 'toast.marked', { n: unread }))
+    toast(tf(t, 'toast.marked', { n: ids.length }), false, true)
+  }
+
+  function markAll(): void {
+    runScopeMark(getList()
+      .filter(function (item) { return !state.read.has(item.id) })
+      .map(function (item) { return item.id }))
   }
 
   function markGroup(key: string): void {
-    const list = getList().filter(function (item) { return groupKeyOf(item) === key })
-    if (!list.length) return
-    const ids = list.map(function (item) { return item.id })
-    const unread = list.filter(function (item) { return !state.read.has(item.id) }).length
-    if (!unread) return
-    mark(ids, true, false)
-    bumpList()
-    toast(tf(t, 'toast.marked', { n: unread }))
+    runScopeMark(getList()
+      .filter(function (item) { return groupKeyOf(item) === key && !state.read.has(item.id) })
+      .map(function (item) { return item.id }))
   }
 
   /** Every unread item of one source, whatever the list filter is showing. */
   function markFeed(feedId: string): void {
-    const ids = state.items
+    runScopeMark(state.items
       .filter(function (item) { return item.feed === feedId && !state.read.has(item.id) })
-      .map(function (item) { return item.id })
-    if (!ids.length) return
-    mark(ids, true, false)
-    bumpList()
-    toast(tf(t, 'toast.marked', { n: ids.length }))
+      .map(function (item) { return item.id }))
   }
 
   /** Every unread item of one folder, whatever the list filter is showing. */
   function markFolder(folder: string): void {
-    const ids = state.items
+    runScopeMark(state.items
       .filter(function (item) {
         return !state.read.has(item.id) && feedFolderOf(item.feed) === folder
       })
-      .map(function (item) { return item.id })
-    if (!ids.length) return
-    mark(ids, true, false)
+      .map(function (item) { return item.id }))
+  }
+
+  /** Take back the last scope mark; scroll and selection marks are not tracked. */
+  function undoMark(): void {
+    const last = lastScopeMark
+    lastScopeMark = null
+    if (!last || !last.ids.length) return
+    mark(last.ids, !last.read, false)
     bumpList()
-    toast(tf(t, 'toast.marked', { n: ids.length }))
+    toast(tf(t, 'toast.unmarked', { n: last.ids.length }))
   }
 
   /**
@@ -467,24 +474,22 @@ export function createController(t: Translate): Controller {
     let source = 0
     let folderCount = 0
     let all = 0
+    const byFeed = new Map<string, number>()
     for (const item of state.items) {
       if (state.read.has(item.id)) continue
       all += 1
+      byFeed.set(item.feed, (byFeed.get(item.feed) || 0) + 1)
       if (state.feedId && item.feed === state.feedId) source += 1
       if (folder && feedFolderOf(item.feed) === folder) folderCount += 1
     }
-    return { results: results, source: source, folder: folderCount, all: all, folderName: folder }
+    return { results: results, source: source, folder: folderCount, all: all, folderName: folder, byFeed: byFeed }
   }
 
   /** Mark every unread item in the reader, whatever the scope on screen is. */
   function markEverything(): void {
-    const ids = state.items
+    runScopeMark(state.items
       .filter(function (item) { return !state.read.has(item.id) })
-      .map(function (item) { return item.id })
-    if (!ids.length) return
-    mark(ids, true, false)
-    bumpList()
-    toast(tf(t, 'toast.marked', { n: ids.length }))
+      .map(function (item) { return item.id }))
   }
 
   function setGroupBy(value: string): void {
@@ -649,6 +654,7 @@ export function createController(t: Translate): Controller {
     markAll: markAll,
     markCounts: markCounts,
     markEverything: markEverything,
+    undoMark: undoMark,
     markGroup: markGroup,
     markFeed: markFeed,
     markFolder: markFolder,

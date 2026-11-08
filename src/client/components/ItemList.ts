@@ -5,7 +5,7 @@ import type { Item } from "../../shared/types.js";
 import { GROUP_H, ROW_H, ROW_H_PLAIN } from "../constants.js";
 import { lowerBound, useOutsideClose } from "../hooks.js";
 import { tf } from "../locales.js";
-import type { ItemListProps } from "../types.js";
+import type { ItemListProps, MarkScope } from "../types.js";
 import { fmtTime } from "../util.js";
 
 interface Group {
@@ -52,6 +52,8 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
   const [markOpen, setMarkOpen] = useState(false);
   /** Only the whole-library entry needs a second, differently placed click. */
   const [markArmed, setMarkArmed] = useState(false);
+  /** Where the viewport sits: at the top, or inside a row/section. */
+  const [anchor, setAnchor] = useState({ atTop: true, index: 0 });
   function closeMark() {
     setMarkOpen(false);
     setMarkArmed(false);
@@ -128,6 +130,11 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
     const end = Math.min(entries.length, visibleEnd + 4);
     setRange(function (current) {
       return current.start === start && current.end === end ? current : { start: start, end: end };
+    });
+    const atTop = top <= 12;
+    const index = Math.min(entries.length - 1, lowerBound(offsets, top + 1));
+    setAnchor(function (current) {
+      return current.atTop === atTop && current.index === index ? current : { atTop: atTop, index: index };
     });
     let jumped = false;
     if (programmatic.current !== null) {
@@ -240,6 +247,46 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
   const count = list.length;
   const paneClass = "gf-listpane" + (wide ? " wide" : "") + (showDigest ? "" : " rows-plain");
 
+  // The bar follows the viewport: at the top it is the wide action for the
+  // whole view, and once scrolled into the list it narrows to the section
+  // under the edge (a group, the selected source, or that row's source).
+  const scope = useMemo(function (): MarkScope | null {
+    if (!count) return null;
+    if (anchor.atTop) {
+      if (state.query.trim()) return { kind: "results", label: t("action.markResults"), n: counts.results };
+      if (state.feedId) {
+        return { kind: "source", label: tf(t, "action.markNamed", { name: controller.feedTitle(state.feedId) }), n: counts.source, feed: state.feedId };
+      }
+      return { kind: "all", label: t("action.markAll"), n: counts.all };
+    }
+    const entry = entries[anchor.index];
+    if (groupBy !== "none") {
+      for (let i = Math.min(anchor.index, entries.length - 1); i >= 0; i--) {
+        const found = entries[i];
+        if (found.kind !== "group") continue;
+        const unread = found.group.items.filter(function (item) { return !state.read.has(item.id); }).length;
+        const name = groupBy === "feed" ? controller.feedTitle(found.group.key) : found.group.key;
+        return { kind: "group", label: tf(t, "action.markNamed", { name: name }), n: unread, group: found.group.key };
+      }
+    }
+    if (state.feedId) {
+      return { kind: "source", label: tf(t, "action.markNamed", { name: controller.feedTitle(state.feedId) }), n: counts.source, feed: state.feedId };
+    }
+    if (entry && entry.kind === "row") {
+      const feed = entry.item.feed;
+      return { kind: "feed", label: tf(t, "action.markNamed", { name: controller.feedTitle(feed) }), n: counts.byFeed.get(feed) || 0, feed: feed };
+    }
+    return { kind: "results", label: t("action.markResults"), n: counts.results };
+  }, [count, anchor, groupBy, state.query, state.feedId, state.read, state.items, counts, entries, controller, t]);
+
+  function runScope() {
+    if (!scope || !scope.n) return;
+    if (scope.kind === "all") controller.markEverything();
+    else if (scope.kind === "source" || scope.kind === "feed") controller.markFeed(scope.feed as string);
+    else if (scope.kind === "group" && scope.group) controller.markGroup(scope.group);
+    else controller.markAll();
+  }
+
   function markRow(label: string, n: number, run: () => void, extraClass?: string) {
     return h("button", {
       type: "button",
@@ -287,19 +334,29 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
   }
 
   const header = h("div", { className: "gf-listbar" },
-    h("span", { className: "gf-count-label" }, tf(t, "items.count", { n: count })),
-    h("div", { className: "gf-markwrap", ref: markRef },
-      h("button", {
-        type: "button", className: "gf-linkbtn", disabled: !counts.all && !count,
-        "aria-haspopup": "menu", "aria-expanded": markOpen,
-        onClick: function () {
-          if (markOpen) closeMark();
-          else { setMarkOpen(true); setMarkArmed(false); }
-        }
-      }, t("action.markMenu") + " ▾"),
-      markOpen
-        ? h("div", { className: "gf-menu gf-markmenu", role: "menu" }, markRows)
-        : null));
+    h("span", { className: "gf-count-label" }, tf(t, "items.count", { n: count })));
+
+  const markBar = h("div", { className: "gf-markfloat" + (scope && scope.n ? "" : " off"), ref: markRef },
+    h("button", {
+      type: "button",
+      className: "gf-markfloat-main" + (scope && scope.kind === "all" ? " wide" : ""),
+      disabled: !scope || !scope.n,
+      title: scope ? scope.label : t("action.markMenu"),
+      onClick: runScope
+    },
+    h("span", { className: "gf-markfloat-label" }, scope ? scope.label : t("action.markMenu")),
+    h("span", { className: "gf-markfloat-count" }, scope ? String(scope.n) : "")),
+    h("button", {
+      type: "button", className: "gf-markfloat-more",
+      "aria-haspopup": "menu", "aria-expanded": markOpen,
+      title: t("action.markPick"),
+      "aria-label": t("action.markPick"),
+      onClick: function () {
+        if (markOpen) closeMark();
+        else { setMarkOpen(true); setMarkArmed(false); }
+      }
+    }, "▾"),
+    markOpen ? h("div", { className: "gf-menu gf-markmenu", role: "menu" }, markRows) : null);
 
   if (state.status === "loading" && !state.items.length) {
     return h("div", { className: paneClass }, header, h("div", { className: "gf-empty" }, t("status.loading")));
@@ -318,5 +375,6 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
     h("div", { className: "gf-scroll", ref: viewportRef, onScroll: onScroll },
       h("div", { style: { height: top } }),
       listRows,
-      h("div", { style: { height: bottom } })));
+      h("div", { style: { height: bottom } })),
+    markBar);
 }

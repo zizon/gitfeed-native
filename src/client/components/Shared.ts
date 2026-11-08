@@ -137,13 +137,20 @@ export function GitStatus({ state, t }: { state: ClientState; t: Translate }) {
   return h("div", { className: "gf-status" }, nodes);
 }
 
-export function Toasts({ toast }: { toast: Toast | null }) {
+export function Toasts({ toast, controller, t }: { toast: Toast | null; controller: Controller; t: Translate }) {
   if (!toast) return null;
   return h("div", { className: "gf-toasts" },
     h("div", {
       className: "gf-toast" + (toast.error ? " error" : ""),
       role: toast.error ? "alert" : "status"
-    }, toast.text));
+    },
+    h("span", null, toast.text),
+    toast.undo
+      ? h("button", {
+        type: "button", className: "gf-toast-undo",
+        onClick: function () { controller.undoMark(); }
+      }, t("toast.undo"))
+      : null));
 }
 
 export function ErrorState({ state, controller, t }: {

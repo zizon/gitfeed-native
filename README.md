@@ -45,14 +45,18 @@ digest of the summary, so a list can be skimmed and skipped without opening
 every article. Display prefs turn the digest off (rows then use the shorter
 two-line height); the choice is stored per browser.
 
-Marking read: the list header opens a **Mark read** menu that names every scope
-with its count — the rows on screen, the selected source, that source's folder,
-and, behind a divider, every unread item in the reader. The wide scopes need a
-second, differently placed click (`Confirm: mark 1562 read`) and nothing is
-ever marked by a single stray click; there is no keyboard shortcut that marks
-in bulk. The Feeds list carries a visible ✓ on every source with unread items
-and on every folder header, and each list group header offers
-`Mark {n} read`.
+Marking read follows the viewport. A bar floats at the bottom of the list and
+its single target re-labels itself as the reader scrolls: at the top of the
+list it is the wide action for that whole view (**Mark all read**, or the
+selected source or search), and once scrolled into the list it narrows to the
+section under the edge — the group when grouping is on, otherwise the source of
+the row at the top (`Mark Hacker News read`). One click runs that scope, and
+the toast that follows carries **Undo**, which takes the mark back in one more
+click. The bar's ▾ lists every scope with its count for an explicit choice;
+there the library-wide entry sits behind a divider and needs a second,
+differently placed click. No key marks in bulk. The Feeds list carries a
+visible ✓ on every source with unread items and on every folder header, and
+each list group header offers `Mark {n} read`.
 
 Background refresh: the rail's second bar ends with the age of the last run
 (`⟳ 2m`; it pulses while a run is in flight and the Fetch button spins then),
@@ -285,7 +289,8 @@ not carry its own theme setting.
   marks; add by feed URL or site URL (with discovery); unsubscribe removes the
   feed's items from both stores.
 - **List**: one line per item, grouped by folder or source on request, with a
-  `Mark {n} read` button on each group. Rows are virtualized at fixed heights.
+  `Mark {n} read` button on each group whose header sticks to the top while
+  its group is in view. Rows are virtualized at fixed heights.
   A row that is marked read stays in the Unread list until the scope changes
   (filter, search, or source), so nothing shifts under the pointer while
   reading; a feed or folder that was on screen stays in the Feeds list for the
@@ -294,7 +299,11 @@ not carry its own theme setting.
   it while moving down; rows a scrollbar drag skipped over are included.
 - **Article**: sanitized feed HTML (element allowlist, `href`/`src`/`alt`/
   `title` only, http(s)/mailto URLs only), star, mark unread, open original.
-- **Pull / Fetch / Sync** in the top bar. Pull and Sync are disabled when the
+  Past the opening of a piece a **Next →** control appears at the bottom of the
+  pane, so moving on does not mean scrolling back up.
+- **Pull / Fetch / Sync** in the top bar, where the one that applies now is
+  filled and the others are plain: Pull while the branch is behind, Sync while
+  the worktree is dirty, Fetch otherwise. Pull and Sync are disabled when the
   plugin `allowGit` switch is false, or when the data root is a local copy with
   no git repository; the rail menu then shows why.
 - **Display preferences**: hide feeds with nothing unread, mark read on scroll,

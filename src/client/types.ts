@@ -10,6 +10,8 @@ export interface Toast {
   text: string;
   error: boolean;
   at: number;
+  /** The toast carries an undo for the mark that produced it. */
+  undo?: boolean;
 }
 
 export interface ClientState {
@@ -64,6 +66,7 @@ export interface Controller {
   markAll(): void;
   markCounts(): MarkCounts;
   markEverything(): void;
+  undoMark(): void;
   markGroup(key: string): void;
   markFeed(feedId: string): void;
   markFolder(folder: string): void;
@@ -96,6 +99,19 @@ export interface MarkCounts {
   folderName: string | null;
   /** Unread items in the whole reader. */
   all: number;
+  /** Unread items per source, for naming one source under the viewport. */
+  byFeed: Map<string, number>;
+}
+
+/** One marking target the floating bar can switch to as the reader scrolls. */
+export interface MarkScope {
+  kind: "all" | "results" | "source" | "feed" | "group";
+  label: string;
+  n: number;
+  /** Source id for the source and feed scopes. */
+  feed?: string;
+  /** Group key for the group scope. */
+  group?: string;
 }
 
 export interface SlotProps {

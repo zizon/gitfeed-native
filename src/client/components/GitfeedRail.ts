@@ -156,5 +156,5 @@ export function GitfeedRail({ controller, t, useTabInfo }: GitfeedRailProps) {
       state: state, controller: controller, t: t,
       onClose: function () { setMenuOpen(false); }
     }) : null,
-    h(Toasts, { toast: state.toast }));
+    h(Toasts, { toast: state.toast, controller: controller, t: t }));
 }

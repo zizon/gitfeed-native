@@ -46,6 +46,12 @@ export function GitfeedPage({ controller, t }: GitfeedPageProps) {
   }
 
   const unread = state.items.filter(function (item) { return !state.read.has(item.id); }).length;
+  // The toolbar emphasises the git action that actually applies right now:
+  // pull when the branch is behind, sync when there is something to push,
+  // fetch otherwise. The others stay available, just not as the primary.
+  const primaryAction = !state.git || !state.git.repo ? "fetch"
+    : state.git.behind ? "pull"
+      : state.git.dirty ? "sync" : "fetch";
 
   if (state.status === "error" && !state.items.length) {
     return h("div", { className: "gf gf-page" }, h(ErrorState, { state: state, controller: controller, t: t }));
@@ -73,15 +79,20 @@ export function GitfeedPage({ controller, t }: GitfeedPageProps) {
         }, t("action.prefs")),
         prefsOpen ? h("div", { className: "gf-menu gf-prefs" }, h(DisplayPrefs, { state: state, controller: controller, t: t })) : null),
       h("button", {
-        type: "button", className: "gf-btn", disabled: !!state.busy.pull || !state.allowGit || !state.git || !state.git.repo,
+        type: "button", className: "gf-btn" + (primaryAction === "pull" ? " primary" : ""),
+        disabled: !!state.busy.pull || !state.allowGit || !state.git || !state.git.repo,
+        title: state.git && state.git.behind ? tf(t, "status.behind", { n: state.git.behind }) : t("action.pull"),
         onClick: function () { controller.runAction("pull"); }
       }, t("action.pull")),
       h("button", {
-        type: "button", className: "gf-btn", disabled: !!state.busy.fetch,
+        type: "button", className: "gf-btn" + (primaryAction === "fetch" ? " primary" : ""),
+        disabled: !!state.busy.fetch,
         onClick: function () { controller.runAction("fetch"); }
       }, state.busy.fetch ? t("status.running") : t("action.fetch")),
       h("button", {
-        type: "button", className: "gf-btn", disabled: !!state.busy.sync || !state.allowGit || !state.git || !state.git.repo,
+        type: "button", className: "gf-btn" + (primaryAction === "sync" ? " primary" : ""),
+        disabled: !!state.busy.sync || !state.allowGit || !state.git || !state.git.repo,
+        title: state.git && state.git.dirty ? t("status.dirty") : t("action.sync"),
         onClick: function () { controller.runAction("sync"); }
       }, t("action.sync")))),
   state.loadError ? h("div", { className: "gf-banner" }, tf(t, "status.banner", { error: state.loadError })) : null,
@@ -102,5 +113,5 @@ export function GitfeedPage({ controller, t }: GitfeedPageProps) {
         onDoubleClick: function () { controller.setWidths({ listW: DEFAULT_LIST }); }
       }),
       h("div", { className: "gf-articlepane" }, h(Article, { state: state, controller: controller, t: t }))) : null),
-  h(Toasts, { toast: state.toast }));
+  h(Toasts, { toast: state.toast, controller: controller, t: t }));
 }

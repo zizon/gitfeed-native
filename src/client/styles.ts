@@ -145,8 +145,6 @@ export const CSS = `
 .gf-linkbtn.danger { color: var(--dsw-alias-state-error-primary); }
 .gf-linkbtn.armed { color: var(--dsw-alias-state-error-primary); font-weight: 600; }
 /* The mark menu and its counts: the action never hides how much it touches. */
-.gf-markwrap { position: relative; display: inline-flex; }
-.gf-markmenu { top: 24px; right: 0; width: 244px; }
 .gf-menu-count {
   flex: none;
   min-width: 2.4em;
@@ -186,6 +184,7 @@ button.gf-menu-row:disabled { opacity: .45; cursor: default; }
   background: var(--dsw-alias-brand-primary);
 }
 .gf-listpane {
+  position: relative;
   flex: 0 0 var(--gf-list, 430px);
   display: flex;
   flex-direction: column;
@@ -195,6 +194,7 @@ button.gf-menu-row:disabled { opacity: .45; cursor: default; }
 }
 .gf-listpane.wide { flex: 1 1 auto; border-right: 0; }
 .gf-articlepane {
+  position: relative;
   flex: 1 1 auto;
   display: flex;
   flex-direction: column;
@@ -343,6 +343,86 @@ button.gf-menu-row:disabled { opacity: .45; cursor: default; }
 .gf-input:focus { border-color: var(--dsw-alias-brand-primary); }
 .gf-addrow { display: flex; gap: 6px; }
 
+.gf-markfloat {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  max-width: calc(100% - 20px);
+  padding: 3px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 999px;
+  background: var(--dsw-alias-bg-overlay);
+  box-shadow: 0 10px 28px color-mix(in srgb, var(--dsw-alias-label-primary) 18%, transparent);
+  transform: translateX(-50%);
+  transition: opacity .15s ease;
+}
+.gf-markfloat.off { opacity: .5; }
+/* Same shape, article side: the reading control appears once the reader is
+   past the opening of the piece. */
+.gf-readfloat {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  z-index: 30;
+  display: flex;
+  padding: 3px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 999px;
+  background: var(--dsw-alias-bg-overlay);
+  box-shadow: 0 10px 28px color-mix(in srgb, var(--dsw-alias-label-primary) 18%, transparent);
+  transform: translateX(-50%);
+}
+.gf-markfloat-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 340px;
+  padding: 5px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+}
+.gf-markfloat-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gf-markfloat-main.wide .gf-markfloat-label { font-weight: 600; }
+.gf-markfloat-main:hover:not(:disabled) { background: color-mix(in srgb, var(--dsw-alias-label-primary) 8%, transparent); }
+.gf-markfloat-count {
+  flex: none;
+  color: var(--dsw-alias-label-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.gf-markfloat-more {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  line-height: 1;
+}
+.gf-markfloat-more:hover { background: color-mix(in srgb, var(--dsw-alias-label-primary) 8%, transparent); color: var(--dsw-alias-label-primary); }
+.gf-toast-undo {
+  margin-left: 10px;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: var(--dsw-alias-brand-primary);
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: underline;
+}
 .gf-listbar {
   flex: none;
   display: flex;
@@ -354,6 +434,8 @@ button.gf-menu-row:disabled { opacity: .45; cursor: default; }
 }
 .gf-count-label { flex: 1; color: var(--dsw-alias-label-secondary); font-size: 11px; }
 .gf-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; position: relative; }
+.gf-listpane > .gf-scroll { padding-bottom: 46px; }
+.gf-group { position: sticky; top: 0; z-index: 2; background: var(--dsw-alias-bg-base); }
 .gf-row {
   height: 66px;
   display: flex;
@@ -422,7 +504,8 @@ button.gf-menu-row:disabled { opacity: .45; cursor: default; }
 .gf-placeholder .big { font-size: 20px; line-height: 28px; font-weight: 500; color: var(--dsw-alias-label-primary); }
 .gf-placeholder p { margin: 0; font-size: 12px; }
 
-.gf-article { display: flex; flex-direction: column; width: 100%; height: 100%; min-height: 0; }
+.gf-article {
+  position: relative; display: flex; flex-direction: column; width: 100%; height: 100%; min-height: 0; }
 .gf-article-top {
   flex: none;
   display: flex;
@@ -674,6 +757,10 @@ button.gf-menu-row:hover:not(:disabled) { background: color-mix(in srgb, var(--d
 
 /* Native pages carry the macOS hidden-titlebar clearance above their own top inset. */
 [data-platform='darwin'] .gf-page .gf-toolbar { padding-top: calc(12px + var(--dsh-frame-top-clearance, 0px)); }
+
+/* The scope menu opens upward from the floating bar at the bottom of the list;
+   declared after .gf-menu so it wins the shared offsets. */
+.gf-markfloat .gf-markmenu { top: auto; right: 0; bottom: 40px; width: 244px; }
 
 @media (max-width: 760px) {
   .gf-toolbar { padding: 10px 12px; }
