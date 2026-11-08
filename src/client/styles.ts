@@ -196,7 +196,10 @@ export const CSS = `
 }
 .gf-rail-check { color: var(--dsw-alias-label-tertiary); }
 .gf-rail-x { visibility: hidden; }
-.gf-feed:hover .gf-rail-x, .gf-feed:focus-within .gf-rail-x, .gf-folder-head:hover .gf-rail-x { visibility: visible; }
+.gf-feed.on .gf-rail-x, .gf-feed:hover .gf-rail-x, .gf-feed:focus-within .gf-rail-x, .gf-folder-head:hover .gf-rail-x { visibility: visible; }
+@media (hover: none) {
+  .gf-rail-x { visibility: visible; }
+}
 .gf-folder { margin-top: 2px; }
 .gf-folder-head {
   display: flex;

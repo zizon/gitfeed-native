@@ -21,7 +21,7 @@ import { Article } from './Article.js'
 import { FeedRail } from './FeedRail.js'
 import { ItemList } from './ItemList.js'
 import { IconButton } from './Controls.js'
-import { DisplayPrefs, EmptyArticle, ErrorState, FilterTabs, jobOf, RefreshState, SearchBox, Toasts } from './Shared.js'
+import { DisplayPrefs, ErrorState, FilterTabs, jobOf, RefreshState, SearchBox, Toasts } from './Shared.js'
 
 function RailMenu({ state, controller, t, onClose }: {
   state: ClientState
@@ -178,23 +178,25 @@ export function GitfeedRail({ controller, t, useTabInfo }: GitfeedRailProps) {
     state.loadError ? h('div', { className: 'gf-banner' }, tf(t, 'status.banner', { error: state.loadError })) : null,
     state.status === 'error' && !state.items.length
       ? h(ErrorState, { state: state, controller: controller, t: t })
-      : wide
-        ? h('div', {
-          className: 'gf-wide',
-          style: { '--gf-list': `${wideListW}px` } as CSSProperties,
-        },
-        h(ItemList, { state: state, controller: controller, t: t, wide: true }),
-        h('div', {
-          className: 'gf-splitter', role: 'separator', 'aria-orientation': 'vertical',
-          title: t('action.resize'),
-          onPointerDown: startResize(),
-          onDoubleClick: function () { controller.setWidths({ listW: DEFAULT_LIST }) },
-        }),
-        h('div', { className: 'gf-wide-article' },
-          state.current ? h(Article, { state: state, controller: controller, t: t }) : h(EmptyArticle, { state: state, t: t })))
-        : state.current
-          ? h('div', { className: 'gf-rail-article' }, h(Article, { state: state, controller: controller, t: t, compact: true }))
-          : h(ItemList, { state: state, controller: controller, t: t, wide: true }),
+      // An open article splits the rail; with nothing open the list owns the
+      // whole surface, so closing the article hands the space straight back
+      // instead of leaving an empty pane next to a half-width list.
+      : state.current
+        ? wide
+          ? h('div', {
+            className: 'gf-wide',
+            style: { '--gf-list': `${wideListW}px` } as CSSProperties,
+          },
+          h(ItemList, { state: state, controller: controller, t: t, wide: true }),
+          h('div', {
+            className: 'gf-splitter', role: 'separator', 'aria-orientation': 'vertical',
+            title: t('action.resize'),
+            onPointerDown: startResize(),
+            onDoubleClick: function () { controller.setWidths({ listW: DEFAULT_LIST }) },
+          }),
+          h('div', { className: 'gf-wide-article' }, h(Article, { state: state, controller: controller, t: t })))
+          : h('div', { className: 'gf-rail-article' }, h(Article, { state: state, controller: controller, t: t, compact: true }))
+        : h(ItemList, { state: state, controller: controller, t: t, wide: true }),
     feedsOpen ? h(MenuSurface, { className: 'gf-popover gf-feedpop' },
       h(FeedRail, {
         state: state, controller: controller, t: t, compact: true,
