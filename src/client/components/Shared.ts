@@ -1,198 +1,235 @@
 /** Small controls shared by the page, rail, and article surfaces. */
 
-import { Fragment, h, useEffect, useRef, useState } from "../react.js";
-import type { ClientState, Controller, Toast } from "../types.js";
-import type { Translate } from "../locales.js";
-import { tf } from "../locales.js";
-import { IconRss } from "../icons.js";
-import { fmtIn, fmtTime } from "../util.js";
+import { Fragment, h, useEffect, useRef, useState } from '../react.js'
+import type { ReactNode } from '../react.js'
+import {
+  Button,
+  IconRefreshOutlineRegular,
+  IconSearchOutlineRegular,
+  IconWarningOutlineRegular,
+  Input,
+  Pill,
+  Switch,
+  Toast,
+} from '@deepseek-ai/dsh-client-ui-primitives'
+import type { ClientState, Controller, Toast as ToastState } from '../types.js'
+import type { Translate } from '../locales.js'
+import { tf } from '../locales.js'
+import { IconRss } from '../icons.js'
+import { EmptyState } from './Controls.js'
+import { fmtIn, fmtTime } from '../util.js'
 
+/** The three list filters as one labelled chip row. */
 export function FilterTabs({ filter, controller, t, compact }: {
-  filter: ClientState["filter"];
-  controller: Controller;
-  t: Translate;
-  compact?: boolean;
+  filter: ClientState['filter']
+  controller: Controller
+  t: Translate
+  compact?: boolean
 }) {
-  const items: Array<[ClientState["filter"], string, string]> = [
-    ["unread", "filter.unread", "u"],
-    ["all", "filter.all", "a"],
-    ["starred", "filter.starred", "s"]
-  ];
-  return h("div", { className: "gf-tabs" + (compact ? " compact" : ""), role: "tablist", "aria-label": t("filter.label") },
+  const items: Array<[ClientState['filter'], string, string]> = [
+    ['unread', 'filter.unread', 'u'],
+    ['all', 'filter.all', 'a'],
+    ['starred', 'filter.starred', 's'],
+  ]
+  return h('div', { className: 'gf-pills' + (compact ? ' compact' : ''), role: 'group', 'aria-label': t('filter.label') },
     items.map(function (entry) {
-      return h("button", {
+      return h(Pill, {
         key: entry[0],
-        type: "button",
-        role: "tab",
-        "aria-selected": filter === entry[0],
+        active: filter === entry[0],
         title: entry[2],
-        className: "gf-tab" + (filter === entry[0] ? " on" : ""),
-        onClick: function () { controller.setFilter(entry[0]); }
-      }, t(entry[1]));
-    }));
+        'aria-pressed': filter === entry[0],
+        onClick: function () { controller.setFilter(entry[0]) },
+      }, t(entry[1]))
+    }))
 }
 
 export function SearchBox({ controller, t, value, inputRef, compact }: {
-  controller: Controller;
-  t: Translate;
-  value: string;
-  inputRef: React.RefObject<HTMLInputElement>;
-  compact?: boolean;
+  controller: Controller
+  t: Translate
+  value: string
+  inputRef: React.RefObject<HTMLInputElement>
+  compact?: boolean
 }) {
-  const [text, setText] = useState(value);
-  const timer = useRef(0);
-  useEffect(function () { setText(value); }, [value]);
+  const [text, setText] = useState(value)
+  const timer = useRef(0)
+  useEffect(function () { setText(value) }, [value])
   useEffect(function () {
-    return function () { clearTimeout(timer.current); };
-  }, []);
-  function onChange(event: any) {
-    const next = event.target.value as string;
-    setText(next);
-    clearTimeout(timer.current);
-    timer.current = window.setTimeout(function () { controller.setQuery(next); }, 120);
+    return function () { clearTimeout(timer.current) }
+  }, [])
+  function onChange(event: { target: { value: string } }) {
+    const next = event.target.value
+    setText(next)
+    clearTimeout(timer.current)
+    timer.current = window.setTimeout(function () { controller.setQuery(next) }, 120)
   }
-  return h("input", {
+  return h(Input, {
     ref: inputRef,
-    className: "gf-search" + (compact ? " compact" : ""),
-    type: "search",
+    className: 'gf-search' + (compact ? ' compact' : ''),
+    type: 'search',
+    icon: h(IconSearchOutlineRegular, { size: 16 }),
     value: text,
-    placeholder: t("search.placeholder"),
-    "aria-label": t("search.placeholder"),
+    placeholder: t('search.placeholder'),
+    'aria-label': t('search.placeholder'),
     spellCheck: false,
-    autoComplete: "off",
-    onChange: onChange
-  });
+    autoComplete: 'off',
+    onChange: onChange,
+  })
 }
 
-export function Switch({ checked, onChange, label }: {
-  checked: boolean;
-  onChange: (value: boolean) => void;
-  label: string;
-}) {
-  return h("button", {
-    type: "button",
-    role: "switch",
-    "aria-checked": checked ? "true" : "false",
-    "aria-label": label,
-    className: "gf-switch",
-    onClick: function () { onChange(!checked); }
-  });
+function prefRow(label: string, control: ReactNode) {
+  return h('div', { className: 'gf-prefrow' },
+    h('span', { className: 'gf-prefrow-label' }, label),
+    control)
 }
 
 export function DisplayPrefs({ state, controller, t }: {
-  state: ClientState;
-  controller: Controller;
-  t: Translate;
+  state: ClientState
+  controller: Controller
+  t: Translate
 }) {
-  const groupBy = state.groupBy || state.reader.groupBy || "none";
-  const hideEmpty = state.hideEmpty === null ? !!state.reader.hideEmptyFeeds : !!state.hideEmpty;
-  const markOnScroll = state.markOnScroll === null ? !!state.reader.markReadOnScroll : !!state.markOnScroll;
-  const showDigest = state.showDigest === null ? true : !!state.showDigest;
+  const groupBy = state.groupBy || state.reader.groupBy || 'none'
+  const hideEmpty = state.hideEmpty === null ? state.reader.hideEmptyFeeds : state.hideEmpty
+  const markOnScroll = state.markOnScroll === null ? state.reader.markReadOnScroll : state.markOnScroll
+  const showDigest = state.showDigest === null ? true : state.showDigest
+  const modes: Array<[string, string]> = [
+    ['none', 'pref.none'],
+    ['folder', 'pref.folder'],
+    ['feed', 'pref.feed'],
+  ]
   return h(Fragment, null,
-    h("div", { className: "gf-menu-label" }, t("pref.display")),
-    h("div", { className: "gf-menu-row" },
-      h(Switch, { checked: hideEmpty, onChange: function (value) { controller.setHideEmpty(value); }, label: t("pref.hideEmpty") }),
-      h("span", { className: "gf-menu-text" }, t("pref.hideEmpty"))),
-    h("div", { className: "gf-menu-row" },
-      h(Switch, { checked: markOnScroll, onChange: function (value) { controller.setMarkOnScroll(value); }, label: t("pref.markOnScroll") }),
-      h("span", { className: "gf-menu-text" }, t("pref.markOnScroll"))),
-    h("div", { className: "gf-menu-row" },
-      h(Switch, { checked: showDigest, onChange: function (value) { controller.setShowDigest(value); }, label: t("pref.showDigest") }),
-      h("span", { className: "gf-menu-text" }, t("pref.showDigest"))),
-    h("div", { className: "gf-menu-row" },
-      h("span", { className: "gf-menu-text" }, t("pref.groupBy")),
-      h("select", {
-        className: "gf-select",
-        value: groupBy,
-        "aria-label": t("pref.groupBy"),
-        onChange: function (event: any) { controller.setGroupBy(event.target.value); }
-      },
-      h("option", { value: "none" }, t("pref.none")),
-      h("option", { value: "folder" }, t("pref.folder")),
-      h("option", { value: "feed" }, t("pref.feed")))));
+    h('div', { className: 'gf-prefgroup' },
+      h('div', { className: 'gf-prefgroup-label' }, t('pref.display')),
+      prefRow(t('pref.hideEmpty'), h(Switch, {
+        checked: hideEmpty,
+        label: t('pref.hideEmpty'),
+        onChange: function (value) { controller.setHideEmpty(value) },
+      })),
+      prefRow(t('pref.markOnScroll'), h(Switch, {
+        checked: markOnScroll,
+        label: t('pref.markOnScroll'),
+        onChange: function (value) { controller.setMarkOnScroll(value) },
+      })),
+      prefRow(t('pref.showDigest'), h(Switch, {
+        checked: showDigest,
+        label: t('pref.showDigest'),
+        onChange: function (value) { controller.setShowDigest(value) },
+      }))),
+    h('div', { className: 'gf-prefgroup' },
+      h('div', { className: 'gf-prefgroup-label' }, t('pref.groupBy')),
+      h('div', { className: 'gf-pills' }, modes.map(function (entry) {
+        return h(Pill, {
+          key: entry[0],
+          active: groupBy === entry[0],
+          'aria-pressed': groupBy === entry[0],
+          onClick: function () { controller.setGroupBy(entry[0]) },
+        }, t(entry[1]))
+      }))))
 }
 
 export function GitStatus({ state, t }: { state: ClientState; t: Translate }) {
-  const git = state.git;
-  const local = state.localFetch;
-  const nodes: any[] = [];
+  const git = state.git
+  const local = state.localFetch
+  const nodes: ReactNode[] = []
   if (!git || !git.repo) {
-    nodes.push(h("span", { key: "nogit", className: "gf-muted" }, t("status.noGit")));
+    nodes.push(h('span', { key: 'nogit', className: 'gf-muted' }, t('status.noGit')))
   } else {
-    nodes.push(h("b", { key: "branch" }, git.branch || "?"));
-    if (git.behind) nodes.push(h("span", { key: "behind", className: "gf-warn" }, tf(t, "status.behind", { n: git.behind })));
-    else if (git.ahead) nodes.push(h("span", { key: "ahead" }, tf(t, "status.ahead", { n: git.ahead })));
-    else if (git.dirty) nodes.push(h("span", { key: "dirty", className: "gf-warn" }, t("status.dirty")));
+    nodes.push(h('b', { key: 'branch' }, git.branch || '?'))
+    if (git.behind) nodes.push(h('span', { key: 'behind', className: 'gf-warn' }, tf(t, 'status.behind', { n: git.behind })))
+    else if (git.ahead) nodes.push(h('span', { key: 'ahead' }, tf(t, 'status.ahead', { n: git.ahead })))
+    else if (git.dirty) nodes.push(h('span', { key: 'dirty', className: 'gf-warn' }, t('status.dirty')))
   }
   if (local && local.enabled) {
-    const detail = [t("status.lastRefresh") + ": " + (local.lastRunAt ? fmtTime(local.lastRunAt) : t("status.never"))];
-    if (local.last) detail.push(tf(t, "status.fetchLine", { fresh: local.last.fresh, failed: local.last.failed }));
-    nodes.push(h("span", {
-      key: "auto",
-      className: local.last && local.last.code !== 0 ? "gf-warn" : undefined,
-      title: detail.join(" · ")
-    }, "↻ " + Math.max(1, Math.round(local.intervalMs / 60000)) + "m"));
+    const detail = [t('status.lastRefresh') + ': ' + (local.lastRunAt ? fmtTime(local.lastRunAt) : t('status.never'))]
+    if (local.last) detail.push(tf(t, 'status.fetchLine', { fresh: local.last.fresh, failed: local.last.failed }))
+    nodes.push(h('span', {
+      key: 'auto',
+      className: local.last && local.last.code !== 0 ? 'gf-warn' : undefined,
+      title: detail.join(' · '),
+    }, `↻ ${Math.max(1, Math.round(local.intervalMs / 60000))}m`))
   }
-  if (local && local.running) nodes.push(h("span", { key: "running", className: "gf-muted" }, t("status.running")));
-  return h("div", { className: "gf-status" }, nodes);
+  if (local && local.running) nodes.push(h('span', { key: 'running', className: 'gf-muted' }, t('status.running')))
+  return h('div', { className: 'gf-status' }, nodes)
 }
 
-export function Toasts({ toast, controller, t }: { toast: Toast | null; controller: Controller; t: Translate }) {
-  if (!toast) return null;
-  return h("div", { className: "gf-toasts" },
-    h("div", {
-      className: "gf-toast" + (toast.error ? " error" : ""),
-      role: toast.error ? "alert" : "status"
-    },
-    h("span", null, toast.text),
-    toast.undo
-      ? h("button", {
-        type: "button", className: "gf-toast-undo",
-        onClick: function () { controller.undoMark(); }
-      }, t("toast.undo"))
-      : null));
+/**
+ * One transient banner. The shared Toast owns its own lifetime and places
+ * itself at the top of the page; the mark undo rides its inline action.
+ */
+export function Toasts({ toast, controller, t }: {
+  toast: ToastState | null
+  controller: Controller
+  t: Translate
+}) {
+  if (!toast) return null
+  const actions = toast.undo
+    ? [{
+      label: t('toast.undo'),
+      onClick: function () {
+        controller.dismissToast()
+        controller.undoMark()
+      },
+    }]
+    : undefined
+  return h(Toast, {
+    key: String(toast.at),
+    text: toast.text,
+    icon: toast.error ? h(IconWarningOutlineRegular, { size: 16 }) : undefined,
+    holdMs: toast.undo ? 7000 : 4000,
+    actions: actions,
+    onDone: function () { controller.dismissToast() },
+  })
 }
 
 export function ErrorState({ state, controller, t }: {
-  state: ClientState;
-  controller: Controller;
-  t: Translate;
+  state: ClientState
+  controller: Controller
+  t: Translate
 }) {
-  return h("div", { className: "gf-errorpage" },
-    h(IconRss, { size: 36 }),
-    h("h2", null, t("error.title")),
-    h("p", null, state.error),
-    state.repo ? h("p", { className: "gf-muted" }, state.repo) : null,
-    h("button", { type: "button", className: "gf-btn primary", onClick: function () { controller.load({ force: true }); } }, t("action.retry")));
+  return h(EmptyState, {
+    icon: h(IconRss, { size: 28 }),
+    title: t('error.title'),
+    action: h(Button, {
+      variant: 'primary',
+      size: 'sm',
+      onClick: function () { void controller.load({ force: true }) },
+    }, t('action.retry')),
+  },
+  h('p', { className: 'gf-placeholder-hint error' }, state.error),
+  state.repo ? h('p', { className: 'gf-placeholder-hint' }, state.repo) : null)
 }
 
 /** Compact background-refresh indicator: age of the last run, and a warn tint when it failed. */
 export function RefreshState({ state, t }: { state: ClientState; t: Translate }) {
-  const local = state.localFetch;
-  if (!local || !local.enabled) return null;
-  const run = local.last;
+  const local = state.localFetch
+  if (!local || !local.enabled) return null
+  const run = local.last
   // Partial failures stay quiet: the Feeds list marks those rows and the
   // tooltip carries the counts. Only a run where every feed failed is an alarm.
-  const broken = run ? run.code !== 0 : false;
-  const age = local.lastRunAt ? fmtTime(local.lastRunAt) : t("status.never");
+  const broken = run ? run.code !== 0 : false
+  const age = local.lastRunAt ? fmtTime(local.lastRunAt) : t('status.never')
   const title = [
-    tf(t, "status.autoEvery", { n: Math.max(1, Math.round(local.intervalMs / 60000)) }),
-    local.nextDueAt ? tf(t, "status.nextIn", { age: fmtIn(local.nextDueAt) }) : "",
-    t("status.lastRefresh") + ": " + age,
-    run ? tf(t, "status.feedCount", { n: run.feeds }) : "",
-    run ? tf(t, "status.fetchLine", { fresh: run.fresh, failed: run.failed }) : ""
-  ].filter(Boolean).join(" · ");
-  return h("span", {
-    className: "gf-refresh-state" + (local.running ? " running" : broken ? " warn" : ""),
+    tf(t, 'status.autoEvery', { n: Math.max(1, Math.round(local.intervalMs / 60000)) }),
+    local.nextDueAt ? tf(t, 'status.nextIn', { age: fmtIn(local.nextDueAt) }) : '',
+    t('status.lastRefresh') + ': ' + age,
+    run ? tf(t, 'status.feedCount', { n: run.feeds }) : '',
+    run ? tf(t, 'status.fetchLine', { fresh: run.fresh, failed: run.failed }) : '',
+  ].filter(Boolean).join(' · ')
+  return h('span', {
+    className: 'gf-refresh-state' + (local.running ? ' running' : broken ? ' warn' : ''),
     title: title,
-    "aria-label": title,
-    role: "status"
-  }, local.running ? "⟳ …" : "⟳ " + age);
+    'aria-label': title,
+    role: 'status',
+  },
+  h(IconRefreshOutlineRegular, { size: 12 }),
+  local.running ? '…' : age)
 }
 
 export function EmptyArticle({ state, t }: { state: ClientState; t: Translate }) {
-  return h("div", { className: "gf-placeholder" },
-    h("div", { className: "big" }, t("page.title")),
-    h("p", null, tf(t, "items.count", { n: state.items.length }) + " · " + tf(t, "unread.count", { n: state.items.filter(function (item) { return !state.read.has(item.id); }).length })),
-    h("p", { className: "gf-muted" }, t("empty.articleHint")));
+  const unread = state.items.filter(function (item) { return !state.read.has(item.id) }).length
+  return h(EmptyState, {
+    icon: h(IconRss, { size: 28 }),
+    title: t('page.title'),
+    hint: tf(t, 'items.count', { n: state.items.length }) + ' · ' + tf(t, 'unread.count', { n: unread }),
+  },
+  h('p', { className: 'gf-placeholder-hint' }, t('empty.articleHint')))
 }

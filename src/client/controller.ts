@@ -1,10 +1,10 @@
 /** The reader's single client state machine, shared by every surface. */
 
-import type { GroupBy, Item, ReaderPrefs } from "../shared/types.js";
-import { DEFAULT_LIST, DEFAULT_RAIL, LS, PREFIX } from "./constants.js";
-import type { Translate } from "./locales.js";
-import { tf } from "./locales.js";
-import type { ClientState, Controller, Filter, MarkCounts } from "./types.js";
+import type { Feed, GitInfo, GroupBy, Item, LocalFetchInfo, ReaderPrefs } from '../shared/types.js'
+import { DEFAULT_LIST, DEFAULT_RAIL, LS, PREFIX } from './constants.js'
+import type { Translate } from './locales.js'
+import { tf } from './locales.js'
+import type { ClientState, Controller, Filter, MarkCounts } from './types.js'
 import {
   clamp,
   digestText,
@@ -14,10 +14,38 @@ import {
   storedBool,
   storedFolders,
   storedNumber,
-  writeStorage
-} from "./util.js";
+  writeStorage,
+} from './util.js'
 
 export const plainCache = new Map<string, string>()
+
+interface ApiFeed {
+  title?: string
+  url?: string
+}
+
+interface ApiResponse {
+  ok?: boolean
+  error?: string
+  output?: string
+  version?: string
+  feed?: ApiFeed
+}
+
+interface StateResponse {
+  unchanged?: boolean
+  error?: string
+  version?: string
+  items?: Item[]
+  feeds?: Feed[]
+  read?: string[]
+  starred?: string[]
+  reader?: ReaderPrefs
+  git?: GitInfo | null
+  localFetch?: LocalFetchInfo | null
+  repo?: string
+  allowGit?: boolean
+}
 
 export function createController(t: Translate): Controller {
   let state: ClientState = {
@@ -50,10 +78,10 @@ export function createController(t: Translate): Controller {
     listW: clamp(storedNumber(LS.listW, DEFAULT_LIST), 260, 760),
     listEpoch: 0,
     busy: {},
-    toast: null
+    toast: null,
   }
 
-  function storedGroupBy() {
+  function storedGroupBy(): GroupBy | null {
     const value = readStorage(LS.groupBy)
     return value === 'folder' || value === 'feed' || value === 'none' ? value : null
   }
@@ -61,14 +89,14 @@ export function createController(t: Translate): Controller {
   const digestCache = new Map<string, string>()
   const listeners = new Set<() => void>()
   let listCache: { key: string | null; items: Item[] } = { key: null, items: [] }
-  let loadPromise = null
+  let loadPromise: Promise<void> | null = null
   let mounted = 0
-  let pollTimer = null
-  let toastTimer = null
-  let flushTimer = null
+  let pollTimer: ReturnType<typeof setInterval> | null = null
+  let toastTimer: ReturnType<typeof setTimeout> | null = null
+  let flushTimer: ReturnType<typeof setTimeout> | null = null
   let disposed = false
-  const pendingRead = new Set()
-  const pendingUnread = new Set()
+  const pendingRead = new Set<string>()
+  const pendingUnread = new Set<string>()
   /**
    * Read rows that stay in the Unread list until the scope changes. A row the
    * reader scrolled past or opened must not vanish from under the pointer,
@@ -77,7 +105,7 @@ export function createController(t: Translate): Controller {
   const stickyRead = new Set<string>()
   /** The last explicit scope mark, so a too-wide action can be taken back. */
   let lastScopeMark: { ids: string[]; read: boolean } | null = null
-  let visibilityHandler = null
+  let visibilityHandler: (() => void) | null = null
 
   function get(): ClientState {
     return state
@@ -96,7 +124,7 @@ export function createController(t: Translate): Controller {
   function setBusy(key: string, value: boolean): void {
     const busy = Object.assign({}, state.busy)
     if (value) busy[key] = true
-    else delete busy[key]
+    else Reflect.deleteProperty(busy, key)
     set({ busy: busy })
   }
 
@@ -108,6 +136,15 @@ export function createController(t: Translate): Controller {
       toastTimer = null
       set({ toast: null })
     }, error || undo ? 8000 : 3500)
+  }
+
+  /** Dismiss the banner early, e.g. once the shared toast has faded out. */
+  function dismissToast(): void {
+    if (toastTimer) {
+      clearTimeout(toastTimer)
+      toastTimer = null
+    }
+    if (state.toast) set({ toast: null })
   }
 
   function getList(): Item[] {
@@ -130,7 +167,7 @@ export function createController(t: Translate): Controller {
   }
 
   function searchHay(item: Item): string {
-    const key = item.id + ':' + (item.summary ? item.summary.length : 0)
+    const key = `${item.id}:${item.summary ? item.summary.length : 0}`
     let text = plainCache.get(key)
     if (text === undefined) {
       text = (item.title + ' ' + plainFromHtml(item.summary) + ' ' + feedTitleOf(item.feed)).toLowerCase()
@@ -141,7 +178,7 @@ export function createController(t: Translate): Controller {
   }
 
   function digestOf(item: Item): string {
-    const key = item.id + ':' + (item.summary ? item.summary.length : 0)
+    const key = `${item.id}:${item.summary ? item.summary.length : 0}`
     let text = digestCache.get(key)
     if (text === undefined) {
       text = digestText(item.summary)
@@ -166,21 +203,21 @@ export function createController(t: Translate): Controller {
     return groupBy === 'feed' ? item.feed : feedFolderOf(item.feed)
   }
 
-  function request(route: string, payload?: unknown): Promise<any> {
+  function request(route: string, payload?: unknown): Promise<ApiResponse> {
     return fetch(PREFIX + route, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(payload || {}),
       cache: 'no-store',
-      credentials: 'same-origin'
+      credentials: 'same-origin',
     }).then(async function (res) {
-      let data: any = {}
+      let data: ApiResponse = {}
       try {
-        data = await res.json()
-      } catch (err) {
+        data = (await res.json()) as ApiResponse
+      } catch {
         data = {}
       }
-      if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status))
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
       return data
     })
   }
@@ -188,18 +225,18 @@ export function createController(t: Translate): Controller {
   function load(options?: { force?: boolean }): Promise<void> {
     if (disposed) return Promise.resolve()
     if (loadPromise) return loadPromise
-    const force = !!(options && options.force)
+    const force = options?.force === true
     loadPromise = (async function () {
       if (!state.loadedOnce) set({ status: 'loading' })
-      const url = PREFIX + '/state' + (!force && state.version ? '?version=' + encodeURIComponent(state.version) : '')
+      const url = PREFIX + '/state' + (!force && state.version ? `?version=${encodeURIComponent(state.version)}` : '')
       const res = await fetch(url, { cache: 'no-store', credentials: 'same-origin' })
-      let data
+      let data: StateResponse
       try {
-        data = await res.json()
-      } catch (err) {
-        throw new Error('HTTP ' + res.status)
+        data = (await res.json()) as StateResponse
+      } catch {
+        throw new Error(`HTTP ${res.status}`)
       }
-      if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status))
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
       if (data.unchanged) {
         set({
           status: 'ready',
@@ -208,7 +245,7 @@ export function createController(t: Translate): Controller {
           git: data.git || state.git,
           localFetch: data.localFetch || state.localFetch,
           repo: data.repo || state.repo,
-          allowGit: data.allowGit !== false
+          allowGit: data.allowGit !== false,
         })
         return
       }
@@ -219,14 +256,14 @@ export function createController(t: Translate): Controller {
           loadedOnce: true,
           version: data.version || null,
           git: data.git || null,
-          localFetch: data.localFetch || null
+          localFetch: data.localFetch || null,
         })
         return
       }
-      const items = Array.isArray(data.items) ? data.items : []
-      const feeds = Array.isArray(data.feeds) ? data.feeds : []
-      const byId = new Map<string, Item>(items.map(function (item) { return [item.id, item] as [string, Item] }))
-      const feedMap = new Map<string, import("../shared/types.js").Feed>(feeds.map(function (feed) { return [feed.id, feed] as [string, import("../shared/types.js").Feed] }))
+      const items: Item[] = Array.isArray(data.items) ? data.items : []
+      const feeds: Feed[] = Array.isArray(data.feeds) ? data.feeds : []
+      const byId = new Map<string, Item>(items.map(function (item): [string, Item] { return [item.id, item] }))
+      const feedMap = new Map<string, Feed>(feeds.map(function (feed): [string, Feed] { return [feed.id, feed] }))
       plainCache.clear()
       set({
         status: 'ready',
@@ -237,8 +274,8 @@ export function createController(t: Translate): Controller {
         byId: byId,
         feeds: feeds,
         feedMap: feedMap,
-        read: new Set(Array.isArray(data.read) ? data.read : []),
-        starred: new Set(Array.isArray(data.starred) ? data.starred : []),
+        read: new Set<string>(Array.isArray(data.read) ? data.read : []),
+        starred: new Set<string>(Array.isArray(data.starred) ? data.starred : []),
         reader: data.reader || state.reader,
         git: data.git || null,
         localFetch: data.localFetch || null,
@@ -246,9 +283,9 @@ export function createController(t: Translate): Controller {
         repo: data.repo || state.repo,
         allowGit: data.allowGit !== false,
         current: state.current && byId.has(state.current) ? state.current : null,
-        listEpoch: state.listEpoch + 1
+        listEpoch: state.listEpoch + 1,
       })
-    })().catch(function (err) {
+    })().catch(function (err: unknown) {
       const text = messageOf(err)
       if (state.loadedOnce) {
         set({ loadError: text })
@@ -269,14 +306,14 @@ export function createController(t: Translate): Controller {
     pendingRead.clear()
     pendingUnread.clear()
     if (!readIds.length && !unreadIds.length) return
-    const jobs = []
+    const jobs: Array<Promise<ApiResponse>> = []
     if (readIds.length) jobs.push(request('/mark', { ids: readIds, read: true }))
     if (unreadIds.length) jobs.push(request('/mark', { ids: unreadIds, read: false }))
     Promise.all(jobs).then(function (results) {
-      const last = results[results.length - 1]
-      if (last && last.version) set({ version: last.version })
+      const last = results.at(-1)
+      if (last?.version) set({ version: last.version })
       load().catch(function () { })
-    }).catch(function (err) {
+    }).catch(function (err: unknown) {
       toast(tf(t, 'toast.readFailed', { error: messageOf(err) }), true)
       load({ force: true }).catch(function () { })
     })
@@ -296,7 +333,7 @@ export function createController(t: Translate): Controller {
       return typeof id === 'string' && id.length > 0 && id.length < 64
     })
     if (!clean.length) return
-    const keep = keepList !== false
+    const keep =  keepList
     const shown = keep && value ? new Set(getList().map(function (item) { return item.id })) : null
     const read = new Set(state.read)
     for (const id of clean) {
@@ -349,13 +386,12 @@ export function createController(t: Translate): Controller {
   }
 
   function setFilter(filter: Filter): void {
-    if (filter !== 'unread' && filter !== 'all' && filter !== 'starred') return
     if (filter !== state.filter) clearSticky()
     set({ filter: filter })
   }
 
   function setQuery(query: string): void {
-    const next = String(query || '')
+    const next = query || ''
     if (next !== state.query) clearSticky()
     set({ query: next })
   }
@@ -365,7 +401,7 @@ export function createController(t: Translate): Controller {
     if (!list.length) return
     let index = list.findIndex(function (item) { return item.id === state.current })
     if (index === -1) index = offset > 0 ? -1 : list.length
-    const next = list[clamp(index + offset, 0, list.length - 1)]
+    const next = list.at(clamp(index + offset, 0, list.length - 1))
     if (next) select(next.id)
   }
 
@@ -386,9 +422,9 @@ export function createController(t: Translate): Controller {
     else starred.delete(id)
     set({ starred: starred })
     request('/star', { ids: [id], star: on }).then(function (data) {
-      if (data && data.version) set({ version: data.version })
+      if (data.version) set({ version: data.version })
       load().catch(function () { })
-    }).catch(function (err) {
+    }).catch(function (err: unknown) {
       const revert = new Set(state.starred)
       if (on) revert.delete(id)
       else revert.add(id)
@@ -398,7 +434,8 @@ export function createController(t: Translate): Controller {
   }
 
   function openCurrent(): void {
-    const item = state.byId.get(state.current)
+    const id = state.current
+    const item = id ? state.byId.get(id) : undefined
     if (item && item.link && /^https?:/i.test(item.link)) {
       window.open(item.link, '_blank', 'noopener,noreferrer')
     }
@@ -498,33 +535,33 @@ export function createController(t: Translate): Controller {
 
   function setHideEmpty(value: boolean): void {
     writeStorage(LS.hideEmpty, value ? '1' : '0')
-    set({ hideEmpty: !!value })
+    set({ hideEmpty: value })
   }
 
   function setMarkOnScroll(value: boolean): void {
     writeStorage(LS.markOnScroll, value ? '1' : '0')
-    set({ markOnScroll: !!value })
+    set({ markOnScroll: value })
   }
 
   function setShowDigest(value: boolean): void {
     writeStorage(LS.showDigest, value ? '1' : '0')
-    set({ showDigest: !!value })
+    set({ showDigest: value })
   }
 
   function setFolderOpen(name: string, open: boolean): void {
     const next = Object.assign({}, state.folderOpen)
-    next[name] = !!open
+    next[name] = open
     writeStorage(LS.folders, JSON.stringify(next))
     set({ folderOpen: next })
   }
 
   function setWidths(patch: { railW?: number; listW?: number }): void {
     const next: { railW?: number; listW?: number } = {}
-    if (patch && Number.isFinite(patch.railW)) {
+    if (typeof patch.railW === 'number' && Number.isFinite(patch.railW)) {
       next.railW = clamp(Math.round(patch.railW), 150, 460)
       writeStorage(LS.railW, next.railW)
     }
-    if (patch && Number.isFinite(patch.listW)) {
+    if (typeof patch.listW === 'number' && Number.isFinite(patch.listW)) {
       next.listW = clamp(Math.round(patch.listW), 260, 900)
       writeStorage(LS.listW, next.listW)
     }
@@ -653,6 +690,7 @@ export function createController(t: Translate): Controller {
     markCounts: markCounts,
     markEverything: markEverything,
     undoMark: undoMark,
+    dismissToast: dismissToast,
     markGroup: markGroup,
     markFeed: markFeed,
     markFolder: markFolder,
@@ -671,7 +709,7 @@ export function createController(t: Translate): Controller {
     dispose: dispose,
     feedTitle: feedTitleOf,
     feedFolder: feedFolderOf,
-    groupKey: groupKeyOf
+    groupKey: groupKeyOf,
   }
   return api
 }

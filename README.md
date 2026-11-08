@@ -316,6 +316,38 @@ not carry its own theme setting.
 
 Pane widths and open folders are remembered per browser.
 
+### Design language
+
+The reader is built from the Harness client's own components, not a private
+copy of them: the Client bundle requires
+`@deepseek-ai/dsh-client-ui-primitives` from the shared module table and marks
+it external, so the page gets the same buttons, inputs, menus, switches,
+toasts, and icons the rest of the GUI renders, plus any theme change that
+reaches them. The plugin ships no CSS for those controls.
+
+- **Adopted**: `Button` for the toolbar and inline actions, `Pill` for the
+  filter and group-by chips, `Input` for search and the add-feed form,
+  `Menu` for the marking scope, `MenuSurface` for the preferences popover and
+  the rail menu, `Switch` for the display prefs, `Toast` for transient
+  banners with an inline **Undo**, and the product `Icon*` set for the
+  chevrons, checks, close, refresh, plus, ellipsis, and open-original glyphs.
+- **Kept custom, deliberately**: feed and item rows, the sticky group header,
+  the float that follows the list's scroll edge, and the article's
+  `Next →` capsule — the atom set has no list-row, group-header, or
+  floating-bar primitive, so these are a small token-styled sheet rather than
+  copies of a shared control. The RSS mark, the star, and the unread dot are
+  artwork the theme does not carry.
+- **Tokens**: hover and selected fills use
+  `--dsw-alias-interactive-bg-*`, text uses `--dsw-alias-label-*`, hairline
+  dividers are `0.5px` of `--dsw-alias-border-l*`, radii come from
+  `--dsw-radius-*`, and floating surfaces use
+  `--dsw-alias-button-floating-fill` with `--dsw-elevation-panel`. The blue
+  accent is `--dsw-alias-brand-primary-new-colorprimary-new-color`;
+  `--dsw-alias-brand-primary` is the near-black/near-white fill colour.
+
+Toasts are the shared banner, so they appear centred at the top of the page
+and carry one action; Undo is the action rather than a link in a stack.
+
 ## Configuration
 
 Data-root files: `feeds.json` is *what* you read, `config.json` is *how* the
@@ -462,8 +494,23 @@ is cached by the process, so a `dsh web` restart is the reliable reload; the
 Client bundle reloads on a page refresh once the plugin is re-activated.
 
 The build uses `tsc` for the ESM Host tree and `esbuild` for the Client bundle,
-both from `node_modules`. The Client imports only `react` from the platform
-module table and styles with the documented `--dsw-alias-*` theme tokens.
+both from `node_modules`. The Client resolves `react` and
+`@deepseek-ai/dsh-client-ui-primitives` from the Harness platform module table
+(both stay external in the bundle) and writes its own CSS against the
+documented `--dsw-*` tokens.
+
+### Quality gates
+
+Three gates cover `src/` before a commit:
+
+```bash
+pnpm build       # tsc Host + esbuild Client into lib/
+pnpm typecheck   # the same tsc passes, no output
+pnpm lint        # oxlint, including the type-aware rules
+```
+
+Lint reads the single root `tsconfig.json`, so Host and Client files resolve
+from one project; `pnpm lint:fix` also applies the formatting rules.
 
 ## Publishing checklist
 

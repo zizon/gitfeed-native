@@ -1,150 +1,152 @@
 /** State and controller shapes shared by the reader components. */
 
-import type { Feed, GroupBy, GitInfo, Item, LocalFetchInfo, ReaderPrefs } from "../shared/types.js";
-import type { Translate } from "./locales.js";
+import type { Feed, GroupBy, GitInfo, Item, LocalFetchInfo, ReaderPrefs } from '../shared/types.js'
+import type { Translate } from './locales.js'
 
-export type Filter = "unread" | "all" | "starred";
-export type Status = "idle" | "loading" | "ready" | "error";
+export type Filter = 'unread' | 'all' | 'starred'
+export type Status = 'idle' | 'loading' | 'ready' | 'error'
 
 export interface Toast {
-  text: string;
-  error: boolean;
-  at: number;
+  text: string
+  error: boolean
+  at: number
   /** The toast carries an undo for the mark that produced it. */
-  undo?: boolean;
+  undo?: boolean
 }
 
 export interface ClientState {
-  status: Status;
-  error: string | null;
-  loadError: string | null;
-  loadedOnce: boolean;
-  items: Item[];
-  byId: Map<string, Item>;
-  read: Set<string>;
-  starred: Set<string>;
-  feeds: Feed[];
-  feedMap: Map<string, Feed>;
-  reader: ReaderPrefs;
-  git: GitInfo | null;
-  localFetch: LocalFetchInfo | null;
-  version: string | null;
-  repo: string;
-  allowGit: boolean;
-  filter: Filter;
-  query: string;
-  feedId: string | null;
-  current: string | null;
-  groupBy: GroupBy | null;
-  hideEmpty: boolean | null;
-  markOnScroll: boolean | null;
-  showDigest: boolean | null;
-  folderOpen: Record<string, boolean>;
-  railW: number;
-  listW: number;
-  listEpoch: number;
-  busy: Record<string, boolean>;
-  toast: Toast | null;
+  status: Status
+  error: string | null
+  loadError: string | null
+  loadedOnce: boolean
+  items: Item[]
+  byId: Map<string, Item>
+  read: Set<string>
+  starred: Set<string>
+  feeds: Feed[]
+  feedMap: Map<string, Feed>
+  reader: ReaderPrefs
+  git: GitInfo | null
+  localFetch: LocalFetchInfo | null
+  version: string | null
+  repo: string
+  allowGit: boolean
+  filter: Filter
+  query: string
+  feedId: string | null
+  current: string | null
+  groupBy: GroupBy | null
+  hideEmpty: boolean | null
+  markOnScroll: boolean | null
+  showDigest: boolean | null
+  folderOpen: Record<string, boolean>
+  railW: number
+  listW: number
+  listEpoch: number
+  busy: Record<string, boolean>
+  toast: Toast | null
 }
 
 export interface Controller {
-  get(): ClientState;
-  subscribe(listener: () => void): () => void;
-  getList(): Item[];
-  load(options?: { force?: boolean }): Promise<void>;
-  mark(ids: string[], value: boolean, keepList?: boolean): void;
-  select(id: string): void;
-  closeArticle(): void;
-  selectFeed(id: string | null): void;
-  setFilter(filter: Filter): void;
-  setQuery(query: string): void;
-  move(offset: number): void;
-  toggleRead(): void;
-  toggleStar(): void;
-  openCurrent(): void;
-  escape(): void;
-  markAll(): void;
-  markCounts(): MarkCounts;
-  markEverything(): void;
-  undoMark(): void;
-  markGroup(key: string): void;
-  markFeed(feedId: string): void;
-  markFolder(folder: string): void;
-  setGroupBy(value: string): void;
-  setHideEmpty(value: boolean): void;
-  setMarkOnScroll(value: boolean): void;
-  setShowDigest(value: boolean): void;
-  digest(item: Item): string;
-  setFolderOpen(name: string, open: boolean): void;
-  setWidths(patch: { railW?: number; listW?: number }): void;
-  addFeed(url: string, folder: string): Promise<boolean>;
-  removeFeed(id: string): Promise<boolean>;
-  runAction(name: string): Promise<void>;
-  mount(): void;
-  unmount(): void;
-  dispose(): void;
-  feedTitle(id: string): string;
-  feedFolder(id: string): string;
-  groupKey(item: Item): string;
+  get(): ClientState
+  subscribe(listener: () => void): () => void
+  getList(): Item[]
+  load(options?: { force?: boolean }): Promise<void>
+  mark(ids: string[], value: boolean, keepList?: boolean): void
+  select(id: string): void
+  closeArticle(): void
+  selectFeed(id: string | null): void
+  setFilter(filter: Filter): void
+  setQuery(query: string): void
+  move(offset: number): void
+  toggleRead(): void
+  toggleStar(): void
+  openCurrent(): void
+  escape(): void
+  markAll(): void
+  markCounts(): MarkCounts
+  markEverything(): void
+  undoMark(): void
+  /** Clear the transient banner, called when the shared toast has finished. */
+  dismissToast(): void
+  markGroup(key: string): void
+  markFeed(feedId: string): void
+  markFolder(folder: string): void
+  setGroupBy(value: string): void
+  setHideEmpty(value: boolean): void
+  setMarkOnScroll(value: boolean): void
+  setShowDigest(value: boolean): void
+  digest(item: Item): string
+  setFolderOpen(name: string, open: boolean): void
+  setWidths(patch: { railW?: number; listW?: number }): void
+  addFeed(url: string, folder: string): Promise<boolean>
+  removeFeed(id: string): Promise<boolean>
+  runAction(name: string): Promise<void>
+  mount(): void
+  unmount(): void
+  dispose(): void
+  feedTitle(id: string): string
+  feedFolder(id: string): string
+  groupKey(item: Item): string
 }
 
 /** What each marking scope would touch, shown in the mark-read menu. */
 export interface MarkCounts {
   /** Unread rows in the list as filtered, searched, and scoped right now. */
-  results: number;
+  results: number
   /** Unread items of the selected source. */
-  source: number;
+  source: number
   /** Unread items of the selected source's folder. */
-  folder: number;
-  folderName: string | null;
+  folder: number
+  folderName: string | null
   /** Unread items in the whole reader. */
-  all: number;
+  all: number
 }
 
 /** One marking target the floating bar can switch to as the reader scrolls. */
 export interface MarkScope {
-  kind: "all" | "results" | "source" | "group";
-  label: string;
-  n: number;
+  kind: 'all' | 'results' | 'source' | 'group'
+  label: string
+  n: number
   /** Source id for the source and feed scopes. */
-  feed?: string;
+  feed?: string
   /** Group key for the group scope. */
-  group?: string;
+  group?: string
 }
 
 export interface SlotProps {
-  controller: Controller;
-  t: Translate;
+  controller: Controller
+  t: Translate
 }
 
-export type GitfeedPageProps = SlotProps;
+export type GitfeedPageProps = SlotProps
 
 export interface GitfeedRailProps extends SlotProps {
-  useTabInfo?: () => { tab?: { visible?: boolean } } | null;
+  useTabInfo?: () => { tab?: { visible?: boolean } } | null
 }
 
 export interface HeaderButtonProps {
-  open: () => void;
-  t: Translate;
+  open: () => void
+  t: Translate
 }
 
 export interface IconProps {
-  size?: number;
+  size?: number
 }
 
 export interface FeedRailProps extends SlotProps {
-  state: ClientState;
-  compact?: boolean;
-  onPick?: () => void;
+  state: ClientState
+  compact?: boolean
+  onPick?: () => void
 }
 
 export interface ItemListProps extends SlotProps {
-  state: ClientState;
-  compact?: boolean;
-  wide?: boolean;
+  state: ClientState
+  compact?: boolean
+  wide?: boolean
 }
 
 export interface ArticleProps extends SlotProps {
-  state: ClientState;
-  compact?: boolean;
+  state: ClientState
+  compact?: boolean
 }

@@ -1,16 +1,21 @@
 // Git operations for the reader: state, pull, and the commit/push sync.
 
-import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
-import path from "node:path";
-import { promisify } from "node:util";
+import { execFile } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import path from 'node:path'
+import { promisify } from 'node:util'
+import type { GitActionResult } from './types.js'
+import type { GitInfo } from '../shared/types.js'
 
-const execFileAsync = promisify(execFile);
+const execFileAsync = promisify(execFile)
 
-function message(err) {
-  if (!err) return "unknown error";
-  const text = String(err.stderr || err.message || err).trim();
-  return text.split("\n").slice(0, 6).join("\n");
+function message(err: unknown): string {
+  if (!err) return 'unknown error'
+  const failure = err as { stderr?: unknown; message?: unknown } | null
+  const raw = typeof failure?.stderr === 'string' && failure.stderr
+    ? failure.stderr
+    : typeof failure?.message === 'string' ? failure.message : err instanceof Error ? err.message : ''
+  return raw.trim().split('\n').slice(0, 6).join('\n') || 'unknown error'
 }
 
 /**
@@ -19,13 +24,13 @@ function message(err) {
  * @param {string[]} args git arguments.
  * @returns {Promise<string>} stdout.
  */
-export async function runGit(root, args) {
-  const result = await execFileAsync("git", args, {
+export async function runGit(root: string, args: string[]): Promise<string> {
+  const result = await execFileAsync('git', args, {
     cwd: root,
     timeout: 120000,
-    maxBuffer: 8 * 1024 * 1024
-  });
-  return String(result.stdout || "");
+    maxBuffer: 8 * 1024 * 1024,
+  })
+  return result.stdout || ''
 }
 
 /**
@@ -37,33 +42,33 @@ export async function runGit(root, args) {
  * @param {string} root checkout directory.
  * @returns {Promise<object>} repository facts.
  */
-export async function readGitInfo(root) {
+export async function readGitInfo(root: string): Promise<GitInfo> {
   try {
-    await runGit(root, ["rev-parse", "--git-dir"]);
+    await runGit(root, ['rev-parse', '--git-dir'])
   } catch (err) {
-    return { repo: false, error: message(err) };
+    return { repo: false, error: message(err) }
   }
   try {
-    let branch = "";
+    let branch = ''
     try {
-      branch = (await runGit(root, ["rev-parse", "--abbrev-ref", "HEAD"])).trim();
-    } catch (err) {
+      branch = (await runGit(root, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim()
+    } catch {
       // An empty repository has no commit to name.
     }
-    const dirty = (await runGit(root, ["status", "--porcelain", "--", "data", "feeds.json", "config.json"])).trim().length > 0;
-    const remotes = (await runGit(root, ["remote"])).trim().split("\n").filter(Boolean);
-    let ahead = 0;
-    let behind = 0;
+    const dirty = (await runGit(root, ['status', '--porcelain', '--', 'data', 'feeds.json', 'config.json'])).trim().length > 0
+    const remotes = (await runGit(root, ['remote'])).trim().split('\n').filter(Boolean)
+    let ahead = 0
+    let behind = 0
     try {
-      const counts = (await runGit(root, ["rev-list", "--left-right", "--count", "HEAD...@{upstream}"])).trim().split(/\s+/);
-      ahead = Number(counts[0] || 0);
-      behind = Number(counts[1] || 0);
-    } catch (err) {
+      const counts = (await runGit(root, ['rev-list', '--left-right', '--count', 'HEAD...@{upstream}'])).trim().split(/\s+/)
+      ahead = Number(counts[0] || 0)
+      behind = Number(counts[1] || 0)
+    } catch {
       // no upstream configured
     }
-    return { repo: true, branch: branch || null, dirty: dirty, remotes: remotes, ahead: ahead, behind: behind };
+    return { repo: true, branch: branch || null, dirty: dirty, remotes: remotes, ahead: ahead, behind: behind }
   } catch (err) {
-    return { repo: false, error: message(err) };
+    return { repo: false, error: message(err) }
   }
 }
 
@@ -72,12 +77,12 @@ export async function readGitInfo(root) {
  * @param {string} root checkout directory.
  * @returns {Promise<{ok:boolean, action:string, output?:string, error?:string}>} settled result.
  */
-export async function pull(root) {
+export async function pull(root: string): Promise<GitActionResult> {
   try {
-    const output = await runGit(root, ["pull", "--rebase", "--autostash"]);
-    return { ok: true, action: "pull", output: output.trim() };
+    const output = await runGit(root, ['pull', '--rebase', '--autostash'])
+    return { ok: true, action: 'pull', output: output.trim() }
   } catch (err) {
-    return { ok: false, action: "pull", error: message(err) };
+    return { ok: false, action: 'pull', error: message(err) }
   }
 }
 
@@ -93,50 +98,50 @@ export async function pull(root) {
  * @param {string} root checkout directory.
  * @returns {Promise<{ok:boolean, action:string, committed?:boolean, output?:string, error?:string}>} settled result.
  */
-export async function sync(root) {
+export async function sync(root: string): Promise<GitActionResult> {
   try {
-    let hasHead = true;
+    let hasHead = true
     try {
-      await runGit(root, ["rev-parse", "--verify", "HEAD"]);
-    } catch (err) {
-      hasHead = false;
+      await runGit(root, ['rev-parse', '--verify', 'HEAD'])
+    } catch {
+      hasHead = false
     }
     if (hasHead) {
-      await runGit(root, ["add", "--", "data/read.ndjson", "data/starred.ndjson", "feeds.json", "config.json"]);
-      for (const extra of [".gitattributes", ".gitignore"]) {
-        if (existsSync(path.join(root, extra))) await runGit(root, ["add", "--", extra]);
+      await runGit(root, ['add', '--', 'data/read.ndjson', 'data/starred.ndjson', 'feeds.json', 'config.json'])
+      for (const extra of ['.gitattributes', '.gitignore']) {
+        if (existsSync(path.join(root, extra))) await runGit(root, ['add', '--', extra])
       }
     } else {
-      await runGit(root, ["add", "-A"]);
+      await runGit(root, ['add', '-A'])
     }
-    let staged = "";
+    let staged = ''
     try {
-      staged = await runGit(root, ["diff", "--cached", "--name-only"]);
-    } catch (err) {
-      staged = "";
+      staged = await runGit(root, ['diff', '--cached', '--name-only'])
+    } catch {
+      staged = ''
     }
-    let committed = false;
+    let committed = false
     if (staged.trim()) {
-      await runGit(root, ["commit", "-m", "reader: sync state"]);
-      committed = true;
+      await runGit(root, ['commit', '-m', 'reader: sync state'])
+      committed = true
     }
     try {
-      await runGit(root, ["pull", "--rebase", "--autostash"]);
-    } catch (err) {
+      await runGit(root, ['pull', '--rebase', '--autostash'])
+    } catch {
       // No upstream yet (a fresh `git init` + remote) or a diverged history:
       // the push below is the authority on whether the result is on the remote.
     }
     try {
-      await runGit(root, ["push"]);
-    } catch (err) {
-      await runGit(root, ["push", "-u", "origin", "HEAD"]);
+      await runGit(root, ['push'])
+    } catch {
+      await runGit(root, ['push', '-u', 'origin', 'HEAD'])
     }
-    return { ok: true, action: "sync", committed: committed, output: "read state pushed" };
+    return { ok: true, action: 'sync', committed: committed, output: 'read state pushed' }
   } catch (err) {
-    return { ok: false, action: "sync", error: message(err) };
+    return { ok: false, action: 'sync', error: message(err) }
   }
 }
 
-export function gitErrorText(err) {
-  return message(err);
+export function gitErrorText(err: unknown): string {
+  return message(err)
 }

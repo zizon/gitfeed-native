@@ -11,19 +11,19 @@
  * current directory) or against any data root on disk.
  */
 
-import path from "node:path";
-import { runFetch } from "./host/fetch.js";
-import { importOpml } from "./host/opml.js";
-import { scaffoldData, starterFiles } from "./host/scaffold.js";
-import { expandHome } from "./host/settings.js";
+import path from 'node:path'
+import { runFetch } from './host/fetch.js'
+import { importOpml } from './host/opml.js'
+import { scaffoldData, starterFiles } from './host/scaffold.js'
+import { expandHome } from './host/settings.js'
 
 interface Flags {
-  root?: string;
-  only?: string;
-  dataDir?: string;
-  dryRun?: boolean;
-  replace?: boolean;
-  help?: boolean;
+  root?: string
+  only?: string
+  dataDir?: string
+  dryRun?: boolean
+  replace?: boolean
+  help?: boolean
 }
 
 const USAGE = `gitfeed — fetch feeds and manage a gitfeed data root
@@ -45,89 +45,90 @@ options:
 
 The reader's fast local refresh runs the same fetcher and writes to the
 gitignored .local/ cache instead of data/.
-`;
+`
 
 function message(err: unknown): string {
-  if (!err) return "unknown error";
-  const text = String((err as Error).message || err).trim();
-  return text || "unknown error";
+  if (typeof err === 'string') return err.trim() || 'unknown error'
+  if (err instanceof Error) return err.message.trim() || 'unknown error'
+  const failure = err as { message?: unknown } | null
+  return typeof failure?.message === 'string' && failure.message.trim() ? failure.message.trim() : 'unknown error'
 }
 
 function parseArgv(argv: string[]): { flags: Flags; positional: string[] } {
-  const flags: Flags = {};
-  const positional: string[] = [];
+  const flags: Flags = {}
+  const positional: string[] = []
   for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
+    const arg = argv[i]
     function value(name: string): string {
-      const next = argv[++i];
-      if (next === undefined || next.startsWith("--")) throw new Error("missing value for " + name);
-      return next;
+      const next = argv.at(++i)
+      if (next === undefined || next.startsWith('--')) throw new Error('missing value for ' + name)
+      return next
     }
-    if (arg === "-h" || arg === "--help") flags.help = true;
-    else if (arg === "--dry-run") flags.dryRun = true;
-    else if (arg === "--replace") flags.replace = true;
-    else if (arg === "--root") flags.root = value("--root");
-    else if (arg.startsWith("--root=")) flags.root = arg.slice("--root=".length);
-    else if (arg === "--only") flags.only = value("--only");
-    else if (arg.startsWith("--only=")) flags.only = arg.slice("--only=".length);
-    else if (arg === "--data-dir") flags.dataDir = value("--data-dir");
-    else if (arg.startsWith("--data-dir=")) flags.dataDir = arg.slice("--data-dir=".length);
-    else if (arg.startsWith("-") && arg !== "-") throw new Error("unknown option " + arg);
-    else positional.push(arg);
+    if (arg === '-h' || arg === '--help') flags.help = true
+    else if (arg === '--dry-run') flags.dryRun = true
+    else if (arg === '--replace') flags.replace = true
+    else if (arg === '--root') flags.root = value('--root')
+    else if (arg.startsWith('--root=')) flags.root = arg.slice('--root='.length)
+    else if (arg === '--only') flags.only = value('--only')
+    else if (arg.startsWith('--only=')) flags.only = arg.slice('--only='.length)
+    else if (arg === '--data-dir') flags.dataDir = value('--data-dir')
+    else if (arg.startsWith('--data-dir=')) flags.dataDir = arg.slice('--data-dir='.length)
+    else if (arg.startsWith('-') && arg !== '-') throw new Error('unknown option ' + arg)
+    else positional.push(arg)
   }
-  return { flags: flags, positional: positional };
+  return { flags: flags, positional: positional }
 }
 
 function dataRoot(flags: Flags, explicit?: string): string {
-  const raw = String(explicit || flags.root || process.env.GITFEED_REPO || "").trim();
-  return path.resolve(expandHome(raw || process.cwd()));
+  const raw = (explicit || flags.root || process.env.GITFEED_REPO || '').trim()
+  return path.resolve(expandHome(raw || process.cwd()))
 }
 
 async function commandFetch(flags: Flags): Promise<number> {
-  const root = dataRoot(flags);
+  const root = dataRoot(flags)
   const result = await runFetch({
     root: root,
     dataDir: flags.dataDir,
     only: flags.only,
-    dryRun: flags.dryRun === true,
-    onLog: function (line: string) { console.log(line); }
-  });
-  return result.code;
+    dryRun:  flags.dryRun,
+    onLog: function (line: string) { console.log(line) },
+  })
+  return result.code
 }
 
 async function commandImport(flags: Flags, positional: string[]): Promise<number> {
-  const file = positional[1] || "";
+  const file = positional[1] || ''
   if (!file) {
-    console.error("usage: gitfeed import-opml <file.opml> [--root <dir>] [--replace]");
-    return 2;
+    console.error('usage: gitfeed import-opml <file.opml> [--root <dir>] [--replace]')
+    return 2
   }
-  const root = dataRoot(flags);
-  const summary = await importOpml(root, file, { replace: flags.replace === true });
-  console.log("imported   " + summary.total + " feed(s) from " + path.basename(file));
-  console.log("new        " + summary.added + (summary.updated ? ", " + summary.updated + " updated" : "") + (summary.kept ? ", " + summary.kept + " kept from feeds.json" : ""));
-  if (summary.duplicates) console.log("duplicates " + summary.duplicates + " skipped");
-  if (summary.invalid) console.log("invalid    " + summary.invalid + " skipped");
+  const root = dataRoot(flags)
+  const summary = await importOpml(root, file, { replace:  flags.replace })
+  console.log(`imported   ${summary.total} feed(s) from ${path.basename(file)}`)
+  console.log(`new        ${summary.added}${summary.updated ? `, ${summary.updated} updated` : ''}${summary.kept ? `, ${summary.kept} kept from feeds.json` : ''}`)
+  if (summary.duplicates) console.log(`duplicates ${summary.duplicates} skipped`)
+  if (summary.invalid) console.log(`invalid    ${summary.invalid} skipped`)
   for (const folder of Object.keys(summary.folders).sort()) {
-    console.log("  " + String(summary.folders[folder]).padStart(4) + "  " + folder);
+    console.log('  ' + String(summary.folders[folder]).padStart(4) + '  ' + folder)
   }
-  return 0;
+  return 0
 }
 
-async function commandInit(flags: Flags, positional: string[]): Promise<number> {
-  const target = dataRoot(flags, positional[1]);
-  const result = scaffoldData(target);
+function commandInit(flags: Flags, positional: string[]): number {
+  const target = dataRoot(flags, positional[1])
+  const result = scaffoldData(target)
   if (!result.seeded) {
     console.error(
-      result.reason === "present"
-        ? "gitfeed: " + target + " already has feeds.json"
-        : "gitfeed: " + target + " is not empty; refusing to write into it"
-    );
-    return 1;
+      result.reason === 'present'
+        ? 'gitfeed: ' + target + ' already has feeds.json'
+        : 'gitfeed: ' + target + ' is not empty; refusing to write into it',
+    )
+    return 1
   }
-  console.log("created " + target);
-  console.log("  " + starterFiles().join("  "));
-  console.log("add a feed with `gitfeed import-opml <file>` or the reader's Add feed box");
-  return 0;
+  console.log('created ' + target)
+  console.log('  ' + starterFiles().join('  '))
+  console.log("add a feed with `gitfeed import-opml <file>` or the reader's Add feed box")
+  return 0
 }
 
 /**
@@ -136,35 +137,35 @@ async function commandInit(flags: Flags, positional: string[]): Promise<number> 
  * @returns process exit code.
  */
 export async function main(argv: string[]): Promise<number> {
-  let flags: Flags;
-  let positional: string[];
+  let flags: Flags
+  let positional: string[]
   try {
-    const parsed = parseArgv(argv);
-    flags = parsed.flags;
-    positional = parsed.positional;
+    const parsed = parseArgv(argv)
+    flags = parsed.flags
+    positional = parsed.positional
   } catch (err) {
-    console.error("gitfeed: " + message(err));
-    console.error(USAGE);
-    return 2;
+    console.error('gitfeed: ' + message(err))
+    console.error(USAGE)
+    return 2
   }
   if (flags.help) {
-    console.log(USAGE);
-    return 0;
+    console.log(USAGE)
+    return 0
   }
-  const command = positional[0];
+  const command = positional[0]
   if (!command) {
-    console.error(USAGE);
-    return 2;
+    console.error(USAGE)
+    return 2
   }
   try {
-    if (command === "fetch") return await commandFetch(flags);
-    if (command === "import-opml") return await commandImport(flags, positional);
-    if (command === "init") return await commandInit(flags, positional);
-    console.error("gitfeed: unknown command " + JSON.stringify(command));
-    console.error(USAGE);
-    return 2;
+    if (command === 'fetch') return await commandFetch(flags)
+    if (command === 'import-opml') return await commandImport(flags, positional)
+    if (command === 'init') return commandInit(flags, positional)
+    console.error('gitfeed: unknown command ' + JSON.stringify(command))
+    console.error(USAGE)
+    return 2
   } catch (err) {
-    console.error("gitfeed: " + message(err));
-    return 1;
+    console.error('gitfeed: ' + message(err))
+    return 1
   }
 }

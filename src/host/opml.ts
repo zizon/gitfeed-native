@@ -2,30 +2,30 @@
 // like, and merge it into feeds.json. Shared by the CLI; the reader's Add feed
 // box covers the one-feed case.
 
-import { readFile } from "node:fs/promises";
-import path from "node:path";
-import { feedIdFor, normalizeUrl, readFeeds, writeFeeds } from "./feeds.js";
-import { attr, decodeEntities } from "./xml.js";
+import { readFile } from 'node:fs/promises'
+import path from 'node:path'
+import { feedIdFor, normalizeUrl, readFeeds, writeFeeds } from './feeds.js'
+import { attr, decodeEntities } from './xml.js'
 
 export interface OpmlEntry {
-  url: string;
-  title: string | null;
-  folder: string | null;
+  url: string
+  title: string | null
+  folder: string | null
 }
 
 export interface ImportSummary {
-  total: number;
-  added: number;
-  updated: number;
-  kept: number;
-  duplicates: number;
-  invalid: number;
-  folders: Record<string, number>;
+  total: number
+  added: number
+  updated: number
+  kept: number
+  duplicates: number
+  invalid: number
+  folders: Record<string, number>
 }
 
-function titleCase(raw: unknown): string | null {
-  const text = decodeEntities(String(raw || "")).trim();
-  return text || null;
+function titleCase(raw: string | null | undefined): string | null {
+  const text = decodeEntities(raw || '').trim()
+  return text || null
 }
 
 /**
@@ -35,31 +35,31 @@ function titleCase(raw: unknown): string | null {
  * @returns feed entries in document order.
  */
 export function parseOpml(xml: string): OpmlEntry[] {
-  const feeds: OpmlEntry[] = [];
-  const stack: string[] = [];
-  const re = /<outline\b([^>]*)>|<\/outline\s*>/gi;
-  let match: RegExpExecArray | null;
+  const feeds: OpmlEntry[] = []
+  const stack: string[] = []
+  const re = /<outline\b([^>]*)>|<\/outline\s*>/gi
+  let match: RegExpExecArray | null
   while ((match = re.exec(xml))) {
-    if (!match[1] && match[0].charAt(1) === "/") {
-      stack.pop();
-      continue;
+    if (!match[1] && match[0].charAt(1) === '/') {
+      stack.pop()
+      continue
     }
-    const raw = match[1] || "";
-    const selfClosing = /\/\s*$/.test(raw);
-    const attrs = selfClosing ? raw.replace(/\/\s*$/, "") : raw;
-    const url = attr(attrs, "xmlUrl") || attr(attrs, "url");
+    const raw = match[1] || ''
+    const selfClosing = /\/\s*$/.test(raw)
+    const attrs = selfClosing ? raw.replace(/\/\s*$/, '') : raw
+    const url = attr(attrs, 'xmlUrl') || attr(attrs, 'url')
     if (url) {
       feeds.push({
         url: url,
-        title: titleCase(attr(attrs, "title") || attr(attrs, "text")),
-        folder: stack.length ? stack[stack.length - 1] : null
-      });
-      continue;
+        title: titleCase(attr(attrs, 'title') || attr(attrs, 'text')),
+        folder: stack.length ? stack[stack.length - 1] : null,
+      })
+      continue
     }
-    if (selfClosing) continue;
-    stack.push(titleCase(attr(attrs, "text") || attr(attrs, "title")) || "Uncategorized");
+    if (selfClosing) continue
+    stack.push(titleCase(attr(attrs, 'text') || attr(attrs, 'title')) || 'Uncategorized')
   }
-  return feeds;
+  return feeds
 }
 
 /**
@@ -73,84 +73,84 @@ export function parseOpml(xml: string): OpmlEntry[] {
  * @returns counts for the CLI to print.
  */
 export async function importOpml(root: string, file: string, options?: { replace?: boolean }): Promise<ImportSummary> {
-  const replace = !!(options && options.replace);
-  const xml = await readFile(path.resolve(file), "utf8");
-  const parsed = parseOpml(xml);
+  const replace = !!(options && options.replace)
+  const xml = await readFile(path.resolve(file), 'utf8')
+  const parsed = parseOpml(xml)
 
-  const existing = new Map<string, { id: string; url: string; title: string | null; folder: string | null }>();
+  const existing = new Map<string, { id: string; url: string; title: string | null; folder: string | null }>()
   if (!replace) {
     for (const entry of await readFeeds(root)) {
-      if (!entry || !entry.url) continue;
-      existing.set(normalizeUrl(entry.url), entry);
+      if (!entry.url) continue
+      existing.set(normalizeUrl(entry.url), entry)
     }
   }
 
-  const seen = new Set<string>();
-  const feeds: Array<{ id: string; url: string; title: string | null; folder: string | null }> = [];
-  let added = 0;
-  let updated = 0;
-  let duplicates = 0;
-  let invalid = 0;
+  const seen = new Set<string>()
+  const feeds: Array<{ id: string; url: string; title: string | null; folder: string | null }> = []
+  let added = 0
+  let updated = 0
+  let duplicates = 0
+  let invalid = 0
   for (const entry of parsed) {
-    const key = normalizeUrl(entry.url);
+    const key = normalizeUrl(entry.url)
     if (seen.has(key)) {
-      duplicates++;
-      continue;
+      duplicates++
+      continue
     }
-    seen.add(key);
-    let id: string;
+    seen.add(key)
+    let id: string
     try {
-      id = feedIdFor(entry.url);
-    } catch (err) {
-      invalid++;
-      continue;
+      id = feedIdFor(entry.url)
+    } catch {
+      invalid++
+      continue
     }
-    const previous = existing.get(key);
+    const previous = existing.get(key)
     if (previous) {
-      existing.delete(key);
-      updated++;
+      existing.delete(key)
+      updated++
     } else {
-      added++;
+      added++
     }
     feeds.push({
       id: previous && previous.id ? previous.id : id,
       url: entry.url,
       title: entry.title || (previous ? previous.title : null),
-      folder: entry.folder || (previous && previous.folder) || "Uncategorized"
-    });
+      folder: entry.folder || (previous && previous.folder) || 'Uncategorized',
+    })
   }
 
   // Merge mode keeps subscriptions the export does not mention.
-  let kept = 0;
+  let kept = 0
   for (const entry of existing.values()) {
-    let id: string;
+    let id: string
     try {
-      id = entry.id || feedIdFor(entry.url);
-    } catch (err) {
-      continue;
+      id = entry.id || feedIdFor(entry.url)
+    } catch {
+      continue
     }
-    feeds.push({ id: id, url: entry.url, title: entry.title || null, folder: entry.folder || "Uncategorized" });
-    kept++;
+    feeds.push({ id: id, url: entry.url, title: entry.title || null, folder: entry.folder || 'Uncategorized' })
+    kept++
   }
 
   // ids must be unique; the fetcher would disambiguate, but then meta.json and
   // feeds.json would disagree, so do it here.
-  const used = new Set<string>();
+  const used = new Set<string>()
   for (const entry of feeds) {
-    let id = entry.id;
-    let n = 2;
-    while (used.has(id)) id = entry.id + "-" + n++;
-    used.add(id);
-    entry.id = id;
+    let id = entry.id
+    let n = 2
+    while (used.has(id)) id = `${entry.id}-${n++}`
+    used.add(id)
+    entry.id = id
   }
 
-  const folders: Record<string, number> = {};
+  const folders: Record<string, number> = {}
   for (const entry of feeds) {
-    const folder = entry.folder || "Uncategorized";
-    folders[folder] = (folders[folder] || 0) + 1;
+    const folder = entry.folder || 'Uncategorized'
+    folders[folder] = (folders[folder] || 0) + 1
   }
 
-  await writeFeeds(root, feeds);
+  await writeFeeds(root, feeds)
   return {
     total: feeds.length,
     added: added,
@@ -158,6 +158,6 @@ export async function importOpml(root: string, file: string, options?: { replace
     kept: kept,
     duplicates: duplicates,
     invalid: invalid,
-    folders: folders
-  };
+    folders: folders,
+  }
 }

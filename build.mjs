@@ -53,6 +53,11 @@ run(esbuild, [
   "--platform=browser",
   "--target=es2022",
   "--external:react",
+  "--external:react-dom",
+  "--external:react/jsx-runtime",
+  // The shell seeds the shared UI atoms into the browser module table, so the
+  // bundle requires them by specifier instead of shipping a second copy.
+  "--external:@deepseek-ai/dsh-client-ui-primitives",
   "--outfile=" + bundle,
   "--log-level=warning"
 ]);

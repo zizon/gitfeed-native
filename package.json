@@ -1,6 +1,6 @@
 {
   "name": "gitfeed-native",
-  "version": "2.1.8",
+  "version": "2.2.0",
   "private": true,
   "type": "module",
   "description": "Git-backed RSS reader as a native DeepSeek Harness bundle: reader page, refresh schedule, git sync, and an agent tool. The package is code only; the data lives in a separate gitfeed data repository.",
@@ -41,12 +41,18 @@
   "scripts": {
     "prepare": "node build.mjs",
     "build": "node build.mjs",
-    "typecheck": "node build.mjs --typecheck-only"
+    "typecheck": "node build.mjs --typecheck-only",
+    "lint": "oxlint src",
+    "lint:fix": "oxlint src --fix"
   },
   "devDependencies": {
+    "@stylistic/eslint-plugin": "^5.10.0",
     "@types/node": "22.20.1",
     "@types/react": "18.3.31",
     "esbuild": "0.28.2",
+    "eslint-plugin-sonarjs": "^4.2.2",
+    "oxlint": "1.81.0",
+    "oxlint-tsgolint": "^7.0.2006",
     "typescript": "6.0.3"
   },
   "bin": {
