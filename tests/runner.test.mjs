@@ -1,4 +1,4 @@
-// Contract C1-C9 for the Host scheduler (docs/scheduler.md), driven by a fake
+// Contract C1-C9 for the Host scheduler (docs/jobs.md), driven by a fake
 // clock whose timer surface is the same one the plugin gets from ctx.timer:
 // time advances, deadlines fire, and each pass arms the next one.
 import { execFileSync } from 'node:child_process'
@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createFetchJob, createSyncJob } from '../lib/host/jobs.js'
 import { pull, readGitInfo, sync } from '../lib/host/git.js'
-import { createScheduler } from '../lib/host/scheduler.js'
+import { createJobRunner } from '../lib/host/runner.js'
 import { finish, makeClock, ok } from './harness.mjs'
 
 const clock = makeClock()
@@ -33,7 +33,7 @@ const fetchJob = createFetchJob({
     }
   },
 })
-const schedA = createScheduler({ timers: clock.timers, root: rootA, logger: log, idleMinutes: 15, now: clock.now })
+const schedA = createJobRunner({ timers: clock.timers, root: rootA, logger: log, idleMinutes: 15, now: clock.now })
 const refresh = schedA.add(fetchJob)
 
 await clock.advance(0)
@@ -56,7 +56,7 @@ const manualStatus = await schedA.status()
 ok(manualStatus[0].last.ok === true && manualStatus[0].last.detail.feeds === 2, 'manual run is reported in the job status')
 
 // ---------- C7: the clocks survive a restart ----------
-const schedA2 = createScheduler({ timers: clock.timers, root: rootA, logger: log, idleMinutes: 15, now: clock.now })
+const schedA2 = createJobRunner({ timers: clock.timers, root: rootA, logger: log, idleMinutes: 15, now: clock.now })
 schedA2.add(fetchJob)
 const persisted = await schedA2.status()
 ok(persisted[0].lastRunAt !== null && persisted[0].last.detail.feeds === 2, 'job clocks and last run survive a restart')
@@ -81,7 +81,7 @@ const fetchJobB = createFetchJob({
     }
   },
 })
-const schedB = createScheduler({ timers: clock.timers, root: rootB, logger: log, idleMinutes: 15, now: clock.now })
+const schedB = createJobRunner({ timers: clock.timers, root: rootB, logger: log, idleMinutes: 15, now: clock.now })
 const migratedJob = schedB.add(fetchJobB)
 const migrated = await schedB.status()
 ok(migrated[0].last && migrated[0].last.detail.added === 3, 'version-1 last run is read into the fetch job')
@@ -114,7 +114,7 @@ git('-C', work, 'remote', 'add', 'origin', origin)
 git('-C', work, 'push', '-u', 'origin', 'main')
 
 const version = async () => readFileSync(path.join(work, 'data', 'read.ndjson'), 'utf8')
-const schedC = createScheduler({ timers: clock.timers, root: work, logger: log, idleMinutes: 15, now: clock.now })
+const schedC = createJobRunner({ timers: clock.timers, root: work, logger: log, idleMinutes: 15, now: clock.now })
 const syncC = schedC.add(createSyncJob({
   allowGit: true, syncMinutes: 1, maxIntervalMinutes: 2,
   gitInfo: () => readGitInfo(work),
@@ -163,7 +163,7 @@ ok(readFileSync(path.join(work, 'data', 'read.ndjson'), 'utf8').includes('remote
 ok(statusC[0].intervalMs === 60000, 'a productive sync returns to its base interval')
 
 // ---------- C6/C8: a disabled sync reports why, manual actions still run ----------
-const schedD = createScheduler({ timers: clock.timers, root: work, logger: log, idleMinutes: 15, now: clock.now })
+const schedD = createJobRunner({ timers: clock.timers, root: work, logger: log, idleMinutes: 15, now: clock.now })
 const syncD = schedD.add(createSyncJob({
   allowGit: true, syncMinutes: 0, maxIntervalMinutes: 2,
   gitInfo: () => readGitInfo(work),

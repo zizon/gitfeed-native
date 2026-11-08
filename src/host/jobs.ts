@@ -11,7 +11,7 @@
 
 import type { FeedDefinition, FetchResult, GitActionResult } from './types.js'
 import type { GitInfo } from '../shared/types.js'
-import type { JobOutcome, ScheduledJob } from './scheduler.js'
+import type { JobOutcome, Job } from './runner.js'
 import type { FeedClocks } from './schedule.js'
 import { applyRun, dueFeeds, nextDueAt, pruneSchedule } from './schedule.js'
 
@@ -70,7 +70,7 @@ function nextRun(clocks: FeedClocks, ids: string[], now: number, baseMin: number
  * @param options interval bounds and the fetcher entry points.
  * @returns the job to register with the scheduler.
  */
-export function createFetchJob(options: FetchJobOptions): ScheduledJob {
+export function createFetchJob(options: FetchJobOptions): Job {
   const baseMin = Math.max(1, Math.round(options.refreshMinutes))
   const maxMin = options.adaptive ? Math.max(baseMin, Math.round(options.maxIntervalMinutes)) : baseMin
   return {
@@ -110,7 +110,10 @@ export function createFetchJob(options: FetchJobOptions): ScheduledJob {
         : ids
       const wanted = scope.only ? [scope.only] : scope.feeds ?? due
       if (wanted.length === 0) {
-        return { fresh: false, summary: 'no feed is due', nextAt: nextRun(data.feeds, ids, context.now, baseMin) }
+        return {
+          fresh: false, summary: 'no feed is due', intervalMin: baseMin,
+          nextAt: nextRun(data.feeds, ids, context.now, baseMin),
+        }
       }
       const result = await options.fetch(scope.only ? { only: scope.only } : { feeds: wanted })
       pruneSchedule(data.feeds, ids)
@@ -127,11 +130,21 @@ export function createFetchJob(options: FetchJobOptions): ScheduledJob {
         failed: result.code !== 0,
         summary: result.summary,
         detail: { added: result.fresh, failed: result.failed, feeds: result.feeds },
+        intervalMin: baseMin,
         nextAt: next,
         value: result,
       }
     },
   }
+}
+
+/** The sync job's persisted payload: the cadence it is currently on. */
+interface SyncJobData {
+  intervalMin?: number
+}
+
+function syncData(value: unknown): SyncJobData {
+  return value && typeof value === 'object' ? value : {}
 }
 
 /** Scope for a manual git action, so the job can run Pull or Sync directly. */
@@ -162,7 +175,7 @@ export interface SyncJobOptions {
  * @param options git entry points and the auto-sync bounds.
  * @returns the job to register with the scheduler.
  */
-export function createSyncJob(options: SyncJobOptions): ScheduledJob {
+export function createSyncJob(options: SyncJobOptions): Job {
   const baseMin = Math.max(1, Math.round(options.syncMinutes))
   return {
     id: 'git',
@@ -170,8 +183,8 @@ export function createSyncJob(options: SyncJobOptions): ScheduledJob {
     baseMin: baseMin,
     maxMin: Math.max(baseMin, Math.round(options.maxIntervalMinutes)),
     firstRunAfterMin: baseMin,
-    initial(): null {
-      return null
+    initial(): SyncJobData {
+      return {}
     },
     async available(): Promise<{ ok: boolean; reason?: string }> {
       if (!options.syncMinutes) return { ok: false, reason: 'scheduled sync is off (syncMinutes: 0)' }
@@ -185,6 +198,10 @@ export function createSyncJob(options: SyncJobOptions): ScheduledJob {
       return { run: true }
     },
     async run(context): Promise<JobOutcome> {
+      const data = syncData(context.state)
+      const maxMin = Math.max(baseMin, Math.round(options.maxIntervalMinutes))
+      const previous = data.intervalMin && data.intervalMin > 0 ? data.intervalMin : baseMin
+      const backoff = Math.min(maxMin, Math.max(baseMin, previous * 2))
       const scope = gitScope(context.scope)
       const before = await options.version()
       const info = await options.gitInfo()
@@ -194,11 +211,22 @@ export function createSyncJob(options: SyncJobOptions): ScheduledJob {
       else if (scope.action === 'sync') result = await options.sync()
       else if (info.dirty || ahead > 0) result = await options.sync()
       else result = await options.pull()
-      if (!result.ok) return { failed: true, summary: result.error || `${result.action} failed`, value: result }
+      if (!result.ok) {
+        data.intervalMin = backoff
+        return {
+          failed: true,
+          summary: result.error || `${result.action} failed`,
+          intervalMin: backoff,
+          nextAt: context.now + backoff * 60000,
+          value: result,
+        }
+      }
       const after = await options.version()
       const pulled = after !== before
       const committed = result.committed === true
       const fresh = scope.action !== undefined || committed || pulled || ahead > 0
+      const intervalMin = fresh ? baseMin : backoff
+      data.intervalMin = intervalMin
       const summary = committed ? 'committed read state'
         : pulled ? 'pulled remote changes'
           : 'nothing to sync'
@@ -206,6 +234,8 @@ export function createSyncJob(options: SyncJobOptions): ScheduledJob {
         fresh: fresh,
         summary: summary,
         detail: { pulled: pulled ? 1 : 0, committed: committed ? 1 : 0 },
+        intervalMin: intervalMin,
+        nextAt: context.now + intervalMin * 60000,
         value: result,
       }
     },

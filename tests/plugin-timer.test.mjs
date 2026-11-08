@@ -70,7 +70,7 @@ ok(mounted === before + 2, 'mounting arms one wake-up per job', { before, mounte
 ok(root.webServer.routes.some((route) => route.path === '/gitfeed/api'), 'the API still mounts')
 
 // ---------- the scheduler: a self-rearming timeout chain ----------
-const { createScheduler } = await import('../lib/host/scheduler.js')
+const { createJobRunner } = await import('../lib/host/runner.js')
 const schedRepo = mkdtempSync(path.join(tmpdir(), 'gitfeed-timer-sched-'))
 let passes = 0
 let runs = 0
@@ -79,7 +79,7 @@ const ticking = root.plugin({
   inject: ['timer'],
   apply(ctx) {
     ctx.effect(() => {
-      const scheduler = createScheduler({
+      const scheduler = createJobRunner({
         root: schedRepo,
         logger,
         idleMinutes: 0,

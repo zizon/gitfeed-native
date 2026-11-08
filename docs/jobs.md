@@ -1,19 +1,19 @@
-# Scheduler design and contract
+# Jobs and timing
 
-The reader has one scheduler, in `src/host/scheduler.ts`. This note is the
-contract it implements, the primitives it is built from, and the boundary
-between them — so a change can be reviewed against behaviour instead of against
-the previous implementation.
+The reader has one job runner, in `src/host/runner.ts`, and two jobs in
+`src/host/jobs.ts`. This note is the contract they implement, the primitives
+they are built from, and the boundary between them — so a change can be
+reviewed against behaviour instead of against the previous implementation.
 
 ## Contract
 
 These are the behaviours the reader depends on. They are asserted by
-`tests/scheduler.test.mjs` (C1–C9) and by the item-model and `/state` suites
+`tests/runner.test.mjs` (C1–C9) and by the item-model and `/state` suites
 where marked.
 
 | # | behaviour |
 |---|---|
-| C1 | each job has a base interval and a ceiling; a run that produced something returns to base, a quiet or failing run doubles, capped |
+| C1 | each job owns its cadence: a run that produced something returns to base, a quiet or failing run doubles, capped; the runner stores what the job reports |
 | C2 | the Refresh job keeps one clock per feed and runs when the earliest is due |
 | C3 | Refresh pauses after `idleMinutes` without a reader request |
 | C4 | local marks reach the remote about 20 s after the last one, and never later than the cap into a burst |
@@ -26,14 +26,19 @@ where marked.
 ## Boundary
 
 **The clock is the Host's.** The plugin declares `inject: ['timer']` and passes
-`ctx.timer`'s `timeout` down as the `SchedulerTimers` surface (`src/index.ts`).
+`ctx.timer`'s `timeout` down as the `JobTimers` surface (`src/index.ts`).
 Every wake-up a job has is one timeout on the plugin's fiber.
 
-**Each job is a timer chain, with a handle.** `scheduler.add(job)` returns a
+**Each job is a timer chain, with a handle.** `runner.add(job)` returns a
 `JobHandle`: the handle owns the verbs for that job (`runNow`, `nudge`), so no
 caller names a job by string, and there is nothing to start — adding a job is
 arming it. There is no global heartbeat, no wake-up arithmetic shared between
-jobs, and no timer the scheduler keeps for itself.
+jobs, and no timer the runner keeps for itself.
+
+**The runner has no backoff policy.** A run reports `nextAt` and `intervalMin`;
+the runner stores those, wakes at the deadline, and renders the status line.
+The doubling rule lives with the job (per feed for Refresh, one interval for
+Sync), which is also why the stored row is four fields and not seven.
 
 **The interface is four verbs, none of them a lifecycle.**
 
@@ -51,15 +56,16 @@ from the plugin's own context, so they belong to its fiber and disappear with
 it. `tick` is missing too — a fake timer in the suites advances time and awaits
 the pass a deadline started, which is the same path production takes.
 
-**Deadlines are data.** `.local/schedule.json` holds, per job: `intervalMin`,
-`nextAt`, `quiet`, `failures`, `lastRunAt`, `lastOkAt`, `last`, and the job's
-own `data` (the fetch job's per-feed clocks). Losing a timer to a reload loses
-no work: the next mount arms every job from the same numbers.
+**Deadlines are data.** `.local/schedule.json` holds, per job: `nextAt`,
+`intervalMin` (for the status line), `last` (what happened), and the job's own
+`data` (Refresh: one clock per feed; Sync: the interval it is on). Losing a
+timer to a reload loses no work: the next mount arms every job from the same
+numbers.
 
-**One writer per field.** A run's outcome writes its own state; `debounce`
-writes `nextAt` for a burst; per-feed clocks travel in `data`; `runNow` writes
-nothing, it runs the job directly; `touch` writes only `lastActivity` and
-re-arms jobs that slept through an idle window.
+**One writer per field.** A run's outcome writes `nextAt`/`intervalMin`/`last`;
+`nudge` writes `nextAt` for a burst; the job's own policy writes its `data`;
+`runNow` writes nothing, it runs the job directly; `touch` writes only
+`lastActivity` and re-arms jobs that slept through an idle window.
 
 ## The primitives, and what each is used for
 
@@ -97,7 +103,8 @@ does not disturb the backoff.
 
 `applyOutcome` floors the next run at one second (`MIN_RERUN_MS`): a job that
 asks to rerun immediately still waits a beat, so a nextAt in the past cannot
-spin the reader.
+spin the reader. It never computes an interval itself — that is the job's last
+word (`outcome.intervalMin`).
 
 ## Deliberate behaviour changes from the hand-rolled clock
 
@@ -122,7 +129,7 @@ its deadline; that is the only churn, and it is bounded by the mark rate.
 - any Host module arms its own `setTimeout`/`setInterval` (`fetch.ts` is the
   documented exception: an HTTP abort deadline, shared with the CLI, not a
   schedule);
-- `SchedulerTimers` grows beyond its single `timeout` method;
+- `JobTimers` grows beyond its single `timeout` method;
 - the plugin stops injecting `timer` or stops taking wake-ups from
   `ctx.timeout`.
 

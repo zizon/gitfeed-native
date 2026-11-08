@@ -1,5 +1,5 @@
 // The reader's Host state machine: committed items plus the local refresh
-// cache, read/star state, subscriptions, git actions, and the scheduler.
+// cache, read/star state, subscriptions, git actions, and the job runner.
 
 import crypto from 'node:crypto'
 import { copyFile, mkdir, stat } from 'node:fs/promises'
@@ -7,8 +7,8 @@ import { feedIdFor, normalizeUrl, readFeeds, resolveFeed, writeFeeds } from './f
 import { loadRuntimeFeeds, runFetch } from './fetch.js'
 import { pull as pullRemote, readGitInfo, sync as syncRemote } from './git.js'
 import { createFetchJob, createSyncJob } from './jobs.js'
-import { createScheduler } from './scheduler.js'
-import type { Scheduler, SchedulerTimers } from './scheduler.js'
+import { createJobRunner } from './runner.js'
+import type { JobRunner, JobTimers } from './runner.js'
 import { pathsFor, readRepoConfig } from './settings.js'
 import { appendNdjson, listShards, readJson, readNdjson, writeNdjson } from './store.js'
 import type { FetchResult, GitActionResult, Logger, ReaderStateData, ReadyState, RepoConfig } from './types.js'
@@ -26,8 +26,8 @@ export type StateResponse = Omit<ReadyState, keyof ReaderStateData> & Partial<Re
 export interface GitfeedOptions {
   root: string
   logger?: Logger
-  /** Where scheduler wake-ups come from: the Host's timer service. */
-  timers: SchedulerTimers
+  /** Where the jobs' wake-ups come from: the Host's timer service. */
+  timers: JobTimers
   refreshMinutes?: number
   idleMinutes?: number
   allowGit?: boolean
@@ -134,7 +134,7 @@ export function createGitfeed(options: GitfeedOptions) {
   let disposed = false
 
   function touch() {
-    scheduler.touch()
+    runner.touch()
   }
 
   function invalidate() {
@@ -283,7 +283,7 @@ export function createGitfeed(options: GitfeedOptions) {
         items: [], read: [], starred: [], feeds: [],
         reader: { hideEmptyFeeds: true, markReadOnScroll: true, groupBy: 'none' },
         git: await gitInfo(),
-        schedule: await scheduler.status(),
+        schedule: await runner.status(),
         repo: root,
         allowGit: allowGit,
         generatedAt: new Date().toISOString(),
@@ -292,7 +292,7 @@ export function createGitfeed(options: GitfeedOptions) {
     const base = {
       version: version,
       git: await gitInfo(),
-      schedule: await scheduler.status(),
+      schedule: await runner.status(),
       repo: root,
       allowGit: allowGit,
       generatedAt: new Date().toISOString(),
@@ -382,9 +382,9 @@ export function createGitfeed(options: GitfeedOptions) {
     }
   }
 
-  // The scheduler owns every periodic run: the fetch job's per-feed clocks
+  // The runner owns every periodic run: the fetch job's per-feed clocks
   // and the sync job's push/pull debounce both live here, not in a timer.
-  const scheduler: Scheduler = createScheduler({
+  const runner: JobRunner = createJobRunner({
     root: root,
     logger: logger,
     idleMinutes: idleMinutes,
@@ -392,7 +392,7 @@ export function createGitfeed(options: GitfeedOptions) {
     onRun: invalidate,
   })
 
-  const refreshJob = scheduler.add(createFetchJob({
+  const refreshJob = runner.add(createFetchJob({
     refreshMinutes: refreshMinutes,
     maxIntervalMinutes: maxIntervalMinutes,
     adaptive: adaptive,
@@ -405,7 +405,7 @@ export function createGitfeed(options: GitfeedOptions) {
     },
   }))
 
-  const syncJob = scheduler.add(createSyncJob({
+  const syncJob = runner.add(createSyncJob({
     allowGit: allowGit,
     syncMinutes: syncMinutes,
     maxIntervalMinutes: syncMaxMinutes,
@@ -592,14 +592,14 @@ export function createGitfeed(options: GitfeedOptions) {
       starred: data.starred.length,
       failingFeeds: data.feeds.filter(function (f) { return !!f.error }).length,
       git: await gitInfo(),
-      schedule: await scheduler.status(),
+      schedule: await runner.status(),
       allowGit: allowGit,
     }
   }
 
   function dispose(): void {
     disposed = true
-    scheduler.dispose()
+    runner.dispose()
     invalidate()
   }
 

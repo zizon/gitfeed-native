@@ -13,10 +13,6 @@ export interface FeedScheduleEntry {
   intervalMin: number
   /** Epoch milliseconds of the next fetch. */
   nextAt: number
-  /** Consecutive runs that produced nothing new (or failed). */
-  quiet: number
-  lastFetchAt: number
-  lastFreshAt: number
 }
 
 export type FeedClocks = Record<string, FeedScheduleEntry | undefined>
@@ -86,9 +82,6 @@ export function applyRun(
     clocks[id] = {
       intervalMin: intervalMin,
       nextAt: options.nowMs + intervalMin * 60000,
-      quiet: fresh ? 0 : (prev ? prev.quiet + 1 : 1),
-      lastFetchAt: options.nowMs,
-      lastFreshAt: fresh ? options.nowMs : (prev ? prev.lastFreshAt : 0),
     }
   }
 }

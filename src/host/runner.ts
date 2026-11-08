@@ -3,19 +3,17 @@
 // A job declares a base interval and a ceiling; the scheduler owns the policy,
 // and the Host's timer service owns the clock. There is no start or stop of
 // its own: registering a job arms its first wake-up, and every timer belongs to
-// the caller's fiber, so the plugin's lifetime is the scheduler's lifetime. Each job carries its own
+// the caller's fiber, so the plugin's lifetime is the runner's lifetime. Each job carries its own
 // wake-up: when its deadline changes the previous timer is disposed and a new
 // one is armed through `ctx.timer`, so the reader wakes exactly when a job is
 // due and sleeps otherwise. There is no heartbeat, no wake arithmetic shared
 // across jobs, and no timer the scheduler keeps for itself.
 //
-// A pass folds its result back into the job's interval: a run that produced
-// something returns the job to its base interval, while a quiet or failing run
-// doubles it, up to the ceiling. A job can also return its own `nextAt` (the
-// fetch job keeps one clock per feed), and `debounce` moves a job's deadline
-// out to the end of a burst of local changes -- which is how a read mark turns
-// into a sync about twenty seconds after the last mark instead of one commit
-// per mark.
+// A pass stores what the job reports: `nextAt` (when to wake again) and
+// `intervalMin` (what the status line shows). A job that returns neither is
+// retried at its base interval. `nudge` moves a job's deadline out to the end
+// of a burst of local changes, which is how a read mark turns into a sync
+// about twenty seconds after the last mark instead of one commit per mark.
 //
 // The state is machine-local (`.local/schedule.json`): restarts keep the
 // deadlines without committing them to the data repository, and version 1 --
@@ -43,8 +41,10 @@ export interface JobOutcome {
   summary?: string
   /** Counters for the status line (the fetch job reports added/failed/feeds). */
   detail?: Record<string, number>
-  /** Exact next run, for jobs with their own clocks (the fetch job). */
+  /** Exact next run; when absent the runner retries after `intervalMin`. */
   nextAt?: number
+  /** The cadence this run leaves the job on; the status line shows it. */
+  intervalMin?: number
   /** Result handed back to the caller of `runNow` (a fetcher report, a git result). */
   value?: unknown
 }
@@ -57,12 +57,12 @@ export interface JobRunContext {
   scope?: unknown
 }
 
-export interface ScheduledJob {
+export interface Job {
   id: string
   label: string
-  /** Minutes between runs after the job produced something. */
+  /** The job's floor cadence, used when it reports no interval of its own. */
   baseMin: number
-  /** Ceiling of the adaptive backoff. */
+  /** The ceiling the job may back off to (its own policy reads this too). */
   maxMin: number
   /** Pause while the reader has been idle this many minutes; absent means never. */
   activeWithinMin?: number
@@ -100,9 +100,9 @@ export interface JobHandle {
   nudge(delayMs: number, capMs: number): void
 }
 
-export interface Scheduler {
+export interface JobRunner {
   /** Add a job and arm its first wake-up on the caller's fiber. */
-  add(job: ScheduledJob): JobHandle
+  add(job: Job): JobHandle
   /** The reader used the API: re-arm jobs that slept through an idle window. */
   touch(): void
   status(): Promise<ScheduleJobInfo[]>
@@ -116,7 +116,7 @@ export interface Scheduler {
  * timeout owned by the plugin's fiber, so a reload or dispose clears whatever
  * is pending with the rest of the plugin. Nothing here reimplements a clock.
  */
-export interface SchedulerTimers {
+export interface JobTimers {
   /**
    * Run `callback` once after `delayMs`; the returned disposer cancels it. The
    * callback may return the pass it starts, so a fake timer can await it; the
@@ -125,13 +125,13 @@ export interface SchedulerTimers {
   timeout(callback: () => void | Promise<void>, delayMs: number): () => void
 }
 
-export interface SchedulerOptions {
+export interface JobRunnerOptions {
   root: string
   logger: Logger
   /** Reader inactivity after which an activity-gated job pauses. */
   idleMinutes: number
   /** The timers each job arms: the Harness timer service, or a test double. */
-  timers: SchedulerTimers
+  timers: JobTimers
   /** Called after a run or a manual fold, so caches keyed on data files drop. */
   onRun?: (jobId: string) => void
   /** Clock, injectable for tests. */
@@ -142,19 +142,21 @@ export interface SchedulerOptions {
  * clock or a nextAt in the past cannot spin the reader. */
 const MIN_RERUN_MS = 1000
 
+/**
+ * What the runner persists per job: when to wake, what the status line shows,
+ * and the job's own payload. Everything else -- backoff, per-feed clocks,
+ * whether the last run failed -- is the job's business and lives in `data`.
+ */
 interface JobState {
+  /** Minutes the job chose for its current cadence; a display value. */
   intervalMin: number
   nextAt: number
-  quiet: number
-  failures: number
-  lastRunAt: number
-  lastOkAt: number
   last: ScheduleJobRun | null
   data?: unknown
 }
 
 interface RuntimeJob {
-  job: ScheduledJob
+  job: Job
   running: boolean
   queued: number
   chain: Promise<void>
@@ -211,10 +213,6 @@ function parseJobState(value: unknown): JobState | null {
   const state: JobState = {
     intervalMin: Math.max(0, numberOr(value.intervalMin, 0)),
     nextAt: Math.max(0, numberOr(value.nextAt, 0)),
-    quiet: Math.max(0, numberOr(value.quiet, 0)),
-    failures: Math.max(0, numberOr(value.failures, 0)),
-    lastRunAt: Math.max(0, numberOr(value.lastRunAt, 0)),
-    lastOkAt: Math.max(0, numberOr(value.lastOkAt, 0)),
     last: parseLast(value.last),
   }
   if (value.data !== undefined) state.data = value.data
@@ -226,16 +224,10 @@ function fromLegacy(raw: Record<string, unknown>): PersistedSchedule {
   const feeds = isRecord(raw.feeds) ? raw.feeds : {}
   const lastRun = isRecord(raw.lastRun) ? raw.lastRun : null
   const at = lastRun && typeof lastRun.at === 'string' ? lastRun.at : ''
-  const atMs = at ? Date.parse(at) : Number.NaN
-  const lastMs = Number.isFinite(atMs) ? atMs : 0
   const code = lastRun ? numberOr(lastRun.code, 1) : 1
   const job: JobState = {
     intervalMin: 0,
     nextAt: 0,
-    quiet: 0,
-    failures: 0,
-    lastRunAt: lastMs,
-    lastOkAt: code === 0 ? lastMs : 0,
     last: at && lastRun
       ? {
         at: at,
@@ -264,14 +256,14 @@ async function readScheduleFile(root: string): Promise<PersistedSchedule> {
 }
 
 /**
- * Create the reader's scheduler. There is nothing to start: each `register`
- * call arms that job's first wake-up, and the timers live on the fiber of
- * whoever supplies `timers` (the plugin's own context), so teardown is the
- * fiber's. `dispose` is only here to make a pass that is already running inert.
+ * Create the reader's job runner. There is nothing to start: `add` arms that
+ * job's first wake-up, and the timers live on the fiber of whoever supplies
+ * `timers` (the plugin's own context), so teardown is the fiber's. `dispose` is
+ * only here to make a pass that is already running inert.
  * @param options root, logger, idle window, timers, and an optional clock.
- * @returns the scheduler surface the Host service drives.
+ * @returns the runner surface the Host service drives.
  */
-export function createScheduler(options: SchedulerOptions): Scheduler {
+export function createJobRunner(options: JobRunnerOptions): JobRunner {
   const root = options.root
   const logger = options.logger
   const clock = options.now ?? (() => Date.now())
@@ -286,16 +278,12 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
     return stopped
   }
 
-  function stateFor(job: ScheduledJob): JobState {
+  function stateFor(job: Job): JobState {
     const existing = states.get(job.id)
     if (existing) return existing
     const created: JobState = {
       intervalMin: Math.max(1, Math.round(job.baseMin)),
       nextAt: clock() + Math.max(0, job.firstRunAfterMin ?? 0) * 60000,
-      quiet: 0,
-      failures: 0,
-      lastRunAt: 0,
-      lastOkAt: 0,
       last: null,
       data: job.initial(),
     }
@@ -318,7 +306,9 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
           if (!saved) continue
           const current = stateFor(runtime.job)
           states.set(runtime.job.id, Object.assign({}, current, saved, {
-            data: saved.data === undefined ? current.data : saved.data,
+            // A job whose payload predates this format keeps its own default
+            // object, so the job can keep writing to it.
+            data: saved.data === undefined || saved.data === null ? current.data : saved.data,
           }))
         }
         await persist()
@@ -350,7 +340,7 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
   }
 
   /** Whether the reader has been away long enough for an activity-gated job. */
-  function paused(job: ScheduledJob, now: number): boolean {
+  function paused(job: Job, now: number): boolean {
     const gate = job.activeWithinMin ?? 0
     return gate > 0 && now - lastActivity > gate * 60000
   }
@@ -403,24 +393,20 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
     }
   }
 
-  function applyOutcome(job: ScheduledJob, state: JobState, outcome: JobOutcome, now: number): void {
+  /**
+   * Store what the job reported. The runner has no backoff of its own: a job
+   * that wants to slow down says so with `intervalMin` and `nextAt`.
+   */
+  function applyOutcome(job: Job, state: JobState, outcome: JobOutcome, now: number): void {
     const base = Math.max(1, Math.round(job.baseMin))
-    const max = Math.max(base, Math.round(job.maxMin))
-    const previous = state.intervalMin > 0 ? state.intervalMin : base
-    const failed = outcome.failed === true
-    const fresh = outcome.fresh === true
-    const intervalMin = fresh && !failed ? base : Math.min(max, Math.max(base, previous * 2))
+    const intervalMin = Math.max(1, Math.round(numberOr(outcome.intervalMin, base)))
     state.intervalMin = intervalMin
-    state.quiet = fresh ? 0 : state.quiet + 1
-    state.failures = failed ? state.failures + 1 : 0
-    state.lastRunAt = now
-    if (!failed) state.lastOkAt = now
     const nextAt = numberOr(outcome.nextAt, 0)
     state.nextAt = nextAt > 0 ? Math.max(now + MIN_RERUN_MS, nextAt) : now + intervalMin * 60000
     state.last = {
       at: new Date(now).toISOString(),
-      ok: !failed,
-      fresh: fresh,
+      ok: outcome.failed !== true,
+      fresh: outcome.fresh === true,
       summary: outcome.summary ?? '',
       ...(outcome.detail ? { detail: outcome.detail } : {}),
     }
@@ -504,7 +490,7 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
    * `nextAt` replaces the fresh one. The returned handle is the only way to
    * act on that job, so no caller has to name it by string.
    */
-  function add(job: ScheduledJob): JobHandle {
+  function add(job: Job): JobHandle {
     const runtime: RuntimeJob = {
       job: job,
       running: false,
@@ -558,7 +544,7 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
     if (!runtime) return
     const state = stateFor(runtime.job)
     // A failing job is backing off on purpose; do not retry it early.
-    if (state.failures > 0) return
+    if (state.last && !state.last.ok) return
     const now = clock()
     if (!runtime.debounceSince) runtime.debounceSince = now
     // A deadline, not a live debouncer: the burst cap is a property of the
@@ -599,7 +585,7 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
         enabled: enabled,
         intervalMs: Math.max(1, intervalMin) * 60000,
         nextDueAt: enabled && state.nextAt > 0 ? new Date(state.nextAt).toISOString() : null,
-        lastRunAt: state.lastRunAt > 0 ? new Date(state.lastRunAt).toISOString() : null,
+        lastRunAt: state.last ? state.last.at : null,
         running: runtime.running || runtime.queued > 0,
         last: state.last,
         error: reason,

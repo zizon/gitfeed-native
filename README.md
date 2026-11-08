@@ -2,7 +2,7 @@
 
 A personal RSS reader rendered as a **native DeepSeek Harness plugin**: a reader
 page in the right Sidebar (beside Files) and in the main panel, a Host-side
-adaptive scheduler for feed refresh and read-state sync, and one compact
+job runner for feed refresh and read-state sync, and one compact
 `gitfeed` agent tool.
 
 The package is **code only**. The data it reads lives in a separate repository,
@@ -96,7 +96,7 @@ double-click it to reset. The width is stored with the main page's list width.
 | main panel | `main` key `gitfeed` + `sidebar.panellist` icon |
 | agent tool | `ctx.tools.register({ name: 'gitfeed', ... })` |
 
-The route and the scheduler are registered with `ctx.effect`, so both
+The route and the job runner are registered with `ctx.effect`, so both
 disappear when the row unloads. `mark`/`star` responses carry the new state version, which
 lets the Client poll compactly after an optimistic update.
 
@@ -192,18 +192,18 @@ commit. The data root is untouched.
 
 ## Fetching and syncing
 
-### Adaptive scheduler
+### Adaptive jobs
 
-The Host plugin owns one scheduler for every periodic thing the reader does.
-Each job has a base interval and a ceiling: a run that produced something
-(items fetched, state committed or pulled) returns the job to its base
-interval, while a quiet or failing run doubles the interval, up to the
-ceiling. Every deadline is data — `nextAt` in `.local/schedule.json` — and each
-job's wake-up is its own timer: the reader sleeps until something is due, and
-moving a deadline disposes that job's timer and arms the next one.
+The Host plugin owns one job runner for every periodic thing the reader does.
+Each job owns its cadence: a run that produced something (items fetched, state
+committed or pulled) returns to the base interval, while a quiet or failing run
+doubles it, up to the ceiling — per feed for Refresh, one interval for Sync.
+The runner stores what the job reports (`nextAt`, `intervalMin`), arms that
+job's own timer, and renders the status line; it has no backoff policy of its
+own.
 
 Two jobs are registered today. A new one implements `available`, `due`, and
-`run` and is registered next to them in `src/host/service.ts`.
+`run` and is added next to them in `src/host/service.ts`.
 
 **Refresh** refills the gitignored `.local/` cache:
 
@@ -238,13 +238,13 @@ per-feed clocks live in `.local/schedule.json` — machine-local, never
 committed, version 2; a version-1 file (the fetch-only format) is read as the
 Refresh job's state. **Fetch** in the reader still fetches everything.
 
-The scheduler's policy is its own; its clock is the Harness's. The plugin
+The cadence policy is the jobs'; the clock is the Harness's. The plugin
 declares `inject: ['timer']` and takes each job's wake-up from
 `ctx.timer.timeout` (`@deepseek-ai/cordis-plugin-timer`) on the plugin's fiber:
 when a deadline moves, the old timer is disposed and a new one is armed, and a
-reload or dispose cancels whatever is pending with the rest of the plugin. The
-policy is the part the timer service does not have — per-job backoff, per-feed
-clocks, the activity gate, and the stored burst deadline — so it stays here.
+reload or dispose cancels whatever is pending with the rest of the plugin. What
+the timer service does not provide — per-feed backoff, the activity gate, the
+stored burst deadline — lives with the job that needs it.
 
 `ctx.timer.interval` is not used: the Refresh job's next run is the earliest
 per-feed clock, not a period. `ctx.timer.debounce` is not used either: it lives
@@ -255,7 +255,7 @@ durable and knows Cron and RRULE, but every occurrence it delivers becomes an
 Agent turn in a Session, so using it would spend a model call per refresh.
 
 The full contract and the primitive-by-primitive rationale are in
-[`docs/scheduler.md`](docs/scheduler.md).
+[`docs/jobs.md`](docs/jobs.md).
 
 ### GitHub Actions in the data repository
 
@@ -480,7 +480,7 @@ for `refreshMinutes`, `adaptive`, `maxIntervalMinutes`, `syncMinutes`,
 
 | action | parameters | result |
 | --- | --- | --- |
-| `status` | — | repo, version, feed/item/unread counts, git and scheduler state |
+| `status` | — | repo, version, feed/item/unread counts, git and job state |
 | `list` | `query`, `feed`, `unreadOnly`, `starredOnly`, `limit` | compact item rows with a short excerpt |
 | `get` | `id` | one item's plain-text summary (up to 12k chars) |
 | `mark` | `ids`, `read` | changed count |
@@ -523,11 +523,11 @@ shards.
 ```
 package.json                bundle metadata: dsh.bundle patch, dsh.client module, bin, files, prepare
 cordis.patch.yml            inserts the `gitfeed` Host row
-src/index.ts                typed Host entry: route, scheduler, tool
+src/index.ts                typed Host entry: route, job runner, tool
 src/cli.ts                  `gitfeed fetch | import-opml | init`
-src/host/                   settings, scaffold, store, OPML, XML, fetch, git, scheduler, jobs, service, HTTP, tool
+src/host/                   settings, scaffold, store, OPML, XML, fetch, git, runner, jobs, service, HTTP, tool
 tests/                      behaviour suites, fixtures, and the runner (`pnpm test`)
-docs/scheduler.md           scheduler contract, primitives, and the ratchet
+docs/jobs.md                runner contract, primitives, and the ratchet
 src/client/                 native reader: controller, hooks, components, styles, locales
 src/shared/                 item/feed/state types shared by both halves
 build.mjs                   tsc Host + esbuild Client into the loader envelope
@@ -581,7 +581,7 @@ pnpm lint        # oxlint, including the type-aware rules
 ```
 
 `tests/` holds the behaviour contract in runnable form (see
-[`docs/scheduler.md`](docs/scheduler.md)), the item-model and `/state`
+[`docs/jobs.md`](docs/jobs.md)), the item-model and `/state`
 protocols, the timer-runtime check against a real Harness checkout, and the
 architecture ratchet that keeps a second clock out of the Host half. Suites are
 plain node scripts driven by `tests/run.mjs`; no test framework is installed.
