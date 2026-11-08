@@ -29,11 +29,27 @@ where marked.
 `ctx.timer`'s `timeout` down as the `SchedulerTimers` surface (`src/index.ts`).
 Every wake-up a job has is one timeout on the plugin's fiber.
 
-**Each job is a timer chain.** A job's deadline lives in its persisted state;
-the scheduler derives a timer from it, and when the deadline moves the old
-timer is disposed and a new one is armed. There is no global heartbeat, no
-wake-up arithmetic shared between jobs, and no timer the scheduler keeps for
-itself.
+**Each job is a timer chain, with a handle.** `scheduler.add(job)` returns a
+`JobHandle`: the handle owns the verbs for that job (`runNow`, `nudge`), so no
+caller names a job by string, and there is nothing to start — adding a job is
+arming it. There is no global heartbeat, no wake-up arithmetic shared between
+jobs, and no timer the scheduler keeps for itself.
+
+**The interface is four verbs, none of them a lifecycle.**
+
+| verb | who calls it | what it does |
+|---|---|---|
+| `add(job)` | the service, twice, at construction | registers the job, arms its first deadline, returns its handle |
+| `handle.runNow(scope)` | the Fetch/Sync buttons | runs the job in its chain, then re-arms |
+| `handle.nudge(delay, cap)` | a mark, a star, a subscription change | moves the deadline to the end of the burst |
+| `touch()` | every `/state` request | re-arms jobs that slept through an idle window |
+| `status()` | `/state`, the agent tool | the job list the UI renders |
+| `dispose()` | the plugin's teardown effect | makes an in-flight pass inert |
+
+Start/stop are missing on purpose: the timers are created through `ctx.timer`
+from the plugin's own context, so they belong to its fiber and disappear with
+it. `tick` is missing too — a fake timer in the suites advances time and awaits
+the pass a deadline started, which is the same path production takes.
 
 **Deadlines are data.** `.local/schedule.json` holds, per job: `intervalMin`,
 `nextAt`, `quiet`, `failures`, `lastRunAt`, `lastOkAt`, `last`, and the job's

@@ -351,7 +351,7 @@ export function createGitfeed(options: GitfeedOptions) {
     touch()
     const changed = await setState(paths.read, ids, read)
     invalidate()
-    if (changed > 0) scheduler.debounce('git', AUTO_SYNC_DEBOUNCE_MS, AUTO_SYNC_MAX_WAIT_MS)
+    if (changed > 0) syncJob.nudge(AUTO_SYNC_DEBOUNCE_MS, AUTO_SYNC_MAX_WAIT_MS)
     return { ok: true, changed: changed, version: await fileVersion() }
   }
 
@@ -365,7 +365,7 @@ export function createGitfeed(options: GitfeedOptions) {
     touch()
     const changed = await setState(paths.starred, ids, starred)
     invalidate()
-    if (changed > 0) scheduler.debounce('git', AUTO_SYNC_DEBOUNCE_MS, AUTO_SYNC_MAX_WAIT_MS)
+    if (changed > 0) syncJob.nudge(AUTO_SYNC_DEBOUNCE_MS, AUTO_SYNC_MAX_WAIT_MS)
     return { ok: true, changed: changed, version: await fileVersion() }
   }
 
@@ -392,7 +392,7 @@ export function createGitfeed(options: GitfeedOptions) {
     onRun: invalidate,
   })
 
-  scheduler.register(createFetchJob({
+  const refreshJob = scheduler.add(createFetchJob({
     refreshMinutes: refreshMinutes,
     maxIntervalMinutes: maxIntervalMinutes,
     adaptive: adaptive,
@@ -405,7 +405,7 @@ export function createGitfeed(options: GitfeedOptions) {
     },
   }))
 
-  scheduler.register(createSyncJob({
+  const syncJob = scheduler.add(createSyncJob({
     allowGit: allowGit,
     syncMinutes: syncMinutes,
     maxIntervalMinutes: syncMaxMinutes,
@@ -422,7 +422,7 @@ export function createGitfeed(options: GitfeedOptions) {
    */
   async function runLocalFetch(opts?: { only?: string; feeds?: string[]; all?: boolean }): Promise<FetchResult> {
     touch()
-    const run = await scheduler.runNow('fetch', opts || { all: true })
+    const run = await refreshJob.runNow(opts || { all: true })
     if (run.value) return run.value as FetchResult
     throw new Error(run.outcome.summary || 'fetch failed')
   }
@@ -455,7 +455,7 @@ export function createGitfeed(options: GitfeedOptions) {
     feeds.push(entry)
     await writeFeeds(root, feeds)
     invalidate()
-    scheduler.debounce('git', AUTO_SYNC_DEBOUNCE_MS, AUTO_SYNC_MAX_WAIT_MS)
+    syncJob.nudge(AUTO_SYNC_DEBOUNCE_MS, AUTO_SYNC_MAX_WAIT_MS)
 
     // Pull this one feed into the local cache so it appears immediately. A
     // failure here still leaves the subscription in place.
@@ -489,7 +489,7 @@ export function createGitfeed(options: GitfeedOptions) {
       }
     }
     invalidate()
-    scheduler.debounce('git', AUTO_SYNC_DEBOUNCE_MS, AUTO_SYNC_MAX_WAIT_MS)
+    syncJob.nudge(AUTO_SYNC_DEBOUNCE_MS, AUTO_SYNC_MAX_WAIT_MS)
     return { ok: true, removed: key }
   }
 
@@ -504,7 +504,7 @@ export function createGitfeed(options: GitfeedOptions) {
     if (name === 'sync' && (info.remotes || []).indexOf('origin') === -1) {
       throw new Error(`gitfeed: ${root} has no \`origin\` remote — add one with \`git remote add origin <url>\` and try Sync again`)
     }
-    const run = await scheduler.runNow('git', { action: name })
+    const run = await syncJob.runNow({ action: name })
     invalidate()
     const value = run.value
     if (value && typeof value === 'object') return value as GitActionResult
@@ -597,16 +597,9 @@ export function createGitfeed(options: GitfeedOptions) {
     }
   }
 
-  function schedule(): () => void {
-    scheduler.start()
-    return function (): void {
-      scheduler.stop()
-    }
-  }
-
   function dispose(): void {
     disposed = true
-    scheduler.stop()
+    scheduler.dispose()
     invalidate()
   }
 
@@ -624,7 +617,6 @@ export function createGitfeed(options: GitfeedOptions) {
     listForTool: listForTool,
     getForTool: getForTool,
     statusForTool: statusForTool,
-    schedule: schedule,
     dispose: dispose,
   }
 }

@@ -81,7 +81,11 @@ export function apply(ctx: PluginContext, config?: GitfeedConfig) {
     // Read the mixin at call time, so every job's wake-up registers on *this*
     // plugin's fiber: a reload cancels whatever is pending with the plugin.
     timers: {
-      timeout: function (callback, delayMs) { return ctx.timeout(callback, delayMs) },
+      // The Host timer ignores a callback's return value; a fake timer in the
+      // suites uses it to await the pass a deadline starts.
+      timeout: function (callback, delayMs) {
+        return ctx.timeout(function () { void callback() }, delayMs)
+      },
     },
     refreshMinutes: refreshMinutes,
     idleMinutes: idleMinutes,
@@ -102,16 +106,12 @@ export function apply(ctx: PluginContext, config?: GitfeedConfig) {
     'gitfeed: web API',
   )
 
-  ctx.effect(
-    () => {
-      const stop = service.schedule()
-      return () => {
-        stop()
-        service.dispose()
-      }
-    },
-    'gitfeed: adaptive schedule',
-  )
+  // The scheduler armed its jobs when they were registered, on this plugin's
+  // fiber; disposing the fiber cancels those timers. This effect only makes an
+  // already-running pass inert and drops the caches keyed on data files.
+  ctx.effect(function () {
+    return function () { service.dispose() }
+  }, 'gitfeed: reader')
 
   if (tool) {
     ctx.inject(['tools'], (scope) => {

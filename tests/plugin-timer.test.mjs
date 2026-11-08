@@ -85,7 +85,7 @@ const ticking = root.plugin({
         idleMinutes: 0,
         timers: { timeout: (callback, delayMs) => ctx.timeout(callback, delayMs) },
       })
-      scheduler.register({
+      scheduler.add({
         id: 'probe',
         label: 'probe',
         baseMin: 1,
@@ -101,14 +101,13 @@ const ticking = root.plugin({
           return { fresh: true, nextAt: Date.now() + 10 }
         },
       })
-      scheduler.start()
-      return () => scheduler.stop()
+      return () => scheduler.dispose()
     }, 'probe scheduler')
   },
 })
 await ticking
 await settle()
-ok(runs >= 1, 'starting the scheduler runs the due job at once', { runs })
+ok(runs >= 1, 'adding a job arms its first deadline at once', { runs })
 await new Promise((resolve) => { setTimeout(resolve, 1300) })
 ok(runs >= 2 && passes >= 2, 'the timeout it arms fires the next pass by itself', { runs, passes })
 const passesBefore = passes

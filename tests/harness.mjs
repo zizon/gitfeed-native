@@ -45,6 +45,51 @@ export function nodeTimers() {
   }
 }
 
+/**
+ * A fake timer surface that doubles as the clock: `timers` is what the
+ * scheduler arms, `advance` moves time and fires what is due, awaiting the pass
+ * a deadline starts. This is the same surface the plugin receives from
+ * `ctx.timer`, so the suites exercise the real scheduling path.
+ */
+export function makeClock(startMs = Date.parse('2026-01-01T00:00:00Z')) {
+  let now = startMs
+  let seq = 0
+  const pending = new Map()
+
+  const timers = {
+    timeout(callback, delayMs) {
+      const id = ++seq
+      pending.set(id, { at: now + Math.max(0, delayMs), callback })
+      return function () { pending.delete(id) }
+    },
+  }
+
+  async function advance(ms) {
+    const target = now + ms
+    for (;;) {
+      let next = null
+      for (const entry of pending) {
+        if (entry[1].at > target) continue
+        if (!next || entry[1].at < next[1].at) next = entry
+      }
+      if (!next) break
+      pending.delete(next[0])
+      now = Math.max(now, next[1].at)
+      const result = next[1].callback()
+      if (result && typeof result.then === 'function') await result
+    }
+    now = target
+  }
+
+  return {
+    timers,
+    now: () => now,
+    advance,
+    advanceTo(targetMs) { return advance(Math.max(0, targetMs - now)) },
+    pending: () => pending.size,
+  }
+}
+
 /** Run the suite's verdict and exit non-zero on failure. */
 export function finish() {
   if (failures > 0) {

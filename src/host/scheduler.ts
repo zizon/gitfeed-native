@@ -1,7 +1,9 @@
 // One adaptive scheduler for every periodic thing the reader does.
 //
 // A job declares a base interval and a ceiling; the scheduler owns the policy,
-// and the Host's timer service owns the clock. Each job carries its own
+// and the Host's timer service owns the clock. There is no start or stop of
+// its own: registering a job arms its first wake-up, and every timer belongs to
+// the caller's fiber, so the plugin's lifetime is the scheduler's lifetime. Each job carries its own
 // wake-up: when its deadline changes the previous timer is disposed and a new
 // one is armed through `ctx.timer`, so the reader wakes exactly when a job is
 // due and sleeps otherwise. There is no heartbeat, no wake arithmetic shared
@@ -84,22 +86,28 @@ export interface JobRunResult {
   value?: unknown
 }
 
-export interface Scheduler {
-  register(job: ScheduledJob): void
-  start(): void
-  stop(): void
-  /** Evaluate every job now, ignoring its armed timer; also the test entry point. */
-  tick(): Promise<void>
-  /** Run a job now, whatever its clocks say (the manual buttons). */
-  runNow(id: string, scope?: unknown): Promise<JobRunResult>
+/** The handle a caller keeps for one registered job. */
+export interface JobHandle {
+  /** The job's id in the schedule file and on the status line. */
+  readonly id: string
+  /** Run the job now, whatever its clocks say (the manual buttons). */
+  runNow(scope?: unknown): Promise<JobRunResult>
   /**
    * Wait for a burst of changes to settle: each call moves the job's deadline
    * to `now + delayMs`, but never past `capMs` after the burst began. A job
    * that is already failing keeps its backoff instead of being retried sooner.
    */
-  debounce(id: string, delayMs: number, capMs: number): void
+  nudge(delayMs: number, capMs: number): void
+}
+
+export interface Scheduler {
+  /** Add a job and arm its first wake-up on the caller's fiber. */
+  add(job: ScheduledJob): JobHandle
+  /** The reader used the API: re-arm jobs that slept through an idle window. */
   touch(): void
   status(): Promise<ScheduleJobInfo[]>
+  /** Stop arming work; an in-flight pass finishes but schedules nothing new. */
+  dispose(): void
 }
 
 /**
@@ -109,8 +117,12 @@ export interface Scheduler {
  * is pending with the rest of the plugin. Nothing here reimplements a clock.
  */
 export interface SchedulerTimers {
-  /** Run `callback` once after `delayMs`; the returned disposer cancels it. */
-  timeout(callback: () => void, delayMs: number): () => void
+  /**
+   * Run `callback` once after `delayMs`; the returned disposer cancels it. The
+   * callback may return the pass it starts, so a fake timer can await it; the
+   * Host's timer ignores the value.
+   */
+  timeout(callback: () => void | Promise<void>, delayMs: number): () => void
 }
 
 export interface SchedulerOptions {
@@ -252,7 +264,10 @@ async function readScheduleFile(root: string): Promise<PersistedSchedule> {
 }
 
 /**
- * Create the reader's scheduler.
+ * Create the reader's scheduler. There is nothing to start: each `register`
+ * call arms that job's first wake-up, and the timers live on the fiber of
+ * whoever supplies `timers` (the plugin's own context), so teardown is the
+ * fiber's. `dispose` is only here to make a pass that is already running inert.
  * @param options root, logger, idle window, timers, and an optional clock.
  * @returns the scheduler surface the Host service drives.
  */
@@ -263,7 +278,6 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
   const jobs = new Map<string, RuntimeJob>()
   const states = new Map<string, JobState>()
   let loaded: Promise<void> | null = null
-  let started = false
   let stopped = false
   let lastActivity = clock()
   let writing: Promise<void> = Promise.resolve()
@@ -366,21 +380,23 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
     const delay = Math.max(0, state.nextAt - now)
     runtime.wake = options.timers.timeout(function () {
       runtime.wake = null
-      fire(runtime)
+      return fire(runtime)
     }, delay)
   }
 
-  /** A deadline came due: run one pass, then arm the next deadline. */
-  function fire(runtime: RuntimeJob): void {
-    if (stopped) return
-    if (runtime.running || runtime.queued > 0) return
+  /**
+   * A deadline came due: run one pass, then arm the next deadline. The pass is
+   * returned so a fake timer can await it; the Host's timer ignores the value.
+   */
+  function fire(runtime: RuntimeJob): Promise<void> {
+    if (stopped || runtime.running || runtime.queued > 0) return Promise.resolve()
     runtime.queued += 1
     const task = function (): Promise<void> {
       return pass(runtime)
     }
     const run = runtime.chain.then(task, task)
     runtime.chain = run.then(function () { }, function () { })
-    void run.then(settle, settle)
+    return run.then(settle, settle)
     function settle(): void {
       runtime.queued -= 1
       if (!stopped) arm(runtime)
@@ -482,8 +498,14 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
     }
   }
 
-  function register(job: ScheduledJob): void {
-    jobs.set(job.id, {
+  /**
+   * Registering is the arming: the job's first deadline goes on the fiber at
+   * once, and again after the stored schedule is read, because the persisted
+   * `nextAt` replaces the fresh one. The returned handle is the only way to
+   * act on that job, so no caller has to name it by string.
+   */
+  function add(job: ScheduledJob): JobHandle {
+    const runtime: RuntimeJob = {
       job: job,
       running: false,
       queued: 0,
@@ -491,27 +513,20 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
       wake: null,
       idleSleep: false,
       debounceSince: 0,
+    }
+    jobs.set(job.id, runtime)
+    arm(runtime)
+    void ensureLoaded().then(function () {
+      if (!stopped) arm(runtime)
     })
+    return {
+      id: job.id,
+      runNow: function (scope?: unknown) { return runJob(job.id, scope) },
+      nudge: function (delayMs: number, capMs: number) { nudge(job.id, delayMs, capMs) },
+    }
   }
 
-  function start(): void {
-    if (started) return
-    started = true
-    stopped = false
-    lastActivity = clock()
-    void (async function () {
-      await ensureLoaded()
-      for (const runtime of Array.from(jobs.values())) {
-        if (isStopped()) return
-        if (runtime.running || runtime.queued > 0) continue
-        await pass(runtime)
-        if (!isStopped()) arm(runtime)
-      }
-    })()
-  }
-
-  function stop(): void {
-    started = false
+  function dispose(): void {
     stopped = true
     for (const runtime of jobs.values()) {
       disarm(runtime)
@@ -519,20 +534,7 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
     }
   }
 
-  /** Evaluate every job now, whether its deadline says so or not. */
-  async function tick(): Promise<void> {
-    if (isStopped()) return
-    await ensureLoaded()
-    if (isStopped()) return
-    for (const runtime of Array.from(jobs.values())) {
-      if (isStopped()) break
-      if (runtime.running || runtime.queued > 0) continue
-      await pass(runtime)
-      if (!isStopped()) arm(runtime)
-    }
-  }
-
-  async function runNow(id: string, scope?: unknown): Promise<JobRunResult> {
+  async function runJob(id: string, scope?: unknown): Promise<JobRunResult> {
     const runtime = jobs.get(id)
     if (!runtime) throw new Error(`gitfeed: no scheduled job ${id}`)
     await ensureLoaded()
@@ -551,7 +553,7 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
     }
   }
 
-  function debounce(id: string, delayMs: number, capMs: number): void {
+  function nudge(id: string, delayMs: number, capMs: number): void {
     const runtime = jobs.get(id)
     if (!runtime) return
     const state = stateFor(runtime.job)
@@ -607,13 +609,9 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
   }
 
   return {
-    register: register,
-    start: start,
-    stop: stop,
-    tick: tick,
-    runNow: runNow,
-    debounce: debounce,
+    add: add,
     touch: touch,
     status: status,
+    dispose: dispose,
   }
 }
