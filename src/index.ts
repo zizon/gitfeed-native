@@ -10,7 +10,8 @@
  * repository (by convention cloned to `~/gitfeed`), so installing or updating
  * the plugin never touches subscriptions, items, or read state. When that root
  * is missing or empty, activation writes a starter one: an empty
- * `feeds.json`, default `config.json`, and the empty `data/` tree.
+ * `feeds.json`, default `config.json`, the empty `data/` tree, and the
+ * stand-alone CLI bundle with the workflow its scheduled fetch runs.
  *
  * Settings arrive as the Host row's `config:` object in the profile patch, or
  * from the environment. The plugin exports no Config schema, so the bundle is

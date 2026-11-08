@@ -20,6 +20,7 @@
   "include": [
     "src/index.ts",
     "src/cli.ts",
+    "src/cli-entry.ts",
     "src/host/**/*.ts",
     "src/shared/**/*.ts"
   ]

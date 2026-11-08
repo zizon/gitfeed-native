@@ -7,7 +7,9 @@ adaptive scheduler for feed refresh and read-state sync, and one compact
 
 The package is **code only**. The data it reads lives in a separate repository,
 so installing, updating, and sharing the plugin never touches subscriptions,
-items, or read state.
+items, or read state. The one thing it writes into the data repository is the
+CI job: `gitfeed ci` drops a stand-alone bundle of this CLI beside the data, so
+a scheduled fetch needs neither the code checkout nor a token.
 
 ## Two repositories, one reader
 
@@ -131,10 +133,12 @@ The plugin reads and writes one directory — the data root — resolved as:
 2. `$GITFEED_REPO`,
 3. `~/gitfeed`.
 
-That directory holds `feeds.json`, `config.json`, `data/`, and the gitignored
-`.local/` refresh cache, and is a clone of the data repository (or any checkout
-of it). When it is missing or empty, the first activation writes a starter
-version so the reader mounts with an empty inbox instead of an error:
+That directory holds `feeds.json`, `config.json`, `data/`, the gitignored
+`.local/` refresh cache, and — once `gitfeed ci` ran — `.gitfeed/gitfeed.mjs`
+with the generated `.github/workflows/fetch.yml`. It is a clone of the data
+repository (or any checkout of it). When it is missing or empty, the first
+activation writes a starter version so the reader mounts with an empty inbox
+instead of an error:
 
 ```
 feeds.json             {"feeds": []}
@@ -144,6 +148,8 @@ data/read.ndjson       (empty)
 data/starred.ndjson    (empty)
 .gitattributes         union-merge rules for read/starred/item lines
 .gitignore             .local/ and friends
+.gitfeed/gitfeed.mjs   stand-alone CLI bundle the CI job runs
+.github/workflows/fetch.yml  scheduled fetch job
 ```
 
 ### A local copy vs a checkout
@@ -231,6 +237,25 @@ per-feed clocks live in `.local/schedule.json` — machine-local, never
 committed, version 2; a version-1 file (the fetch-only format) is read as the
 Refresh job's state. **Fetch** in the reader still fetches everything.
 
+### GitHub Actions in the data repository
+
+`gitfeed init` writes the job into a new data root, and `gitfeed ci` writes it
+into an existing one:
+
+- `.gitfeed/gitfeed.mjs` — this package's CLI bundled into one Node script;
+- `.github/workflows/fetch.yml` — a job that runs it on `1,31 * * * *` and
+  commits `data/` with the repository's own `GITHUB_TOKEN`.
+
+The job installs nothing and checks out nothing but the data repository, so the
+code repository can stay private and no secret is needed. It runs
+`node .gitfeed/gitfeed.mjs fetch`, then commits only `data/`, rebasing over a
+read-state push from a machine. Commit both generated files when `gitfeed ci`
+writes them; the schedule starts once the workflow is on the default branch
+(GitHub also disables scheduled workflows in forks until enabled).
+
+Run `gitfeed ci` again after upgrading the plugin so the committed bundle
+matches the installed one.
+
 ### CLI
 
 The package ships the `gitfeed` command; it runs the same `lib/host` modules the
@@ -242,7 +267,8 @@ gitfeed fetch --only=jvns-ca-atom-xml
 gitfeed fetch --dry-run
 gitfeed import-opml ~/Downloads/feeds.opml
 gitfeed import-opml --replace ~/Downloads/feeds.opml
-gitfeed init ~/gitfeed           # write the starter data root
+gitfeed init ~/gitfeed           # write the starter data root, with its CI job
+gitfeed ci ~/gitfeed             # write/refresh the data repo's fetch job
 gitfeed --help
 ```
 
@@ -254,21 +280,19 @@ node bin/gitfeed.mjs fetch --root ~/gitfeed
 
 ### Cron
 
-Fetching is local: it runs on the machine that has the checkout — the reader
-refreshes while a panel is open, and this cron entry keeps the committed
-`data/` tree current while it is not:
+If the checkout lives on a machine that is always on, cron can keep the
+committed `data/` tree current without the reader open — it runs the same
+fetcher the generated workflow runs:
 
 ```bash
 */30 * * * * cd $HOME/gitfeed \
-  && node $HOME/gitfeed-native/bin/gitfeed.mjs fetch \
+  && node .gitfeed/gitfeed.mjs fetch \
   && git add data \
   && git commit -qm "feed: $(date -u +%FT%TZ)" \
   && git push || true
 ```
 
-There is no server-side fetch job and the data repository has no workflow: the
-scheduler and this CLI are the only fetchers, and **Sync** or the cron entry is
-what writes to the remote.
+The generated workflow is the alternative when no machine stays on.
 
 ## Reading UI
 
@@ -530,9 +554,9 @@ produced.
 - **Only what the feed gives you.** Some feeds publish a teaser; "Open
   original" is one click away.
 - **Not offline.** Images are hotlinked from the origin.
-- **Fetching is local.** Nothing runs in the cloud: items arrive when a machine
-  with the data checkout refreshes, or when cron runs the CLI. A closed laptop
-  fetches nothing.
+- **Fetching needs a fetcher somewhere.** The reader refreshes while a panel is
+  open, cron covers a machine that is always on, and the data repository's
+  generated workflow covers the rest. If none is running, items wait.
 - **Loopback only.** The API is served by the Harness web server and refuses
   cross-origin requests; it is not designed to be exposed publicly.
 - **The right Sidebar needs a session.** The main-panel page works without one.
