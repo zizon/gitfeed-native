@@ -176,4 +176,23 @@ ok(statusD[0].enabled === false && statusD[0].error.includes('syncMinutes'), 'a 
 const manualRun = await syncD.runNow({ action: 'sync' })
 ok(manualRun.ok === true, 'a manual git action still runs when auto-sync is off')
 
+// ---------- the archive is staged too ----------
+// Unsubscribing rewrites the item shards in place, so a sync that staged only
+// read/starred left that rewrite in the worktree forever: the status line said
+// "uncommitted" for good and every later run rebased for a change it would
+// never commit.
+mkdirSync(path.join(work, 'data', 'items'), { recursive: true })
+const shard = path.join(work, 'data', 'items', '2026-11.ndjson')
+writeFileSync(shard, `${JSON.stringify({ id: 'i1', feed: 'a' })}\n${JSON.stringify({ id: 'i2', feed: 'b' })}\n`)
+git('-C', work, 'add', '-A')
+git('-C', work, 'commit', '-m', 'archive')
+ok(git('-C', work, 'status', '--porcelain').trim() === '', 'the archive starts clean')
+// The same rewrite removeFeed does: the feed's rows go, the shard stays.
+writeFileSync(shard, `${JSON.stringify({ id: 'i1', feed: 'a' })}\n`)
+ok(git('-C', work, 'status', '--porcelain').includes('data/items'), 'a rewritten shard shows as dirt')
+const archiveRun = await syncD.runNow({ action: 'sync' })
+ok(archiveRun.ok === true, 'the sync with a rewritten shard settles')
+ok(git('-C', work, 'status', '--porcelain').trim() === '', 'sync stages the item shards and leaves no dirt')
+ok(!git('-C', work, 'show', 'HEAD:data/items/2026-11.ndjson').includes('i2'), 'the removed row is committed')
+
 finish()

@@ -1,7 +1,7 @@
 // Git operations for the reader: state, pull, and the commit/push sync.
 
 import { execFile } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import type { GitActionResult } from './types.js'
@@ -86,6 +86,15 @@ export async function pull(root: string): Promise<GitActionResult> {
   }
 }
 
+/** Whether an item shard directory holds anything worth staging. */
+function hasShards(dir: string): boolean {
+  try {
+    return readdirSync(dir).length > 0
+  } catch {
+    return false
+  }
+}
+
 /**
  * Commit the reader's state files, rebase on the remote, and push.
  *
@@ -107,7 +116,13 @@ export async function sync(root: string): Promise<GitActionResult> {
       hasHead = false
     }
     if (hasHead) {
-      await runGit(root, ['add', '--', 'data/read.ndjson', 'data/starred.ndjson', 'feeds.json', 'config.json'])
+      // Item shards are staged because unsubscribing rewrites them: an
+      // unstated deletion leaves the worktree dirty forever and every later
+      // sync run rebases for a change it will never commit. Only staged when
+      // the archive exists, because a pathspec that matches nothing is fatal.
+      const targets = ['data/read.ndjson', 'data/starred.ndjson', 'feeds.json', 'config.json']
+      if (hasShards(path.join(root, 'data', 'items'))) targets.unshift('data/items')
+      await runGit(root, ['add', '--'].concat(targets))
       for (const extra of ['.gitattributes', '.gitignore']) {
         if (existsSync(path.join(root, extra))) await runGit(root, ['add', '--', extra])
       }

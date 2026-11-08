@@ -155,9 +155,9 @@ data/starred.ndjson    (empty)
   read, star — but `Pull` and `Sync` are disabled, because there is nothing to
   push to.
 - **A git checkout** with an `origin`: `Pull` fetches items and read state from
-  the remote; `Sync` commits `feeds.json`, `config.json`, `data/read.ndjson`,
-  `data/starred.ndjson`, `.gitattributes`, and `.gitignore`, rebases, and
-  pushes. The very first `Sync` of a freshly `git init`-ed directory commits the
+  the remote; `Sync` commits `feeds.json`, `config.json`, `data/items/`,
+  `data/read.ndjson`, `data/starred.ndjson`, `.gitattributes`, and
+  `.gitignore`, rebases, and pushes. The very first `Sync` of a freshly `git init`-ed directory commits the
   whole tree as the baseline and pushes with `-u origin HEAD` when no upstream
   exists yet.
 
@@ -522,6 +522,7 @@ src/host/                   settings, scaffold, store, OPML, XML, fetch, git, ru
 tests/                      behaviour suites, fixtures, and the runner (`pnpm test`)
 docs/jobs.md                runner contract, primitives, and the ratchet
 docs/cloud-sync.md          why the GitHub Actions job was removed, and restoring it
+docs/audit-2026-11-09.md    point-in-time review: bugs, doc drift, and shape findings
 src/client/                 native reader: controller, transport, derivations, viewport, prefs, hooks, components, styles, locales
 src/shared/                 item/feed/state types shared by both halves
 build.mjs                   tsc Host + esbuild Client into the loader envelope
