@@ -10,7 +10,7 @@ import { createFetchJob, createSyncJob } from './jobs.js'
 import { createJobRunner } from './runner.js'
 import type { JobRunner, JobTimers } from './runner.js'
 import { pathsFor, readRepoConfig } from './settings.js'
-import { appendNdjson, listShards, readJson, readNdjson, writeNdjson } from './store.js'
+import { appendNdjson, listShards, readJson, readNdjson, updateNdjson } from './store.js'
 import type { FetchResult, GitActionResult, Logger, ReaderStateData, ReadyState, RepoConfig } from './types.js'
 import type { FeedDefinition } from './types.js'
 import type { GitInfo, Item } from '../shared/types.js'
@@ -331,9 +331,10 @@ export function createGitfeed(options: GitfeedOptions) {
     return serialize(async function () {
       const clean = checkedIds(ids)
       if (clean.length === 0) return 0
-      const rows = await readNdjson<{ id: string }>(file)
-      const have = new Set(rows.map(function (r) { return r.id }))
       if (value) {
+        // Additive, and the append is ordered behind any rewrite of this file:
+        // a row already there is not written twice.
+        const have = new Set((await readNdjson<{ id: string }>(file)).map(function (r) { return r.id }))
         const add: Array<{ id: string }> = []
         for (const id of clean) {
           if (have.has(id)) continue
@@ -343,10 +344,17 @@ export function createGitfeed(options: GitfeedOptions) {
         await appendNdjson(file, add)
         return add.length
       }
+      // Removing filters the rows it reads, so the whole step holds the file's
+      // write queue: a fetch appending between the read and the write would
+      // lose that row.
       const drop = new Set(clean)
-      const kept = rows.filter(function (r) { return !drop.has(r.id) })
-      await writeNdjson(file, kept)
-      return rows.length - kept.length
+      let changed = 0
+      await updateNdjson<{ id: string }>(file, function (rows) {
+        const kept = rows.filter(function (r) { return !drop.has(r.id) })
+        changed = rows.length - kept.length
+        return changed === 0 ? null : kept
+      })
+      return changed
     })
   }
 
@@ -492,9 +500,10 @@ export function createGitfeed(options: GitfeedOptions) {
 
     for (const dir of [paths.items, paths.localItems]) {
       for (const file of await listShards(dir)) {
-        const rows = await readNdjson<{ feed: string } | null>(file)
-        const kept = rows.filter(function (row) { return row && row.feed !== key })
-        if (kept.length !== rows.length) await writeNdjson(file, kept)
+        await updateNdjson<{ feed: string } | null>(file, function (rows) {
+          const kept = rows.filter(function (row) { return row && row.feed !== key })
+          return kept.length === rows.length ? null : kept
+        })
       }
     }
     invalidate()

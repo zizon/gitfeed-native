@@ -11,7 +11,7 @@ import { readdir, unlink } from 'node:fs/promises'
 import { parseFeed } from './xml.js'
 import { pathsFor, readRepoConfig } from './settings.js'
 import { feedIdFor, slug } from './feeds.js'
-import { appendNdjson, ensureDir, listShards, readJson, readNdjson, writeJson, writeNdjson } from './store.js'
+import { appendNdjson, ensureDir, listShards, readJson, readNdjson, updateNdjson, writeJson } from './store.js'
 import type { FeedDefinition, FetchFeedOutcome, FetchResult, RepoConfig } from './types.js'
 import type { FeedEntry, Item } from '../shared/types.js'
 
@@ -222,12 +222,10 @@ async function prune(itemsDir: string, now: Date, keepMonths: number): Promise<n
 async function dropOrphans(itemsDir: string, live: Set<string>): Promise<number> {
   let items = 0
   for (const file of await listShards(itemsDir)) {
-    const rows = await readNdjson<{ feed: string } | null>(file)
-    const kept = rows.filter(function (r) { return r && live.has(r.feed) })
-    if (kept.length !== rows.length) {
-      items += rows.length - kept.length
-      await writeNdjson(file, kept)
-    }
+    items += await updateNdjson<{ feed: string } | null>(file, function (rows) {
+      const kept = rows.filter(function (r) { return r && live.has(r.feed) })
+      return kept.length === rows.length ? null : kept
+    })
   }
   return items
 }
@@ -422,20 +420,21 @@ export async function runFetch(options: FetchOptions): Promise<FetchResult> {
     }
     for (const [month, patch] of byMonth) {
       const file = path.join(itemsDir, `${month}.ndjson`)
-      const rows = await readNdjson<Item | null>(file)
       // A boxed flag: the map callback runs synchronously, but a plain `let`
       // trips the unnecessary-condition rule because TS cannot see the write.
       const applied = { touched: false }
-      const next = rows.map(function (row) {
-        if (!row) return row
-        const summary = patch.get(row.id)
-        if (summary === undefined || summary.length <= (row.summary || '').length) return row
-        applied.touched = true
-        repaired++
-        return Object.assign({}, row, { summary: summary })
+      await updateNdjson<Item | null>(file, function (rows) {
+        const next = rows.map(function (row) {
+          if (!row) return row
+          const summary = patch.get(row.id)
+          if (summary === undefined || summary.length <= (row.summary || '').length) return row
+          applied.touched = true
+          repaired++
+          return Object.assign({}, row, { summary: summary })
+        })
+        return applied.touched ? next : null
       })
       if (!applied.touched) continue
-      await writeNdjson(file, next)
       log(`  repair ${path.relative(root, file)}  ${patch.size} item(s)`)
     }
   }
