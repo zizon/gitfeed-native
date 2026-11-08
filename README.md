@@ -198,9 +198,9 @@ The Host plugin owns one scheduler for every periodic thing the reader does.
 Each job has a base interval and a ceiling: a run that produced something
 (items fetched, state committed or pulled) returns the job to its base
 interval, while a quiet or failing run doubles the interval, up to the
-ceiling. Every deadline is data — `nextAt` in `.local/schedule.json` — and one
-heartbeat a second looks at them: a pass is a comparison, it costs nothing
-when nothing is due, and the Refresh and Sync clocks need no separate timers.
+ceiling. Every deadline is data — `nextAt` in `.local/schedule.json` — and each
+job's wake-up is its own timer: the reader sleeps until something is due, and
+moving a deadline disposes that job's timer and arms the next one.
 
 Two jobs are registered today. A new one implements `available`, `due`, and
 `run` and is registered next to them in `src/host/service.ts`.
@@ -239,20 +239,23 @@ committed, version 2; a version-1 file (the fetch-only format) is read as the
 Refresh job's state. **Fetch** in the reader still fetches everything.
 
 The scheduler's policy is its own; its clock is the Harness's. The plugin
-declares `inject: ['timer']` and starts one `ctx.timer.interval`
-(`@deepseek-ai/cordis-plugin-timer`) on the plugin's fiber: the heartbeat is
-created once, never re-armed, and a reload or dispose stops it with the rest of
-the plugin. Nothing here reimplements delay, cancellation, or unref.
+declares `inject: ['timer']` and takes each job's wake-up from
+`ctx.timer.timeout` (`@deepseek-ai/cordis-plugin-timer`) on the plugin's fiber:
+when a deadline moves, the old timer is disposed and a new one is armed, and a
+reload or dispose cancels whatever is pending with the rest of the plugin. The
+policy is the part the timer service does not have — per-job backoff, per-feed
+clocks, the activity gate, and the stored burst deadline — so it stays here.
 
-The service still cannot replace the policy — it offers timeouts and
-interval/debounce wrappers, not per-job backoff, per-feed clocks, or persisted
-state. Note that `debounce` here is a deadline (`nextAt` in
-`.local/schedule.json`), not a live debouncer: routing the wait through the
-tick keeps the availability and due checks, and a pending sync survives a
-reload. `ctx.schedule` (`@deepseek-ai/dsh-schedule`) is durable and knows Cron
-and RRULE, but every occurrence it delivers becomes an Agent turn in a
-Session, so using it would spend a model call per refresh and drop the
-adaptive, per-feed, activity-gated behaviour above.
+`ctx.timer.interval` is not used: the Refresh job's next run is the earliest
+per-feed clock, not a period. `ctx.timer.debounce` is not used either: it lives
+in memory, would be lost on reload, and cannot express the burst cap. The
+debounce here is therefore a stored deadline (`nextAt`), evaluated by the same
+pass as everything else. `ctx.schedule` (`@deepseek-ai/dsh-schedule`) is
+durable and knows Cron and RRULE, but every occurrence it delivers becomes an
+Agent turn in a Session, so using it would spend a model call per refresh.
+
+The full contract and the primitive-by-primitive rationale are in
+[`docs/scheduler.md`](docs/scheduler.md).
 
 ### GitHub Actions in the data repository
 
@@ -523,6 +526,8 @@ cordis.patch.yml            inserts the `gitfeed` Host row
 src/index.ts                typed Host entry: route, scheduler, tool
 src/cli.ts                  `gitfeed fetch | import-opml | init`
 src/host/                   settings, scaffold, store, OPML, XML, fetch, git, scheduler, jobs, service, HTTP, tool
+tests/                      behaviour suites, fixtures, and the runner (`pnpm test`)
+docs/scheduler.md           scheduler contract, primitives, and the ratchet
 src/client/                 native reader: controller, hooks, components, styles, locales
 src/shared/                 item/feed/state types shared by both halves
 build.mjs                   tsc Host + esbuild Client into the loader envelope
@@ -566,13 +571,20 @@ documented `--dsw-*` tokens.
 
 ### Quality gates
 
-Three gates cover `src/` before a commit:
+Four gates cover a change before a commit:
 
 ```bash
 pnpm build       # tsc Host + esbuild Client into lib/
 pnpm typecheck   # the same tsc passes, no output
+pnpm test        # builds, then runs every suite under tests/
 pnpm lint        # oxlint, including the type-aware rules
 ```
+
+`tests/` holds the behaviour contract in runnable form (see
+[`docs/scheduler.md`](docs/scheduler.md)), the item-model and `/state`
+protocols, the timer-runtime check against a real Harness checkout, and the
+architecture ratchet that keeps a second clock out of the Host half. Suites are
+plain node scripts driven by `tests/run.mjs`; no test framework is installed.
 
 Lint reads the single root `tsconfig.json`, so Host and Client files resolve
 from one project; `pnpm lint:fix` also applies the formatting rules.

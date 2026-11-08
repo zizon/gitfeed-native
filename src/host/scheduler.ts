@@ -1,25 +1,25 @@
 // One adaptive scheduler for every periodic thing the reader does.
 //
 // A job declares a base interval and a ceiling; the scheduler owns the policy,
-// not the clock. Every heartbeat it looks at each job, skips jobs the reader
-// has not touched recently when the job asks for that, runs what is due, and
-// folds each result back into that job's interval: a run that produced
-// something returns the job to its base interval, while a quiet or failing run
-// doubles it, up to the ceiling. A job can also return its own
-// `nextAt` (the fetch job keeps one clock per feed), and `debounce` waits out a
-// burst of local changes before running, which is how a read mark turns into a
-// sync about twenty seconds after the last mark instead of one commit per mark.
+// and the Host's timer service owns the clock. Each job carries its own
+// wake-up: when its deadline changes the previous timer is disposed and a new
+// one is armed through `ctx.timer`, so the reader wakes exactly when a job is
+// due and sleeps otherwise. There is no heartbeat, no wake arithmetic shared
+// across jobs, and no timer the scheduler keeps for itself.
 //
-// The clock is the Host's timer service (`ctx.timer`): one interval heartbeat,
-// started once and owned by the plugin's fiber, and no other timer anywhere.
-// Every deadline is data in `.local/schedule.json`, so a pass is a comparison
-// and a pass costs nothing when nothing is due. There is no wake-up arithmetic
-// to get wrong, nothing to re-arm on every request, and nothing to unref: a
-// reload or a dispose kills the heartbeat with the rest of the plugin.
+// A pass folds its result back into the job's interval: a run that produced
+// something returns the job to its base interval, while a quiet or failing run
+// doubles it, up to the ceiling. A job can also return its own `nextAt` (the
+// fetch job keeps one clock per feed), and `debounce` moves a job's deadline
+// out to the end of a burst of local changes -- which is how a read mark turns
+// into a sync about twenty seconds after the last mark instead of one commit
+// per mark.
 //
 // The state is machine-local (`.local/schedule.json`): restarts keep the
-// clocks without committing them to the data repository, and version 1 -- the
-// fetch-only file -- is read as the fetch job's per-feed payload.
+// deadlines without committing them to the data repository, and version 1 --
+// the fetch-only file -- is read as the fetch job's per-feed payload. A timer
+// is only ever derived from that state, so losing it to a reload loses no
+// work: the next mount arms every job again from the same numbers.
 
 import type { Logger } from './types.js'
 import type { ScheduleJobInfo, ScheduleJobRun } from '../shared/types.js'
@@ -88,14 +88,14 @@ export interface Scheduler {
   register(job: ScheduledJob): void
   start(): void
   stop(): void
-  /** One scheduling pass; also the test entry point. */
+  /** Evaluate every job now, ignoring its armed timer; also the test entry point. */
   tick(): Promise<void>
   /** Run a job now, whatever its clocks say (the manual buttons). */
   runNow(id: string, scope?: unknown): Promise<JobRunResult>
   /**
-   * Wait for a burst of changes to settle: each call moves the next run to
-   * `now + delayMs`, but never past `capMs` after the burst began. A job that
-   * is already failing keeps its backoff instead of being retried sooner.
+   * Wait for a burst of changes to settle: each call moves the job's deadline
+   * to `now + delayMs`, but never past `capMs` after the burst began. A job
+   * that is already failing keeps its backoff instead of being retried sooner.
    */
   debounce(id: string, delayMs: number, capMs: number): void
   touch(): void
@@ -104,13 +104,13 @@ export interface Scheduler {
 
 /**
  * The timer surface the scheduler runs on. The Harness `TimerService` backs it
- * (`ctx.timer`, `@deepseek-ai/cordis-plugin-timer`): the heartbeat is an
- * interval owned by the plugin's fiber, so it starts once and dies with the
- * plugin. The scheduler keeps no timers of its own.
+ * (`ctx.timer`, `@deepseek-ai/cordis-plugin-timer`): each job's wake-up is one
+ * timeout owned by the plugin's fiber, so a reload or dispose clears whatever
+ * is pending with the rest of the plugin. Nothing here reimplements a clock.
  */
 export interface SchedulerTimers {
-  /** Call `callback` every `delayMs`; the returned disposer stops it. */
-  interval(callback: () => void, delayMs: number): () => void
+  /** Run `callback` once after `delayMs`; the returned disposer cancels it. */
+  timeout(callback: () => void, delayMs: number): () => void
 }
 
 export interface SchedulerOptions {
@@ -118,7 +118,7 @@ export interface SchedulerOptions {
   logger: Logger
   /** Reader inactivity after which an activity-gated job pauses. */
   idleMinutes: number
-  /** The heartbeat: the Harness timer service, or a test double. */
+  /** The timers each job arms: the Harness timer service, or a test double. */
   timers: SchedulerTimers
   /** Called after a run or a manual fold, so caches keyed on data files drop. */
   onRun?: (jobId: string) => void
@@ -126,13 +126,9 @@ export interface SchedulerOptions {
   now?: () => number
 }
 
-/**
- * How often the scheduler looks at its jobs. A pass compares the clock against
- * persisted deadlines and runs what is due, so this is the only timer in the
- * reader and it is cheap enough to be the whole clock: no re-arming, and a
- * stored deadline is honoured within one heartbeat.
- */
-export const HEARTBEAT_MS = 1000
+/** A job that asks to rerun immediately still waits this long, so a stalled
+ * clock or a nextAt in the past cannot spin the reader. */
+const MIN_RERUN_MS = 1000
 
 interface JobState {
   intervalMin: number
@@ -150,6 +146,10 @@ interface RuntimeJob {
   running: boolean
   queued: number
   chain: Promise<void>
+  /** Cancels this job's armed wake-up. */
+  wake: (() => void) | null
+  /** The reader was away when the deadline passed; `touch` arms the job again. */
+  idleSleep: boolean
   /** Start of the current debounce window, in epoch milliseconds. */
   debounceSince: number
 }
@@ -253,7 +253,7 @@ async function readScheduleFile(root: string): Promise<PersistedSchedule> {
 
 /**
  * Create the reader's scheduler.
- * @param options root, logger, idle window, and an optional clock.
+ * @param options root, logger, idle window, timers, and an optional clock.
  * @returns the scheduler surface the Host service drives.
  */
 export function createScheduler(options: SchedulerOptions): Scheduler {
@@ -265,9 +265,6 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
   let loaded: Promise<void> | null = null
   let started = false
   let stopped = false
-  let ticking = false
-  /** Stops the heartbeat; owned by the timer service's fiber. */
-  let heartbeat: (() => void) | null = null
   let lastActivity = clock()
   let writing: Promise<void> = Promise.resolve()
 
@@ -338,9 +335,56 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
     return writing
   }
 
+  /** Whether the reader has been away long enough for an activity-gated job. */
   function paused(job: ScheduledJob, now: number): boolean {
     const gate = job.activeWithinMin ?? 0
     return gate > 0 && now - lastActivity > gate * 60000
+  }
+
+  function disarm(runtime: RuntimeJob): void {
+    if (runtime.wake) {
+      runtime.wake()
+      runtime.wake = null
+    }
+  }
+
+  /**
+   * Arm this job's own wake-up for the deadline in its state. A paused job
+   * holds no timer at all: the deadline would only be skipped, and `touch`
+   * arms it again the moment the reader is back.
+   */
+  function arm(runtime: RuntimeJob): void {
+    disarm(runtime)
+    if (stopped) return
+    const now = clock()
+    if (paused(runtime.job, now)) {
+      runtime.idleSleep = true
+      return
+    }
+    runtime.idleSleep = false
+    const state = stateFor(runtime.job)
+    const delay = Math.max(0, state.nextAt - now)
+    runtime.wake = options.timers.timeout(function () {
+      runtime.wake = null
+      fire(runtime)
+    }, delay)
+  }
+
+  /** A deadline came due: run one pass, then arm the next deadline. */
+  function fire(runtime: RuntimeJob): void {
+    if (stopped) return
+    if (runtime.running || runtime.queued > 0) return
+    runtime.queued += 1
+    const task = function (): Promise<void> {
+      return pass(runtime)
+    }
+    const run = runtime.chain.then(task, task)
+    runtime.chain = run.then(function () { }, function () { })
+    void run.then(settle, settle)
+    function settle(): void {
+      runtime.queued -= 1
+      if (!stopped) arm(runtime)
+    }
   }
 
   function applyOutcome(job: ScheduledJob, state: JobState, outcome: JobOutcome, now: number): void {
@@ -356,9 +400,7 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
     state.lastRunAt = now
     if (!failed) state.lastOkAt = now
     const nextAt = numberOr(outcome.nextAt, 0)
-    // Never sooner than one beat: the pass that produced this outcome is the
-    // current one, and the next pass can only come from the heartbeat.
-    state.nextAt = nextAt > 0 ? Math.max(now + HEARTBEAT_MS, nextAt) : now + intervalMin * 60000
+    state.nextAt = nextAt > 0 ? Math.max(now + MIN_RERUN_MS, nextAt) : now + intervalMin * 60000
     state.last = {
       at: new Date(now).toISOString(),
       ok: !failed,
@@ -394,55 +436,62 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
     }
   }
 
-  async function tick(): Promise<void> {
-    if (isStopped() || ticking) return
-    ticking = true
+  /** One evaluation of one job: everything except the timer bookkeeping. */
+  async function pass(runtime: RuntimeJob): Promise<void> {
+    const job = runtime.job
     try {
       await ensureLoaded()
       if (isStopped()) return
-      for (const runtime of Array.from(jobs.values())) {
-        if (isStopped()) break
-        if (runtime.running || runtime.queued > 0) continue
-        const job = runtime.job
-        const now = clock()
-        const state = stateFor(job)
-        if (paused(job, now)) continue
-        if (!(state.nextAt <= now)) continue
-        const base = Math.max(1, Math.round(job.baseMin))
-        let availability: { ok: boolean; reason?: string }
-        try {
-          availability = await job.available()
-        } catch (err) {
-          logger.warn(`gitfeed: could not check ${job.id}: ${errorText(err)}`)
-          state.nextAt = now + base * 60000
-          continue
-        }
-        if (!availability.ok) {
-          state.nextAt = now + base * 60000
-          continue
-        }
-        let decision: DueDecision
-        try {
-          decision = await job.due(now, state.data)
-        } catch (err) {
-          logger.warn(`gitfeed: could not check ${job.id}: ${errorText(err)}`)
-          state.nextAt = now + base * 60000
-          continue
-        }
-        if (!decision.run) {
-          const nextAt = numberOr(decision.nextAt, 0)
-          state.nextAt = nextAt > 0 ? nextAt : now + base * 60000
-          continue
-        }
-        await execute(runtime, now, undefined)
+      const now = clock()
+      const state = stateFor(job)
+      if (paused(job, now)) {
+        runtime.idleSleep = true
+        return
       }
-    } finally {
-      ticking = false
+      runtime.idleSleep = false
+      if (!(state.nextAt <= now)) return
+      const base = Math.max(1, Math.round(job.baseMin))
+      let availability: { ok: boolean; reason?: string }
+      try {
+        availability = await job.available()
+      } catch (err) {
+        logger.warn(`gitfeed: could not check ${job.id}: ${errorText(err)}`)
+        state.nextAt = now + base * 60000
+        return
+      }
+      if (!availability.ok) {
+        state.nextAt = now + base * 60000
+        return
+      }
+      let decision: DueDecision
+      try {
+        decision = await job.due(now, state.data)
+      } catch (err) {
+        logger.warn(`gitfeed: could not check ${job.id}: ${errorText(err)}`)
+        state.nextAt = now + base * 60000
+        return
+      }
+      if (!decision.run) {
+        const nextAt = numberOr(decision.nextAt, 0)
+        state.nextAt = nextAt > 0 ? nextAt : now + base * 60000
+        return
+      }
+      await execute(runtime, now, undefined)
+    } catch (err) {
+      logger.warn(`gitfeed: ${job.id} pass failed: ${errorText(err)}`)
     }
   }
 
   function register(job: ScheduledJob): void {
-    jobs.set(job.id, { job: job, running: false, queued: 0, chain: Promise.resolve(), debounceSince: 0 })
+    jobs.set(job.id, {
+      job: job,
+      running: false,
+      queued: 0,
+      chain: Promise.resolve(),
+      wake: null,
+      idleSleep: false,
+      debounceSince: 0,
+    })
   }
 
   function start(): void {
@@ -450,19 +499,36 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
     started = true
     stopped = false
     lastActivity = clock()
-    // One timer for the whole reader, owned by the caller's fiber. `tick` is
-    // idempotent and guarded, so a slow pass simply makes the next beat a
-    // no-op instead of stacking work.
-    heartbeat = options.timers.interval(function () { void tick() }, HEARTBEAT_MS)
-    void tick()
+    void (async function () {
+      await ensureLoaded()
+      for (const runtime of Array.from(jobs.values())) {
+        if (isStopped()) return
+        if (runtime.running || runtime.queued > 0) continue
+        await pass(runtime)
+        if (!isStopped()) arm(runtime)
+      }
+    })()
   }
 
   function stop(): void {
     started = false
     stopped = true
-    if (heartbeat) {
-      heartbeat()
-      heartbeat = null
+    for (const runtime of jobs.values()) {
+      disarm(runtime)
+      runtime.idleSleep = false
+    }
+  }
+
+  /** Evaluate every job now, whether its deadline says so or not. */
+  async function tick(): Promise<void> {
+    if (isStopped()) return
+    await ensureLoaded()
+    if (isStopped()) return
+    for (const runtime of Array.from(jobs.values())) {
+      if (isStopped()) break
+      if (runtime.running || runtime.queued > 0) continue
+      await pass(runtime)
+      if (!isStopped()) arm(runtime)
     }
   }
 
@@ -470,6 +536,7 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
     const runtime = jobs.get(id)
     if (!runtime) throw new Error(`gitfeed: no scheduled job ${id}`)
     await ensureLoaded()
+    disarm(runtime)
     runtime.queued += 1
     const task = function (): Promise<JobRunResult> {
       return execute(runtime, clock(), scope)
@@ -480,6 +547,7 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
       return await run
     } finally {
       runtime.queued -= 1
+      if (!stopped) arm(runtime)
     }
   }
 
@@ -494,11 +562,15 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
     // A deadline, not a live debouncer: the burst cap is a property of the
     // job's stored state, so a reload in the middle of a burst still syncs.
     const limit = runtime.debounceSince + Math.max(0, capMs)
-    state.nextAt = Math.max(now + HEARTBEAT_MS, Math.min(now + Math.max(0, delayMs), limit))
+    state.nextAt = Math.max(now + MIN_RERUN_MS, Math.min(now + Math.max(0, delayMs), limit))
+    arm(runtime)
   }
 
   function touch(): void {
     lastActivity = clock()
+    for (const runtime of jobs.values()) {
+      if (runtime.idleSleep) arm(runtime)
+    }
   }
 
   async function status(): Promise<ScheduleJobInfo[]> {
