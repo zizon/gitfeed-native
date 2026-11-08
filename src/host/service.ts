@@ -232,16 +232,23 @@ export function createGitfeed(options: GitfeedOptions) {
     const meta: Record<string, MetaEntry | undefined> = {}
     const metaIds = new Set(Object.keys(dataMeta).concat(Object.keys(localMeta)))
     for (const id of metaIds) {
-      const d = dataMeta[id] || {}
-      const l = localMeta[id] || {}
-      const latest = (l.checkedAt || '') > (d.checkedAt || '') ? l : d
+      const d: MetaEntry = dataMeta[id] || {}
+      const l: MetaEntry = localMeta[id] || {}
+      // The store whose check ran last describes the feed: the plugin fetches
+      // into the cache, so preferring the committed copy meant an upstream
+      // rename could never reach the sidebar. Fields it cannot fill fall back to
+      // the other store, but an absent error stays absent — a later successful
+      // check is what clears a failure.
+      const localWins = (l.checkedAt || '') > (d.checkedAt || '')
+      const newer: MetaEntry = localWins ? l : d
+      const older: MetaEntry = localWins ? d : l
       meta[id] = {
-        title: d.title || l.title || null,
-        folder: d.folder || l.folder || null,
-        siteUrl: d.siteUrl || l.siteUrl || null,
-        url: d.url || l.url || null,
-        lastError: latest.lastError || d.lastError || l.lastError || null,
-        checkedAt: latest.checkedAt || d.checkedAt || l.checkedAt || null,
+        title: newer.title || older.title || null,
+        folder: newer.folder || older.folder || null,
+        siteUrl: newer.siteUrl || older.siteUrl || null,
+        url: newer.url || older.url || null,
+        lastError: newer.lastError || null,
+        checkedAt: newer.checkedAt || older.checkedAt || null,
       }
     }
 

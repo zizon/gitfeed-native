@@ -1,5 +1,7 @@
 // The split item model: a stable itemsVersion, a payload that omits unchanged
 // rows, deterministic ordering, and no reshuffle when a mark lands.
+import { mkdirSync, writeFileSync } from 'node:fs'
+import path from 'node:path'
 import { appendItem, makeDataRoot, removeRoot, sampleLibrary } from './fixtures.mjs'
 import { finish, nodeTimers, ok } from './harness.mjs'
 import { createGitfeed } from '../lib/host/service.js'
@@ -91,6 +93,23 @@ ok(
   'a repaired copy in the cache wins over the committed one',
   mergedRow && mergedRow.summary.length,
 )
+
+// The two meta stores describe the same feeds. The one whose check ran last
+// wins, because the plugin fetches into the cache: preferring the committed
+// copy meant a rename upstream could never reach the sidebar.
+const metaDir = path.join(root, '.local')
+mkdirSync(metaDir, { recursive: true })
+writeFileSync(path.join(root, 'data', 'meta.json'), `${JSON.stringify({
+  'feed-a': { title: 'Old name', lastError: 'HTTP 500', checkedAt: '2026-01-01T00:00:00.000Z' },
+})}\n`)
+writeFileSync(path.join(metaDir, 'meta.json'), `${JSON.stringify({
+  'feed-a': { title: 'New name', siteUrl: 'https://new.example/', checkedAt: '2026-02-01T00:00:00.000Z' },
+})}\n`)
+const named = await service.getState(null, null)
+const feedA = named.feeds.find((feed) => feed.id === 'feed-a')
+ok(feedA !== undefined && feedA.title === 'New name', 'the store checked last names the feed', feedA && feedA.title)
+ok(feedA !== undefined && feedA.siteUrl === 'https://new.example/', 'and brings the fields only it has', feedA && feedA.siteUrl)
+ok(feedA !== undefined && feedA.error === null, 'a recovered feed is not painted with the old failure', feedA && feedA.error)
 
 const listed = await service.listForTool({ limit: 3 })
 ok(listed.items.length === 3, 'the agent tool still lists rows')
