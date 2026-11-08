@@ -63,6 +63,8 @@ export interface Controller {
   escape(): void;
   markAll(): void;
   markGroup(key: string): void;
+  markFeed(feedId: string): void;
+  markFolder(folder: string): void;
   setGroupBy(value: string): void;
   setHideEmpty(value: boolean): void;
   setMarkOnScroll(value: boolean): void;

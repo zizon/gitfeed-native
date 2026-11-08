@@ -399,6 +399,30 @@ export function createController(t: Translate): Controller {
     toast(tf(t, 'toast.marked', { n: unread }))
   }
 
+  /** Every unread item of one source, whatever the list filter is showing. */
+  function markFeed(feedId: string): void {
+    const ids = state.items
+      .filter(function (item) { return item.feed === feedId && !state.read.has(item.id) })
+      .map(function (item) { return item.id })
+    if (!ids.length) return
+    mark(ids, true)
+    bumpList()
+    toast(tf(t, 'toast.marked', { n: ids.length }))
+  }
+
+  /** Every unread item of one folder, whatever the list filter is showing. */
+  function markFolder(folder: string): void {
+    const ids = state.items
+      .filter(function (item) {
+        return !state.read.has(item.id) && feedFolderOf(item.feed) === folder
+      })
+      .map(function (item) { return item.id })
+    if (!ids.length) return
+    mark(ids, true)
+    bumpList()
+    toast(tf(t, 'toast.marked', { n: ids.length }))
+  }
+
   function setGroupBy(value: string): void {
     const next = value === 'folder' || value === 'feed' ? value : 'none'
     writeStorage(LS.groupBy, next)
@@ -560,6 +584,8 @@ export function createController(t: Translate): Controller {
     escape: escape,
     markAll: markAll,
     markGroup: markGroup,
+    markFeed: markFeed,
+    markFolder: markFolder,
     setGroupBy: setGroupBy,
     setHideEmpty: setHideEmpty,
     setMarkOnScroll: setMarkOnScroll,

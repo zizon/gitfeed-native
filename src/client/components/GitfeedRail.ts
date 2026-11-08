@@ -5,6 +5,7 @@ import { Chevron } from "../icons.js";
 import { DEFAULT_LIST } from "../constants.js";
 import { useElementWidth, useKeyboard, useMount, useOutsideClose, useReader } from "../hooks.js";
 import { tf } from "../locales.js";
+import { fmtTime } from "../util.js";
 import type { ClientState, GitfeedRailProps } from "../types.js";
 import type { Controller } from "../types.js";
 import type { Translate } from "../locales.js";
@@ -12,7 +13,7 @@ import { clamp } from "../util.js";
 import { Article } from "./Article.js";
 import { FeedRail } from "./FeedRail.js";
 import { ItemList } from "./ItemList.js";
-import { DisplayPrefs, EmptyArticle, ErrorState, FilterTabs, SearchBox, Toasts } from "./Shared.js";
+import { DisplayPrefs, EmptyArticle, ErrorState, FilterTabs, RefreshState, SearchBox, Toasts } from "./Shared.js";
 
 function RailMenu({ state, controller, t, onClose }: {
   state: ClientState;
@@ -38,6 +39,19 @@ function RailMenu({ state, controller, t, onClose }: {
       type: "button", className: "gf-menu-row", disabled: !!state.busy.sync || !state.allowGit || !state.git || !state.git.repo,
       onClick: function () { controller.runAction("sync"); onClose(); }
     }, t("action.sync")),
+    h("div", { className: "gf-menu-sep" }),
+    h("div", { className: "gf-menu-label" }, t("menu.refresh")),
+    h("div", { className: "gf-menu-repo" },
+      state.localFetch && state.localFetch.enabled
+        ? tf(t, "status.autoEvery", { n: Math.max(1, Math.round(state.localFetch.intervalMs / 60000)) })
+        : t("status.autoOff")),
+    state.localFetch
+      ? h("div", { className: "gf-menu-repo" },
+        (state.localFetch.running ? t("status.running") : t("status.lastRefresh") + ": " + (state.localFetch.lastRunAt ? fmtTime(state.localFetch.lastRunAt) : t("status.never")))
+        + (state.localFetch.last && !state.localFetch.running
+          ? " · " + tf(t, "status.fetchLine", { fresh: state.localFetch.last.fresh, failed: state.localFetch.last.failed })
+          : ""))
+      : null,
     h("div", { className: "gf-menu-sep" }),
     h("div", { className: "gf-menu-label" }, t("menu.repo")),
     h("div", { className: "gf-menu-repo" }, state.repo || "~"),
@@ -93,8 +107,12 @@ export function GitfeedRail({ controller, t, useTabInfo }: GitfeedRailProps) {
       h("span", { className: "name" }, feedLabel),
       h(Chevron, { open: feedsOpen })),
       h("button", {
-        type: "button", className: "gf-icon-btn", title: t("action.fetch"), "aria-label": t("action.fetch"),
-        disabled: !!state.busy.fetch, onClick: function () { controller.runAction("fetch"); }
+        type: "button",
+        className: "gf-icon-btn" + (state.busy.fetch || (state.localFetch && state.localFetch.running) ? " spin" : ""),
+        title: state.localFetch && state.localFetch.running ? t("status.running") : t("action.fetch"),
+        "aria-label": t("action.fetch"),
+        disabled: !!state.busy.fetch || !!(state.localFetch && state.localFetch.running),
+        onClick: function () { controller.runAction("fetch"); }
       }, "↻"),
       h("button", {
         type: "button", className: "gf-icon-btn", title: t("action.more"), "aria-label": t("action.more"),
@@ -103,7 +121,8 @@ export function GitfeedRail({ controller, t, useTabInfo }: GitfeedRailProps) {
       }, "⋯")),
     h("div", { className: "gf-rail-bar2" },
       h(FilterTabs, { filter: state.filter, controller: controller, t: t, compact: true }),
-      h(SearchBox, { controller: controller, t: t, value: state.query, inputRef: searchRef, compact: true })),
+      h(SearchBox, { controller: controller, t: t, value: state.query, inputRef: searchRef, compact: true }),
+      h(RefreshState, { state: state, t: t })),
     state.loadError ? h("div", { className: "gf-banner" }, tf(t, "status.banner", { error: state.loadError })) : null,
     state.status === "error" && !state.items.length
       ? h(ErrorState, { state: state, controller: controller, t: t })

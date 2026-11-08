@@ -1,6 +1,6 @@
 {
   "name": "gitfeed-native",
-  "version": "2.1.3",
+  "version": "2.1.4",
   "private": true,
   "type": "module",
   "description": "Git-backed RSS reader as a native DeepSeek Harness bundle: reader page, refresh schedule, git sync, and an agent tool. The package is code only; the data lives in a separate gitfeed data repository.",

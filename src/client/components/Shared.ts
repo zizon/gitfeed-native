@@ -125,9 +125,12 @@ export function GitStatus({ state, t }: { state: ClientState; t: Translate }) {
     else if (git.dirty) nodes.push(h("span", { key: "dirty", className: "gf-warn" }, t("status.dirty")));
   }
   if (local && local.enabled) {
+    const detail = [t("status.lastRefresh") + ": " + (local.lastRunAt ? fmtTime(local.lastRunAt) : t("status.never"))];
+    if (local.last) detail.push(tf(t, "status.fetchLine", { fresh: local.last.fresh, failed: local.last.failed }));
     nodes.push(h("span", {
       key: "auto",
-      title: t("status.lastRefresh") + ": " + (local.lastRunAt ? fmtTime(local.lastRunAt) : t("status.never"))
+      className: local.last && local.last.code !== 0 ? "gf-warn" : undefined,
+      title: detail.join(" · ")
     }, "↻ " + Math.max(1, Math.round(local.intervalMs / 60000)) + "m"));
   }
   if (local && local.running) nodes.push(h("span", { key: "running", className: "gf-muted" }, t("status.running")));
@@ -154,6 +157,28 @@ export function ErrorState({ state, controller, t }: {
     h("p", null, state.error),
     state.repo ? h("p", { className: "gf-muted" }, state.repo) : null,
     h("button", { type: "button", className: "gf-btn primary", onClick: function () { controller.load({ force: true }); } }, t("action.retry")));
+}
+
+/** Compact background-refresh indicator: age of the last run, and a warn tint when it failed. */
+export function RefreshState({ state, t }: { state: ClientState; t: Translate }) {
+  const local = state.localFetch;
+  if (!local || !local.enabled) return null;
+  const run = local.last;
+  // Partial failures stay quiet: the Feeds list marks those rows and the
+  // tooltip carries the counts. Only a run where every feed failed is an alarm.
+  const broken = run ? run.code !== 0 : false;
+  const age = local.lastRunAt ? fmtTime(local.lastRunAt) : t("status.never");
+  const title = [
+    tf(t, "status.autoEvery", { n: Math.max(1, Math.round(local.intervalMs / 60000)) }),
+    t("status.lastRefresh") + ": " + age,
+    run ? tf(t, "status.fetchLine", { fresh: run.fresh, failed: run.failed }) : ""
+  ].filter(Boolean).join(" · ");
+  return h("span", {
+    className: "gf-refresh-state" + (local.running ? " running" : broken ? " warn" : ""),
+    title: title,
+    "aria-label": title,
+    role: "status"
+  }, local.running ? "⟳ …" : "⟳ " + age);
 }
 
 export function EmptyArticle({ state, t }: { state: ClientState; t: Translate }) {

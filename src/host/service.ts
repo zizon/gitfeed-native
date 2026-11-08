@@ -61,6 +61,7 @@ export function createGitfeed(options) {
   let fetchChain = Promise.resolve();
   let fetchRunning = false;
   let lastFetchAt = 0;
+  let lastRun = null;
   let lastActivity = Date.now();
   let disposed = false;
   let stopScheduler = null;
@@ -119,7 +120,8 @@ export function createGitfeed(options) {
       enabled: refreshMinutes > 0,
       intervalMs: refreshMinutes * 60000,
       lastRunAt: lastFetchAt ? new Date(lastFetchAt).toISOString() : null,
-      running: fetchRunning
+      running: fetchRunning,
+      last: lastRun
     };
   }
 
@@ -309,6 +311,13 @@ export function createGitfeed(options) {
       try {
         const result = await runFetch({ root: root, dataDir: ".local", only: only });
         lastFetchAt = Date.now();
+        lastRun = {
+          at: new Date(lastFetchAt).toISOString(),
+          summary: result.summary,
+          fresh: result.fresh,
+          failed: result.failed,
+          code: result.code
+        };
         invalidate();
         return result;
       } finally {

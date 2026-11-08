@@ -47,6 +47,9 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
   const lastTop = useRef(0);
   /** Scroll offset this surface moved to on its own, which must not mark anything. */
   const programmatic = useRef<number | null>(null);
+  /** First click arms the list-wide "mark read" action; the second one runs it. */
+  const [armed, setArmed] = useState(false);
+  const armedTimer = useRef(0);
 
   const entries = useMemo<Entry[]>(function () {
     if (groupBy === "none") {
@@ -221,12 +224,31 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
 
   const count = list.length;
   const paneClass = "gf-listpane" + (wide ? " wide" : "") + (showDigest ? "" : " rows-plain");
+  const markScope = state.feedId
+    ? t("action.markSource")
+    : state.query.trim() ? t("action.markResults") : t("action.markAll");
+  function markAllClick() {
+    if (!count) return;
+    if (!armed) {
+      setArmed(true);
+      if (armedTimer.current) clearTimeout(armedTimer.current);
+      armedTimer.current = window.setTimeout(function () {
+        armedTimer.current = 0;
+        setArmed(false);
+      }, 5000);
+      return;
+    }
+    if (armedTimer.current) clearTimeout(armedTimer.current);
+    armedTimer.current = 0;
+    setArmed(false);
+    controller.markAll();
+  }
   const header = h("div", { className: "gf-listbar" },
     h("span", { className: "gf-count-label" }, tf(t, "items.count", { n: count })),
     h("button", {
-      type: "button", className: "gf-linkbtn", disabled: !count,
-      onClick: function () { controller.markAll(); }
-    }, t("action.markAll")));
+      type: "button", className: "gf-linkbtn" + (armed ? " armed" : ""), disabled: !count,
+      onClick: markAllClick
+    }, armed ? tf(t, "action.markAllConfirm", { n: count }) : markScope));
 
   if (state.status === "loading" && !state.items.length) {
     return h("div", { className: paneClass }, header, h("div", { className: "gf-empty" }, t("status.loading")));

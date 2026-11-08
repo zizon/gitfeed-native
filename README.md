@@ -45,6 +45,18 @@ digest of the summary, so a list can be skimmed and skipped without opening
 every article. Display prefs turn the digest off (rows then use the shorter
 two-line height); the choice is stored per browser.
 
+Marking read: the list header names its scope (**Mark all read**, **Mark source
+read** when a feed is selected, **Mark results read** when searching) and needs
+a second click to run, so a stray one cannot wipe the list. The Feeds list
+marks one source with the ✓ that appears on hover, and a folder header marks
+that whole folder.
+
+Background refresh: the rail's second bar ends with the age of the last run
+(`⟳ 2m`; it pulses while a run is in flight and the Fetch button spins then),
+and the ⋯ menu's **Refresh** block shows the interval and the last result
+(`0 new · 35 failed`). The main page's status line carries the same detail in
+its tooltip.
+
 ## Where it lives in the Harness UI
 
 | surface | how to reach it |

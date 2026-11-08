@@ -148,6 +148,11 @@ export function FeedRail({ state, controller, t, compact, onPick }: FeedRailProp
       h("span", { className: "name" }, feed.title),
       feed.error ? h("span", { className: "gf-dot-error", title: feed.error }, "!") : null,
       h("span", { className: "count" }, String(count || "")),
+      count ? h("button", {
+        type: "button", className: "gf-feed-check", title: t("action.markSource"),
+        "aria-label": t("action.markSource") + ": " + feed.title,
+        onClick: function (event: any) { event.stopPropagation(); controller.markFeed(feed.id); }
+      }, "✓") : null,
       h("button", {
         type: "button", className: "gf-feed-x", title: t("action.remove"),
         "aria-label": t("action.remove") + ": " + feed.title,
@@ -165,6 +170,11 @@ export function FeedRail({ state, controller, t, compact, onPick }: FeedRailProp
       },
       h(Chevron, { open: open }),
       h("span", { className: "gf-folder-name" }, name),
+      unread ? h("button", {
+        type: "button", className: "gf-feed-check", title: t("action.markFolder"),
+        "aria-label": t("action.markFolder") + ": " + name,
+        onClick: function (event: any) { event.stopPropagation(); controller.markFolder(name); }
+      }, "✓") : null,
       h("span", { className: "count" }, String(unread || ""))),
       open ? children : null));
   }

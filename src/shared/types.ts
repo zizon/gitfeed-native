@@ -38,11 +38,20 @@ export interface GitInfo {
   error?: string;
 }
 
+export interface LocalFetchRun {
+  at: string;
+  summary: string;
+  fresh: number;
+  failed: number;
+  code: number;
+}
+
 export interface LocalFetchInfo {
   enabled: boolean;
   intervalMs: number;
   lastRunAt: string | null;
   running: boolean;
+  last: LocalFetchRun | null;
 }
 
 /** The state payload `/gitfeed/api/state` returns (full or compact). */
