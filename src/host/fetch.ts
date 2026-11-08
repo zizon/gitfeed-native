@@ -101,63 +101,64 @@ async function fetchOne(feed: FeedDefinition, prev: FeedMeta | undefined, now: D
 
   const controller = new AbortController()
   const timer = setTimeout(function () { controller.abort() }, settings.fetch.timeoutMs)
-  let res
+  // The deadline spans the body as well as the headers: a server that answers
+  // and then stalls must not hold this feed's slot until the socket gives up.
   try {
-    res = await fetch(feed.url, { headers: headers, redirect: 'follow', signal: controller.signal })
+    const res = await fetch(feed.url, { headers: headers, redirect: 'follow', signal: controller.signal })
+
+    if (res.status === 304) {
+      return {
+        notModified: true,
+        meta: Object.assign({}, prev, { checkedAt: now.toISOString(), status: 304 }),
+      }
+    }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+
+    const body = await res.text()
+    if (!parseXml(body)) throw new Error('response is not an XML feed')
+
+    const parsed = parseFeed(body)
+    if (parsed.items.length === 0) throw new Error('no items in feed')
+
+    const seen = new Set<string>()
+    const items: Item[] = []
+    // Zero is the default and keeps the feed's body whole; a positive setting is
+    // a deliberate cap for archives that must stay small.
+    const cap = settings.fetch.maxSummaryChars
+    for (let i = 0; i < parsed.items.length; i++) {
+      const it = parsed.items[i]
+      const key = it.guid || it.link || (`${it.title}|${it.date}`)
+      if (!key || seen.has(key)) continue
+      seen.add(key)
+      // Feeds without dates would otherwise all land on the same timestamp.
+      // Cascade them by feed position, newest first.
+      const date = parseDate(it.date, now) || new Date(now.getTime() - i * 60000)
+      items.push({
+        id: itemId(feed.id, key),
+        feed: feed.id,
+        title: (it.title || '(untitled)').slice(0, 300),
+        link: it.link || '',
+        date: date.toISOString(),
+        // Some feeds put a profile URL in <author>; it renders as noise.
+        author: (it.author || '').replace(/https?:\/\/\S+/gi, '').replace(/\s+/g, ' ').trim().slice(0, 120),
+        summary: cap > 0 ? (it.summary || '').slice(0, cap) : (it.summary || ''),
+      })
+    }
+
+    return {
+      items: items,
+      meta: {
+        title: parsed.title || feed.title || feed.id,
+        folder: feed.folder || null,
+        siteUrl: parsed.siteUrl || null,
+        etag: res.headers.get('etag') || null,
+        lastModified: res.headers.get('last-modified') || null,
+        checkedAt: now.toISOString(),
+        status: res.status,
+      },
+    }
   } finally {
     clearTimeout(timer)
-  }
-
-  if (res.status === 304) {
-    return {
-      notModified: true,
-      meta: Object.assign({}, prev, { checkedAt: now.toISOString(), status: 304 }),
-    }
-  }
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
-
-  const body = await res.text()
-  if (!parseXml(body)) throw new Error('response is not an XML feed')
-
-  const parsed = parseFeed(body)
-  if (parsed.items.length === 0) throw new Error('no items in feed')
-
-  const seen = new Set<string>()
-  const items: Item[] = []
-  // Zero is the default and keeps the feed's body whole; a positive setting is
-  // a deliberate cap for archives that must stay small.
-  const cap = settings.fetch.maxSummaryChars
-  for (let i = 0; i < parsed.items.length; i++) {
-    const it = parsed.items[i]
-    const key = it.guid || it.link || (`${it.title}|${it.date}`)
-    if (!key || seen.has(key)) continue
-    seen.add(key)
-    // Feeds without dates would otherwise all land on the same timestamp.
-    // Cascade them by feed position, newest first.
-    const date = parseDate(it.date, now) || new Date(now.getTime() - i * 60000)
-    items.push({
-      id: itemId(feed.id, key),
-      feed: feed.id,
-      title: (it.title || '(untitled)').slice(0, 300),
-      link: it.link || '',
-      date: date.toISOString(),
-      // Some feeds put a profile URL in <author>; it renders as noise.
-      author: (it.author || '').replace(/https?:\/\/\S+/gi, '').replace(/\s+/g, ' ').trim().slice(0, 120),
-      summary: cap > 0 ? (it.summary || '').slice(0, cap) : (it.summary || ''),
-    })
-  }
-
-  return {
-    items: items,
-    meta: {
-      title: parsed.title || feed.title || feed.id,
-      folder: feed.folder || null,
-      siteUrl: parsed.siteUrl || null,
-      etag: res.headers.get('etag') || null,
-      lastModified: res.headers.get('last-modified') || null,
-      checkedAt: now.toISOString(),
-      status: res.status,
-    },
   }
 }
 
