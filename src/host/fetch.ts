@@ -53,17 +53,30 @@ function parseDate(raw: string | null | undefined, now: Date): Date | null {
  * @param {string} root data root.
  * @returns {Promise<Array<{id:string,url:string,title:string|null,folder:string|null}>>} runnable feeds.
  */
-export async function loadRuntimeFeeds(root: string): Promise<FeedDefinition[]> {
+/** One subscribed entry, with the id the fetcher assigns it. */
+interface RuntimeFeed extends FeedDefinition {
+  /** Switched off by hand: kept in the list, never fetched. */
+  disabled: boolean
+}
+
+/**
+ * Every subscribed entry, ids assigned: a configured `id` goes through the same
+ * slug rules, and duplicate ids get a numeric suffix. Disabled entries are
+ * assigned an id too, because the archive they already have is keyed by it.
+ * @param root - data root.
+ * @returns the entries in file order.
+ */
+async function runtimeEntries(root: string): Promise<RuntimeFeed[]> {
   const raw = await readJson<{ feeds?: unknown } | null>(pathsFor(root).feeds, null)
   if (!raw || !Array.isArray(raw.feeds)) {
     throw new Error('feeds.json is missing or has no "feeds" array')
   }
   const entries = raw.feeds as Array<FeedEntry | null>
   const used = new Set<string>()
-  const feeds: FeedDefinition[] = []
+  const feeds: RuntimeFeed[] = []
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i]
-    if (!entry || !entry.url || entry.disabled) continue
+    if (!entry || !entry.url) continue
     let id
     try {
       id = entry.id ? slug(entry.id) : feedIdFor(entry.url)
@@ -74,9 +87,39 @@ export async function loadRuntimeFeeds(root: string): Promise<FeedDefinition[]> 
     let n = 2
     while (used.has(unique)) unique = `${id}-${n++}`
     used.add(unique)
-    feeds.push({ id: unique, url: entry.url, title: entry.title || null, folder: entry.folder || null })
+    feeds.push({
+      id: unique,
+      url: entry.url,
+      title: entry.title || null,
+      folder: entry.folder || null,
+      disabled: entry.disabled === true,
+    })
   }
   return feeds
+}
+
+/**
+ * The feeds a run would fetch. The scheduler keys its per-feed clocks by these
+ * ids, so both sides must agree on them.
+ * @param {string} root data root.
+ * @returns {Promise<Array<{id:string,url:string,title:string|null,folder:string|null}>>} runnable feeds.
+ */
+export async function loadRuntimeFeeds(root: string): Promise<FeedDefinition[]> {
+  return (await runtimeEntries(root))
+    .filter(function (feed) { return !feed.disabled })
+    .map(function (feed) {
+      return { id: feed.id, url: feed.url, title: feed.title, folder: feed.folder }
+    })
+}
+
+/**
+ * Every id `feeds.json` subscribes to, disabled entries included. A switched-off
+ * feed is still subscribed, so its archived rows are not orphans.
+ * @param root - data root.
+ * @returns the subscribed ids.
+ */
+export async function subscribedFeedIds(root: string): Promise<Set<string>> {
+  return new Set((await runtimeEntries(root)).map(function (feed) { return feed.id }))
 }
 
 function parseXml(text: string): boolean {
@@ -109,7 +152,9 @@ async function fetchOne(feed: FeedDefinition, prev: FeedMeta | undefined, now: D
     if (res.status === 304) {
       return {
         notModified: true,
-        meta: Object.assign({}, prev, { checkedAt: now.toISOString(), status: 304 }),
+        // A feed that answers 304 has recovered: the previous failure no
+        // longer describes it, and leaving it would keep the row red forever.
+        meta: Object.assign({}, prev, { checkedAt: now.toISOString(), status: 304, lastError: null }),
       }
     }
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -286,7 +331,8 @@ export async function runFetch(options: FetchOptions): Promise<FetchResult> {
 
   await ensureDir(itemsDir)
   const meta = await readJson<Record<string, FeedMeta | undefined>>(metaFile, {})
-  const live = new Set(feeds.map(function (feed) { return feed.id }))
+  // Disabled feeds are subscribed, so their rows are not orphans.
+  const live = await subscribedFeedIds(root)
   let staleFeeds = 0
   // A restricted run must not judge every other feed "unsubscribed".
   if (!restricted) {

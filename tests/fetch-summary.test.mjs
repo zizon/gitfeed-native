@@ -130,4 +130,53 @@ function root(extra = {}) {
   removeRoot(dir)
 }
 
+// 5. A feed that answers 304 has recovered, so the old failure goes with it.
+{
+  const dir = root()
+  const metaFile = path.join(dir, 'data', 'meta.json')
+  writeFileSync(metaFile, `${JSON.stringify({
+    'feed-a': {
+      url: 'https://example.com/a.xml',
+      etag: 'v1',
+      lastError: 'HTTP 500',
+      checkedAt: '2026-01-01T00:00:00.000Z',
+    },
+  }, null, 2)}\n`)
+  globalThis.fetch = async function () { return new Response(null, { status: 304 }) }
+  const result = await runFetch({ root: dir })
+  const after304 = JSON.parse(readFileSync(metaFile, 'utf8'))['feed-a']
+  ok(result.unchanged === 1, 'a 304 counts as unchanged', result.summary)
+  ok(after304.lastError === null, 'a 304 clears the failure it recovers from', after304)
+  ok(after304.etag === 'v1', 'the validators survive the 304', after304)
+  removeRoot(dir)
+}
+
+// 6. A disabled feed is still subscribed: it is fetched by nobody and its
+// archive must not be mistaken for orphans of a deleted subscription.
+{
+  const dir = makeDataRoot({
+    feeds: [
+      { id: 'feed-a', url: 'https://example.com/a.xml', title: 'Alpha Notes' },
+      { id: 'feed-b', url: 'https://example.com/b.xml', title: 'Beta Notes', disabled: true },
+    ],
+  })
+  const keptDate = new Date().toISOString()
+  appendItem(path.join(dir, 'data', 'items'), {
+    id: 'kept-b',
+    feed: 'feed-b',
+    title: 'Kept',
+    link: 'https://example.com/b/kept',
+    date: keptDate,
+    author: '',
+    summary: '<p>body</p>',
+  })
+  const calls = stubFetch(rss('<p>plain body</p>'))
+  const result = await runFetch({ root: dir })
+  const kept = readRows(path.join(dir, 'data', 'items', `${keptDate.slice(0, 7)}.ndjson`)).map((row) => row.id)
+  ok(result.feeds === 1, 'a disabled feed is not fetched', result.feeds)
+  ok(calls.length === 1, 'only the runnable feed is asked for', calls)
+  ok(kept.includes('kept-b'), 'a disabled feed keeps the rows it already has', kept)
+  removeRoot(dir)
+}
+
 finish()
