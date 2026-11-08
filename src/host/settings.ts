@@ -68,7 +68,10 @@ export function expandHome(value: string): string {
  * @returns {string} absolute data root.
  */
 export function resolveRoot(repo?: string): string {
-  const raw = (repo || process.env.GITFEED_REPO || '').trim()
+  // Environment first, as the README, the bundle patch, and the comment at the
+  // top of this file all say: it is how one machine is pointed at another
+  // checkout without editing the profile patch.
+  const raw = (process.env.GITFEED_REPO || repo || '').trim()
   if (raw) return path.resolve(expandHome(raw))
   return path.join(os.homedir(), 'gitfeed')
 }

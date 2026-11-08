@@ -1,10 +1,11 @@
 // The /state protocol through the real plugin entry: a payload without rows is
 // only valid when it names the item model the caller already holds.
 import http from 'node:http'
+import os from 'node:os'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { makeDataRoot, removeRoot, sampleLibrary } from './fixtures.mjs'
-import { finish, nodeTimers, ok } from './harness.mjs'
+import { finish, lib, nodeTimers, ok } from './harness.mjs'
 
 const { feeds, items } = sampleLibrary(16)
 const root = makeDataRoot({ feeds, items })
@@ -113,6 +114,15 @@ const subscribed = JSON.parse(readFileSync(path.join(root, 'feeds.json'), 'utf8'
 const added = subscribed.filter((entry) => /feed-[ab]\.xml$/.test(entry.url))
 ok(subA.status === 200 && subB.status === 200, 'two subscribes at once both answer ok', [subA.status, subB.status, subA.body, subB.body])
 ok(added.length === 2, 'two subscribes at once both land in the list', added.map((entry) => entry.id))
+
+// The data root: GITFEED_REPO answers before the row's `repo`, which is what
+// lets one machine read another checkout without editing the profile.
+const { resolveRoot } = await import(lib('host', 'settings.js'))
+process.env.GITFEED_REPO = '/tmp/gitfeed-env-root'
+ok(resolveRoot('/tmp/gitfeed-row-root') === '/tmp/gitfeed-env-root', 'GITFEED_REPO answers before the row')
+delete process.env.GITFEED_REPO
+ok(resolveRoot('/tmp/gitfeed-row-root') === '/tmp/gitfeed-row-root', 'without it the row answers')
+ok(resolveRoot('') === path.join(os.homedir(), 'gitfeed'), 'with neither, the default is ~/gitfeed', resolveRoot(''))
 
 server.close()
 for (const fn of disposers) {
