@@ -128,6 +128,23 @@ export function plainFromHtml(html) {
   }
 }
 
+/**
+ * A one-line digest of a feed entry's summary: its plain text, cut at a word
+ * boundary so a list row can show it without wrapping.
+ * @param {string} html entry summary, usually feed HTML.
+ * @param {number} [max] most characters kept before the ellipsis.
+ * @returns {string} digest text, empty when the entry has no summary.
+ */
+export function digestText(html, max = 240) {
+  const text = plainFromHtml(html)
+  // Link labels such as "Comments" or "Read on" are not a summary worth a row.
+  if (text.length < 16) return ''
+  if (text.length <= max) return text
+  const cut = text.slice(0, max)
+  const at = cut.lastIndexOf(' ')
+  return (at > max * 0.55 ? cut.slice(0, at) : cut).trimEnd() + '…'
+}
+
 export function readStorage(key) {
   try {
     return localStorage.getItem(key)

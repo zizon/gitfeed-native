@@ -36,6 +36,7 @@ export interface ClientState {
   groupBy: GroupBy | null;
   hideEmpty: boolean | null;
   markOnScroll: boolean | null;
+  showDigest: boolean | null;
   folderOpen: Record<string, boolean>;
   railW: number;
   listW: number;
@@ -65,6 +66,8 @@ export interface Controller {
   setGroupBy(value: string): void;
   setHideEmpty(value: boolean): void;
   setMarkOnScroll(value: boolean): void;
+  setShowDigest(value: boolean): void;
+  digest(item: Item): string;
   setFolderOpen(name: string, open: boolean): void;
   setWidths(patch: { railW?: number; listW?: number }): void;
   addFeed(url: string, folder: string): Promise<boolean>;

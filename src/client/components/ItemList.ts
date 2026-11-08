@@ -2,7 +2,7 @@
 
 import { h, useCallback, useEffect, useMemo, useRef, useState } from "../react.js";
 import type { Item } from "../../shared/types.js";
-import { GROUP_H, ROW_H } from "../constants.js";
+import { GROUP_H, ROW_H, ROW_H_PLAIN } from "../constants.js";
 import { lowerBound } from "../hooks.js";
 import { tf } from "../locales.js";
 import type { ItemListProps } from "../types.js";
@@ -34,6 +34,8 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
   const list = controller.getList();
   const groupBy = state.groupBy || state.reader.groupBy || "none";
   const markOnScroll = state.markOnScroll === null ? !!state.reader.markReadOnScroll : !!state.markOnScroll;
+  const showDigest = state.showDigest === null ? true : !!state.showDigest;
+  const rowH = showDigest ? ROW_H : ROW_H_PLAIN;
   const viewportRef = useRef<HTMLDivElement>(null);
   const [range, setRange] = useState({ start: 0, end: 24 });
   const rangeRef = useRef(range);
@@ -45,7 +47,7 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
 
   const entries = useMemo<Entry[]>(function () {
     if (groupBy === "none") {
-      return list.map(function (item) { return { kind: "row", key: item.id, item: item, h: ROW_H }; });
+      return list.map(function (item) { return { kind: "row", key: item.id, item: item, h: rowH }; });
     }
     const groups = new Map<string, Group>();
     for (const item of list) {
@@ -65,10 +67,10 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
     const out: Entry[] = [];
     for (const group of ordered) {
       out.push({ kind: "group", key: "group:" + group.key, group: group, h: GROUP_H });
-      for (const item of group.items) out.push({ kind: "row", key: item.id, item: item, h: ROW_H });
+      for (const item of group.items) out.push({ kind: "row", key: item.id, item: item, h: rowH });
     }
     return out;
-  }, [list, groupBy, controller, state.feedMap]);
+  }, [list, groupBy, controller, state.feedMap, rowH]);
 
   const offsets = useMemo(function () {
     const out = new Array<number>(entries.length + 1);
@@ -189,6 +191,7 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
     const item = entry.item;
     const unread = !state.read.has(item.id);
     const starred = state.starred.has(item.id);
+    const digest = showDigest ? controller.digest(item) : "";
     return h("div", {
       key: entry.key,
       className: "gf-row" + (unread ? " unread" : "") + (state.current === item.id ? " active" : ""),
@@ -203,10 +206,12 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
       starred ? h("span", { className: "gf-star", title: t("action.unstar") }, "★") : null),
     h("div", { className: "gf-row-meta" },
       h("span", { className: "feed-name" }, controller.feedTitle(item.feed)),
-      h("span", { className: "when" }, fmtTime(item.date))));
+      h("span", { className: "when" }, fmtTime(item.date))),
+    digest ? h("div", { className: "gf-row-digest" }, digest) : null);
   });
 
   const count = list.length;
+  const paneClass = "gf-listpane" + (wide ? " wide" : "") + (showDigest ? "" : " rows-plain");
   const header = h("div", { className: "gf-listbar" },
     h("span", { className: "gf-count-label" }, tf(t, "items.count", { n: count })),
     h("button", {
@@ -215,18 +220,18 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
     }, t("action.markAll")));
 
   if (state.status === "loading" && !state.items.length) {
-    return h("div", { className: "gf-listpane" + (wide ? " wide" : "") }, header, h("div", { className: "gf-empty" }, t("status.loading")));
+    return h("div", { className: paneClass }, header, h("div", { className: "gf-empty" }, t("status.loading")));
   }
   if (state.status === "error" && !state.items.length) {
-    return h("div", { className: "gf-listpane" + (wide ? " wide" : "") }, header,
+    return h("div", { className: paneClass }, header,
       h("div", { className: "gf-empty" }, state.error || t("status.error")));
   }
   if (!count) {
-    return h("div", { className: "gf-listpane" + (wide ? " wide" : "") }, header,
+    return h("div", { className: paneClass }, header,
       h("div", { className: "gf-empty" }, state.items.length ? t("empty.nothing") : t("empty.noItems")));
   }
 
-  return h("div", { className: "gf-listpane" + (wide ? " wide" : "") },
+  return h("div", { className: paneClass },
     header,
     h("div", { className: "gf-scroll", ref: viewportRef, onScroll: onScroll },
       h("div", { style: { height: top } }),

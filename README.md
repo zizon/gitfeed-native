@@ -40,6 +40,11 @@ GitHub Actions job runs.
 3. Open the **Feeds** card, subscribe, **Fetch**, read. If the root is a
    checkout, **Sync** pushes subscriptions and read state.
 
+Each item row shows the title, its feed and age, and a one-line plain-text
+digest of the summary, so a list can be skimmed and skipped without opening
+every article. Display prefs turn the digest off (rows then use the shorter
+two-line height); the choice is stored per browser.
+
 ## Where it lives in the Harness UI
 
 | surface | how to reach it |

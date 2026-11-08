@@ -87,6 +87,7 @@ export function DisplayPrefs({ state, controller, t }: {
   const groupBy = state.groupBy || state.reader.groupBy || "none";
   const hideEmpty = state.hideEmpty === null ? !!state.reader.hideEmptyFeeds : !!state.hideEmpty;
   const markOnScroll = state.markOnScroll === null ? !!state.reader.markReadOnScroll : !!state.markOnScroll;
+  const showDigest = state.showDigest === null ? true : !!state.showDigest;
   return h(Fragment, null,
     h("div", { className: "gf-menu-label" }, t("pref.display")),
     h("div", { className: "gf-menu-row" },
@@ -95,6 +96,9 @@ export function DisplayPrefs({ state, controller, t }: {
     h("div", { className: "gf-menu-row" },
       h(Switch, { checked: markOnScroll, onChange: function (value) { controller.setMarkOnScroll(value); }, label: t("pref.markOnScroll") }),
       h("span", { className: "gf-menu-text" }, t("pref.markOnScroll"))),
+    h("div", { className: "gf-menu-row" },
+      h(Switch, { checked: showDigest, onChange: function (value) { controller.setShowDigest(value); }, label: t("pref.showDigest") }),
+      h("span", { className: "gf-menu-text" }, t("pref.showDigest"))),
     h("div", { className: "gf-menu-row" },
       h("span", { className: "gf-menu-text" }, t("pref.groupBy")),
       h("select", {

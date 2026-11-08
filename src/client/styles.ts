@@ -321,7 +321,7 @@ export const CSS = `
 .gf-count-label { flex: 1; color: var(--dsw-alias-label-secondary); font-size: 11px; }
 .gf-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; position: relative; }
 .gf-row {
-  height: 46px;
+  height: 66px;
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -331,6 +331,7 @@ export const CSS = `
   cursor: pointer;
   user-select: none;
 }
+.gf-listpane.rows-plain .gf-row { height: 46px; }
 .gf-row:hover { background: color-mix(in srgb, var(--dsw-alias-label-primary) 6%, transparent); }
 .gf-row.active {
   background: color-mix(in srgb, var(--dsw-alias-brand-primary) 13%, transparent);
@@ -345,6 +346,16 @@ export const CSS = `
 .gf-row-meta { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 11px; color: var(--dsw-alias-label-secondary); }
 .gf-row-meta .feed-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gf-row-meta .when { flex: none; margin-left: auto; font-variant-numeric: tabular-nums; }
+.gf-row-digest {
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.3;
+  color: var(--dsw-alias-label-secondary);
+  opacity: .82;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .gf-group {
   height: 32px;
   display: flex;

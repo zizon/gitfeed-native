@@ -7,6 +7,7 @@ import { tf } from "./locales.js";
 import type { ClientState, Controller, Filter } from "./types.js";
 import {
   clamp,
+  digestText,
   messageOf,
   plainFromHtml,
   readStorage,
@@ -43,6 +44,7 @@ export function createController(t: Translate): Controller {
     groupBy: storedGroupBy(),
     hideEmpty: storedBool(LS.hideEmpty),
     markOnScroll: storedBool(LS.markOnScroll),
+    showDigest: storedBool(LS.showDigest),
     folderOpen: storedFolders(),
     railW: clamp(storedNumber(LS.railW, DEFAULT_RAIL), 150, 460),
     listW: clamp(storedNumber(LS.listW, DEFAULT_LIST), 260, 760),
@@ -56,6 +58,7 @@ export function createController(t: Translate): Controller {
     return value === 'folder' || value === 'feed' || value === 'none' ? value : null
   }
 
+  const digestCache = new Map<string, string>()
   const listeners = new Set<() => void>()
   let listCache: { key: string | null; items: Item[] } = { key: null, items: [] }
   let loadPromise = null
@@ -124,6 +127,17 @@ export function createController(t: Translate): Controller {
       text = (item.title + ' ' + plainFromHtml(item.summary) + ' ' + feedTitleOf(item.feed)).toLowerCase()
       if (plainCache.size > 4000) plainCache.clear()
       plainCache.set(key, text)
+    }
+    return text
+  }
+
+  function digestOf(item: Item): string {
+    const key = item.id + ':' + (item.summary ? item.summary.length : 0)
+    let text = digestCache.get(key)
+    if (text === undefined) {
+      text = digestText(item.summary)
+      if (digestCache.size > 4000) digestCache.clear()
+      digestCache.set(key, text)
     }
     return text
   }
@@ -401,6 +415,11 @@ export function createController(t: Translate): Controller {
     set({ markOnScroll: !!value })
   }
 
+  function setShowDigest(value: boolean): void {
+    writeStorage(LS.showDigest, value ? '1' : '0')
+    set({ showDigest: !!value })
+  }
+
   function setFolderOpen(name: string, open: boolean): void {
     const next = Object.assign({}, state.folderOpen)
     next[name] = !!open
@@ -544,6 +563,8 @@ export function createController(t: Translate): Controller {
     setGroupBy: setGroupBy,
     setHideEmpty: setHideEmpty,
     setMarkOnScroll: setMarkOnScroll,
+    setShowDigest: setShowDigest,
+    digest: digestOf,
     setFolderOpen: setFolderOpen,
     setWidths: setWidths,
     addFeed: addFeed,
