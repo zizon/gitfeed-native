@@ -334,7 +334,8 @@ not carry its own theme setting.
   plugin `allowGit` switch is false, or when the data root is a local copy with
   no git repository; the rail menu then shows why.
 - **Display preferences**: hide feeds with nothing unread, mark read on scroll,
-  group by none/folder/source. Per-browser, in `localStorage`; the values in
+  group by none/folder/source. Per-browser, in one `localStorage` snapshot
+  (`gitfeed.prefs`) held by the shared store engine; the values in
   `config.json` are the defaults.
 - **Keyboard**: `j`/`k` move, `m` toggle read, `s` star, `o` open original,
   `/` search, `u` unread, `a` all, `Esc` close article then clear search/feed.
@@ -521,7 +522,7 @@ src/host/                   settings, scaffold, store, OPML, XML, fetch, git, ru
 tests/                      behaviour suites, fixtures, and the runner (`pnpm test`)
 docs/jobs.md                runner contract, primitives, and the ratchet
 docs/cloud-sync.md          why the GitHub Actions job was removed, and restoring it
-src/client/                 native reader: controller, hooks, components, styles, locales
+src/client/                 native reader: controller, prefs, hooks, components, styles, locales
 src/shared/                 item/feed/state types shared by both halves
 build.mjs                   tsc Host + esbuild Client into the loader envelope
 tsconfig.host.json          Host compiler face (includes the CLI)

@@ -2,6 +2,7 @@
 
 import { NS, TAB_ID, TAB_KIND } from './constants.js'
 import { createController } from './controller.js'
+import { createPrefs } from './prefs.js'
 import { CSS } from './styles.js'
 import { DICTS } from './locales.js'
 import type { Translate } from './locales.js'
@@ -48,7 +49,7 @@ export interface ClientContext {
 
 export function apply(ctx: ClientContext): void {
   const t = ctx.locale.bind(NS)
-  const controller = createController(t)
+  const controller = createController(t, createPrefs())
 
   ctx.effect(function () { return ctx.locale.register(NS, DICTS) }, 'gitfeed: dictionaries')
   ctx.effect(function () {

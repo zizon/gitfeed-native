@@ -1,19 +1,15 @@
 /** The reader's single client state machine, shared by every surface. */
 
 import type { Feed, GitInfo, GroupBy, Item, ReaderPrefs, ScheduleJobInfo } from '../shared/types.js'
-import { DEFAULT_LIST, DEFAULT_RAIL, LS, PREFIX } from './constants.js'
+import { PREFIX } from './constants.js'
 import type { Translate } from './locales.js'
+import type { PrefsStore } from './prefs.js'
 import type { ClientState, Controller, Filter, MarkCounts } from './types.js'
 import {
   clamp,
   digestText,
   messageOf,
   plainFromHtml,
-  readStorage,
-  storedBool,
-  storedFolders,
-  storedNumber,
-  writeStorage,
 } from './util.js'
 
 export const plainCache = new Map<string, string>()
@@ -54,7 +50,13 @@ function sameSet(current: Set<string>, next: Set<string>): boolean {
   return true
 }
 
-export function createController(t: Translate): Controller {
+export function createController(t: Translate, prefs: PrefsStore): Controller {
+  const saved = prefs.getSnapshot()
+  // Persisted JSON crosses a file boundary, so the grouping is re-validated on
+  // the way in instead of trusted from the snapshot's type.
+  const savedGroupBy: GroupBy | null = saved.groupBy === 'none' || saved.groupBy === 'folder' || saved.groupBy === 'feed'
+    ? saved.groupBy
+    : null
   let state: ClientState = {
     status: 'idle',
     error: null,
@@ -78,21 +80,16 @@ export function createController(t: Translate): Controller {
     query: '',
     feedId: null,
     current: null,
-    groupBy: storedGroupBy(),
-    hideEmpty: storedBool(LS.hideEmpty),
-    markOnScroll: storedBool(LS.markOnScroll),
-    showDigest: storedBool(LS.showDigest),
-    folderOpen: storedFolders(),
-    railW: clamp(storedNumber(LS.railW, DEFAULT_RAIL), 150, 460),
-    listW: clamp(storedNumber(LS.listW, DEFAULT_LIST), 260, 760),
+    groupBy: savedGroupBy,
+    hideEmpty: saved.hideEmpty,
+    markOnScroll: saved.markOnScroll,
+    showDigest: saved.showDigest,
+    folderOpen: saved.folderOpen,
+    railW: clamp(saved.railW, 150, 460),
+    listW: clamp(saved.listW, 260, 760),
     listEpoch: 0,
     busy: {},
     toast: null,
-  }
-
-  function storedGroupBy(): GroupBy | null {
-    const value = readStorage(LS.groupBy)
-    return value === 'folder' || value === 'feed' || value === 'none' ? value : null
   }
 
   const digestCache = new Map<string, string>()
@@ -575,41 +572,41 @@ export function createController(t: Translate): Controller {
 
   function setGroupBy(value: string): void {
     const next = value === 'folder' || value === 'feed' ? value : 'none'
-    writeStorage(LS.groupBy, next)
+    prefs.update(function (draft) { draft.groupBy = next })
     set({ groupBy: next })
   }
 
   function setHideEmpty(value: boolean): void {
-    writeStorage(LS.hideEmpty, value ? '1' : '0')
+    prefs.update(function (draft) { draft.hideEmpty = value })
     set({ hideEmpty: value })
   }
 
   function setMarkOnScroll(value: boolean): void {
-    writeStorage(LS.markOnScroll, value ? '1' : '0')
+    prefs.update(function (draft) { draft.markOnScroll = value })
     set({ markOnScroll: value })
   }
 
   function setShowDigest(value: boolean): void {
-    writeStorage(LS.showDigest, value ? '1' : '0')
+    prefs.update(function (draft) { draft.showDigest = value })
     set({ showDigest: value })
   }
 
   function setFolderOpen(name: string, open: boolean): void {
-    const next = Object.assign({}, state.folderOpen)
-    next[name] = open
-    writeStorage(LS.folders, JSON.stringify(next))
-    set({ folderOpen: next })
+    prefs.update(function (draft) { draft.folderOpen[name] = open })
+    set({ folderOpen: Object.assign({}, prefs.getSnapshot().folderOpen) })
   }
 
   function setWidths(patch: { railW?: number; listW?: number }): void {
     const next: { railW?: number; listW?: number } = {}
     if (typeof patch.railW === 'number' && Number.isFinite(patch.railW)) {
-      next.railW = clamp(Math.round(patch.railW), 150, 460)
-      writeStorage(LS.railW, next.railW)
+      const railW = clamp(Math.round(patch.railW), 150, 460)
+      next.railW = railW
+      prefs.update(function (draft) { draft.railW = railW })
     }
     if (typeof patch.listW === 'number' && Number.isFinite(patch.listW)) {
-      next.listW = clamp(Math.round(patch.listW), 260, 900)
-      writeStorage(LS.listW, next.listW)
+      const listW = clamp(Math.round(patch.listW), 260, 900)
+      next.listW = listW
+      prefs.update(function (draft) { draft.listW = listW })
     }
     if (Object.keys(next).length) set(next)
   }

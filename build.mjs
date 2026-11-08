@@ -58,6 +58,9 @@ run(esbuild, [
   // The shell seeds the shared UI atoms into the browser module table, so the
   // bundle requires them by specifier instead of shipping a second copy.
   "--external:@deepseek-ai/dsh-client-ui-primitives",
+  // The snapshot-store engine is seeded too; the reader persists its prefs
+  // through it instead of carrying its own storage helpers.
+  "--external:@deepseek-ai/dsh-client-store",
   "--outfile=" + bundle,
   "--log-level=warning"
 ]);

@@ -1,6 +1,4 @@
-/** Formatting, storage, and the untrusted-HTML sanitizer. */
-
-import { LS } from './constants.js'
+/** Formatting and the untrusted-HTML sanitizer. */
 
 export function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value))
@@ -158,40 +156,4 @@ export function digestText(html: string | null | undefined, max = 240): string {
   const cut = text.slice(0, max)
   const at = cut.lastIndexOf(' ')
   return `${(at > max * 0.55 ? cut.slice(0, at) : cut).trimEnd()}…`
-}
-
-export function readStorage(key: string): string | null {
-  try {
-    return localStorage.getItem(key)
-  } catch {
-    return null
-  }
-}
-
-export function writeStorage(key: string, value: string | number | boolean | null | undefined): void {
-  try {
-    if (value === null || value === undefined) localStorage.removeItem(key)
-    else localStorage.setItem(key, String(value))
-  } catch {
-    // Private mode and quota failures leave the in-memory value usable.
-  }
-}
-
-export function storedBool(key: string): boolean | null {
-  const raw = readStorage(key)
-  return raw === null ? null : raw !== '0'
-}
-
-export function storedNumber(key: string, fallback: number): number {
-  const value = Number(readStorage(key))
-  return Number.isFinite(value) && value > 0 ? value : fallback
-}
-
-export function storedFolders(): Record<string, boolean> {
-  try {
-    const value: unknown = JSON.parse(readStorage(LS.folders) || '{}')
-    return value && typeof value === 'object' ? value as Record<string, boolean> : {}
-  } catch {
-    return {}
-  }
 }
