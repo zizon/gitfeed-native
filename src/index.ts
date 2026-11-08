@@ -27,7 +27,8 @@ import { registerTool } from './host/tool.js'
 import type { GitfeedConfig, PluginContext } from './host/types.js'
 
 export const name = 'gitfeed'
-export const inject = ['webServer']
+/** The web server for the API, and the timer service the scheduler runs on. */
+export const inject = ['webServer', 'timer']
 
 function envNumber(name: string, fallback: number): number {
   const raw = process.env[name]
@@ -77,6 +78,11 @@ export function apply(ctx: PluginContext, config?: GitfeedConfig) {
   const tool =  settings.tool
   const service = createGitfeed({
     root: root,
+    // Read the mixin at call time, so the timer registers on *this* plugin's
+    // fiber: a reload disposes the pending wake with the rest of the plugin.
+    timers: {
+      timeout: function (callback, delayMs) { return ctx.timeout(callback, delayMs) },
+    },
     refreshMinutes: refreshMinutes,
     idleMinutes: idleMinutes,
     adaptive: adaptive,

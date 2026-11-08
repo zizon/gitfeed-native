@@ -8,7 +8,7 @@ import { loadRuntimeFeeds, runFetch } from './fetch.js'
 import { pull as pullRemote, readGitInfo, sync as syncRemote } from './git.js'
 import { createFetchJob, createSyncJob } from './jobs.js'
 import { createScheduler } from './scheduler.js'
-import type { Scheduler } from './scheduler.js'
+import type { Scheduler, SchedulerTimers } from './scheduler.js'
 import { pathsFor, readRepoConfig } from './settings.js'
 import { appendNdjson, listShards, readJson, readNdjson, writeNdjson } from './store.js'
 import type { FetchResult, GitActionResult, Logger, ReaderStateData, ReadyState, RepoConfig } from './types.js'
@@ -26,6 +26,8 @@ export type StateResponse = Omit<ReadyState, keyof ReaderStateData> & Partial<Re
 export interface GitfeedOptions {
   root: string
   logger?: Logger
+  /** Where scheduler wake-ups come from: the Host's timer service. */
+  timers: SchedulerTimers
   refreshMinutes?: number
   idleMinutes?: number
   allowGit?: boolean
@@ -386,6 +388,7 @@ export function createGitfeed(options: GitfeedOptions) {
     root: root,
     logger: logger,
     idleMinutes: idleMinutes,
+    timers: options.timers,
     onRun: invalidate,
   })
 

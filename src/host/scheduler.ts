@@ -1,14 +1,19 @@
 // One adaptive scheduler for every periodic thing the reader does.
 //
-// A job declares a base interval and a ceiling; the scheduler owns the clock.
-// It wakes for the earliest job that is due, skips jobs the reader has not
-// touched recently when the job asks for that, runs what is ready, and folds
-// each result back into that job's interval: a run that produced something
-// returns the job to its base interval, while a quiet or failing run doubles
-// it, up to the ceiling. A job can also return its own `nextAt` (the fetch job
-// keeps one clock per feed), and `debounce` waits out a burst of local changes
-// before running, which is how a read mark turns into a sync about twenty
-// seconds after the last mark instead of one commit per mark.
+// A job declares a base interval and a ceiling; the scheduler owns the policy,
+// not the clock. It wakes for the earliest job that is due, skips jobs the
+// reader has not touched recently when the job asks for that, runs what is
+// ready, and folds each result back into that job's interval: a run that
+// produced something returns the job to its base interval, while a quiet or
+// failing run doubles it, up to the ceiling. A job can also return its own
+// `nextAt` (the fetch job keeps one clock per feed), and `debounce` waits out a
+// burst of local changes before running, which is how a read mark turns into a
+// sync about twenty seconds after the last mark instead of one commit per mark.
+//
+// The single wake-up comes from the timer service the Host provides
+// (`ctx.timer`): one pending timer, re-armed for the next due job, owned by the
+// plugin's fiber, so a reload or dispose clears it with the rest of the plugin.
+// There is no second clock and nothing to unref: the Harness owns the runtime.
 //
 // The state is machine-local (`.local/schedule.json`): restarts keep the
 // clocks without committing them to the data repository, and version 1 -- the
@@ -95,11 +100,24 @@ export interface Scheduler {
   status(): Promise<ScheduleJobInfo[]>
 }
 
+/**
+ * The timer surface the scheduler runs on. The Harness `TimerService` backs it
+ * (`ctx.timer`, `@deepseek-ai/cordis-plugin-timer`), so a pending wake belongs
+ * to the plugin's fiber and is cleared when the plugin is disposed or reloaded
+ * — the scheduler does not own a clock of its own.
+ */
+export interface SchedulerTimers {
+  /** Run `callback` once after `delayMs`; the returned disposer cancels it. */
+  timeout(callback: () => void, delayMs: number): () => void
+}
+
 export interface SchedulerOptions {
   root: string
   logger: Logger
   /** Reader inactivity after which an activity-gated job pauses. */
   idleMinutes: number
+  /** Where wake-ups come from: the Harness timer service, or a test double. */
+  timers: SchedulerTimers
   /** Called after a run or a manual fold, so caches keyed on data files drop. */
   onRun?: (jobId: string) => void
   /** Clock, injectable for tests. */
@@ -243,7 +261,8 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
   let started = false
   let stopped = false
   let ticking = false
-  let timer: ReturnType<typeof setTimeout> | null = null
+  /** Cancels the single pending wake-up; owned by the timer service's fiber. */
+  let wake: (() => void) | null = null
   let lastActivity = clock()
   let writing: Promise<void> = Promise.resolve()
 
@@ -320,11 +339,11 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
   }
 
   function arm(ms: number): void {
-    if (timer) clearTimeout(timer)
-    timer = setTimeout(function () {
+    if (wake) wake()
+    wake = options.timers.timeout(function () {
+      wake = null
       void tick()
     }, Math.max(MIN_WAKE_MS, ms))
-    if (typeof timer.unref === 'function') timer.unref()
   }
 
   function scheduleNext(): void {
@@ -460,9 +479,9 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
   function stop(): void {
     started = false
     stopped = true
-    if (timer) {
-      clearTimeout(timer)
-      timer = null
+    if (wake) {
+      wake()
+      wake = null
     }
   }
 

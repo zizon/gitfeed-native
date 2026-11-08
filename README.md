@@ -237,15 +237,21 @@ per-feed clocks live in `.local/schedule.json` — machine-local, never
 committed, version 2; a version-1 file (the fetch-only format) is read as the
 Refresh job's state. **Fetch** in the reader still fetches everything.
 
-The Harness ships two scheduling-shaped services, and neither replaces this
-one. `ctx.timer` (`@deepseek-ai/cordis-plugin-timer`) is a disposal-aware
-`timeout`/`interval`/`throttle`/`debounce` wrapper: a wake-up, not a policy,
-and its timers cannot `unref()`, so a pending one would hold the Host process
-open. `ctx.schedule` (`@deepseek-ai/dsh-schedule`) is durable and knows Cron
+The scheduler's policy is its own; its clock is the Harness's. The plugin
+declares `inject: ['timer']` and the scheduler arms its single wake-up through
+`ctx.timer` (`@deepseek-ai/cordis-plugin-timer`): one pending timer, re-armed
+for the next due job and owned by the plugin's fiber, so a reload or a dispose
+clears it with the rest of the plugin and no timer is reimplemented here.
+
+The service still cannot replace the policy — it offers timeouts and
+interval/debounce wrappers, not per-job backoff, per-feed clocks, or persisted
+state. Note that `debounce` here is a deadline (`nextAt` in
+`.local/schedule.json`), not a live debouncer: routing the wait through the
+tick keeps the availability and due checks, and a pending sync survives a
+reload. `ctx.schedule` (`@deepseek-ai/dsh-schedule`) is durable and knows Cron
 and RRULE, but every occurrence it delivers becomes an Agent turn in a
-Session — using it would spend a model call per refresh and drop the adaptive,
-per-feed, activity-gated behaviour above. This scheduler only needs wall-clock
-wakes, so it keeps its own policy and its own machine-local state.
+Session, so using it would spend a model call per refresh and drop the
+adaptive, per-feed, activity-gated behaviour above.
 
 ### GitHub Actions in the data repository
 

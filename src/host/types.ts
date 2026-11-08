@@ -40,6 +40,11 @@ export interface PluginContext {
   webServer: WebServer
   effect(callback: () => (() => void) | void, label?: string): () => void
   inject(services: string[], callback: (ctx: PluginContext & { tools: Tools }) => void): void
+  /**
+   * The Host timer service (`ctx.timer`), forwarded by the Cordis context: the
+   * disposer it returns belongs to this plugin's fiber.
+   */
+  timeout(callback: () => void, delayMs: number): () => void
 }
 
 export interface GitfeedConfig {
