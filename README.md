@@ -45,11 +45,14 @@ digest of the summary, so a list can be skimmed and skipped without opening
 every article. Display prefs turn the digest off (rows then use the shorter
 two-line height); the choice is stored per browser.
 
-Marking read: the list header names its scope (**Mark all read**, **Mark source
-read** when a feed is selected, **Mark results read** when searching) and needs
-a second click to run, so a stray one cannot wipe the list. The Feeds list
-marks one source with the ✓ that appears on hover, and a folder header marks
-that whole folder.
+Marking read: the list header opens a **Mark read** menu that names every scope
+with its count — the rows on screen, the selected source, that source's folder,
+and, behind a divider, every unread item in the reader. The wide scopes need a
+second, differently placed click (`Confirm: mark 1562 read`) and nothing is
+ever marked by a single stray click; there is no keyboard shortcut that marks
+in bulk. The Feeds list carries a visible ✓ on every source with unread items
+and on every folder header, and each list group header offers
+`Mark {n} read`.
 
 Background refresh: the rail's second bar ends with the age of the last run
 (`⟳ 2m`; it pulses while a run is in flight and the Fetch button spins then),
@@ -282,9 +285,13 @@ not carry its own theme setting.
   marks; add by feed URL or site URL (with discovery); unsubscribe removes the
   feed's items from both stores.
 - **List**: one line per item, grouped by folder or source on request, with a
-  **Mark read** button on each group. Rows are virtualized at fixed heights.
-- **Read on scroll**: a row counts as read only after it was visible and then
-  left through the top of the list.
+  `Mark {n} read` button on each group. Rows are virtualized at fixed heights.
+  A row that is marked read stays in the Unread list until the scope changes
+  (filter, search, or source), so nothing shifts under the pointer while
+  reading; a feed or folder that was on screen stays in the Feeds list for the
+  same reason.
+- **Read on scroll**: a row counts as read only after the viewport top passed
+  it while moving down; rows a scrollbar drag skipped over are included.
 - **Article**: sanitized feed HTML (element allowlist, `href`/`src`/`alt`/
   `title` only, http(s)/mailto URLs only), star, mark unread, open original.
 - **Pull / Fetch / Sync** in the top bar. Pull and Sync are disabled when the
@@ -294,8 +301,8 @@ not carry its own theme setting.
   group by none/folder/source. Per-browser, in `localStorage`; the values in
   `config.json` are the defaults.
 - **Keyboard**: `j`/`k` move, `m` toggle read, `s` star, `o` open original,
-  `/` search, `u` unread, `a` all, `Shift+A` mark everything listed read,
-  `Esc` close article then clear search/feed.
+  `/` search, `u` unread, `a` all, `Esc` close article then clear search/feed.
+  Bulk marking is deliberately not on a key.
 
 Pane widths and open folders are remembered per browser.
 

@@ -144,6 +144,21 @@ export const CSS = `
 .gf-linkbtn:hover:not(:disabled) { color: var(--dsw-alias-label-primary); }
 .gf-linkbtn.danger { color: var(--dsw-alias-state-error-primary); }
 .gf-linkbtn.armed { color: var(--dsw-alias-state-error-primary); font-weight: 600; }
+/* The mark menu and its counts: the action never hides how much it touches. */
+.gf-markwrap { position: relative; display: inline-flex; }
+.gf-markmenu { top: 24px; right: 0; width: 244px; }
+.gf-menu-count {
+  flex: none;
+  min-width: 2.4em;
+  text-align: right;
+  color: var(--dsw-alias-label-secondary);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+}
+.gf-menu-row.danger { color: var(--dsw-alias-state-error-primary); }
+.gf-menu-row.danger .gf-menu-count { color: inherit; }
+.gf-menu-row.danger.armed { background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 12%, transparent); font-weight: 600; }
+button.gf-menu-row:disabled { opacity: .45; cursor: default; }
 
 .gf-body { flex: 1 1 auto; display: flex; min-width: 0; min-height: 0; }
 .gf-feedrail {
@@ -259,9 +274,12 @@ export const CSS = `
   border-radius: 5px;
   background: transparent;
   color: var(--dsw-alias-label-secondary);
-  opacity: 0;
+  /* Visible without hovering: the source and folder mark-read actions are
+     what the reader uses most, and a hover reveal hid them entirely. */
+  opacity: 1;
   font-size: 11px;
   line-height: 1;
+  font-weight: 700;
 }
 .gf-feed:hover .gf-feed-check, .gf-folder-head:hover .gf-feed-check, .gf-feed-check:focus-visible { opacity: 1; }
 .gf-feed-check:hover { background: color-mix(in srgb, var(--dsw-alias-label-primary) 10%, transparent); color: var(--dsw-alias-label-primary); }
@@ -448,6 +466,9 @@ export const CSS = `
 .gf-rail-bar2 { flex: none; display: flex; align-items: center; gap: 6px; padding: 0 8px 8px; border-bottom: 1px solid var(--dsw-alias-border-l1); }
 .gf-refresh-state {
   flex: none;
+  /* Fixed box so the age text does not reflow the bar as it ticks. */
+  min-width: 4.4em;
+  text-align: right;
   white-space: nowrap;
   color: var(--dsw-alias-label-secondary);
   font-size: 11px;
@@ -502,7 +523,9 @@ export const CSS = `
   top: 38px;
   right: 8px;
   width: 264px;
-  max-width: calc(100% - 16px);
+  /* The anchored wrap is the button, not the pane, so a percentage cap would
+     shrink this menu to the button's width. Cap against the viewport instead. */
+  max-width: calc(100vw - 24px);
   padding: 6px;
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 10px;

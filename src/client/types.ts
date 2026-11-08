@@ -50,7 +50,7 @@ export interface Controller {
   subscribe(listener: () => void): () => void;
   getList(): Item[];
   load(options?: { force?: boolean }): Promise<void>;
-  mark(ids: string[], value: boolean): void;
+  mark(ids: string[], value: boolean, keepList?: boolean): void;
   select(id: string): void;
   closeArticle(): void;
   selectFeed(id: string | null): void;
@@ -62,6 +62,8 @@ export interface Controller {
   openCurrent(): void;
   escape(): void;
   markAll(): void;
+  markCounts(): MarkCounts;
+  markEverything(): void;
   markGroup(key: string): void;
   markFeed(feedId: string): void;
   markFolder(folder: string): void;
@@ -81,6 +83,19 @@ export interface Controller {
   feedTitle(id: string): string;
   feedFolder(id: string): string;
   groupKey(item: Item): string;
+}
+
+/** What each marking scope would touch, shown in the mark-read menu. */
+export interface MarkCounts {
+  /** Unread rows in the list as filtered, searched, and scoped right now. */
+  results: number;
+  /** Unread items of the selected source. */
+  source: number;
+  /** Unread items of the selected source's folder. */
+  folder: number;
+  folderName: string | null;
+  /** Unread items in the whole reader. */
+  all: number;
 }
 
 export interface SlotProps {

@@ -1,6 +1,6 @@
 /** React hooks and the one-keyboard-owner arbitration for multiple surfaces. */
 
-import { useEffect, useRef, useState, useSyncExternalStore } from "./react.js";
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "./react.js";
 import type { RefObject } from "./react.js";
 import type { ClientState, Controller } from "./types.js";
 
@@ -21,7 +21,9 @@ export function useMount(controller: Controller): void {
 
 export function useElementWidth(ref: RefObject<HTMLElement>): number {
   const [width, setWidth] = useState(0);
-  useEffect(function () {
+  // Measure before the first paint: a 0 width renders the rail in its narrow
+  // layout for one frame and then flips to the wide one, which reads as a jump.
+  useLayoutEffect(function () {
     const el = ref.current;
     if (!el) return;
     let alive = true;
@@ -136,12 +138,6 @@ export function useKeyboard(
         case "a":
           event.preventDefault();
           controller.setFilter("all");
-          break;
-        case "A":
-          if (event.shiftKey) {
-            event.preventDefault();
-            controller.markAll();
-          }
           break;
         case "/":
           event.preventDefault();

@@ -4,7 +4,7 @@ import type { GroupBy, Item, ReaderPrefs } from "../shared/types.js";
 import { DEFAULT_LIST, DEFAULT_RAIL, LS, PREFIX } from "./constants.js";
 import type { Translate } from "./locales.js";
 import { tf } from "./locales.js";
-import type { ClientState, Controller, Filter } from "./types.js";
+import type { ClientState, Controller, Filter, MarkCounts } from "./types.js";
 import {
   clamp,
   digestText,
@@ -69,6 +69,12 @@ export function createController(t: Translate): Controller {
   let disposed = false
   const pendingRead = new Set()
   const pendingUnread = new Set()
+  /**
+   * Read rows that stay in the Unread list until the scope changes. A row the
+   * reader scrolled past or opened must not vanish from under the pointer,
+   * which is what made the list jump on every mark.
+   */
+  const stickyRead = new Set<string>()
   let visibilityHandler = null
 
   function get(): ClientState {
@@ -112,7 +118,7 @@ export function createController(t: Translate): Controller {
   function filterItems(): Item[] {
     const query = state.query.trim().toLowerCase()
     return state.items.filter(function (item) {
-      if (state.filter === 'unread' && state.read.has(item.id)) return false
+      if (state.filter === 'unread' && state.read.has(item.id) && !stickyRead.has(item.id)) return false
       if (state.filter === 'starred' && !state.starred.has(item.id)) return false
       if (state.feedId && item.feed !== state.feedId) return false
       if (query && searchHay(item).indexOf(query) === -1) return false
@@ -273,11 +279,22 @@ export function createController(t: Translate): Controller {
     })
   }
 
-  function mark(ids: string[], value: boolean): void {
+  /**
+   * Mark items read or unread.
+   * @param ids item ids.
+   * @param value target state.
+   * @param [keepList] keep the affected rows in the list until the scope
+   * changes. Implicit marks (opening an article, scrolling past a row) keep
+   * them so nothing moves under the pointer; an explicit "mark these read"
+   * command drops them, because that is the feedback the reader asked for.
+   */
+  function mark(ids: string[], value: boolean, keepList?: boolean): void {
     const clean = (Array.isArray(ids) ? ids : []).filter(function (id) {
       return typeof id === 'string' && id.length > 0 && id.length < 64
     })
     if (!clean.length) return
+    const keep = keepList !== false
+    const shown = keep && value ? new Set(getList().map(function (item) { return item.id })) : null
     const read = new Set(state.read)
     for (const id of clean) {
       if (value) read.add(id)
@@ -285,13 +302,24 @@ export function createController(t: Translate): Controller {
       if (value) {
         pendingRead.add(id)
         pendingUnread.delete(id)
+        if (keep) {
+          if (shown && shown.has(id)) stickyRead.add(id)
+        } else {
+          stickyRead.delete(id)
+        }
       } else {
         pendingUnread.add(id)
         pendingRead.delete(id)
+        stickyRead.delete(id)
       }
     }
     set({ read: read })
     if (!flushTimer) flushTimer = setTimeout(flushMarks, 350)
+  }
+
+  /** Forget the rows that were kept only so the current list would stay put. */
+  function clearSticky(): void {
+    if (stickyRead.size) stickyRead.clear()
   }
 
   function bumpList() {
@@ -313,16 +341,20 @@ export function createController(t: Translate): Controller {
   }
 
   function selectFeed(id: string | null): void {
+    if ((id || null) !== state.feedId) clearSticky()
     set({ feedId: id || null })
   }
 
   function setFilter(filter: Filter): void {
     if (filter !== 'unread' && filter !== 'all' && filter !== 'starred') return
+    if (filter !== state.filter) clearSticky()
     set({ filter: filter })
   }
 
   function setQuery(query: string): void {
-    set({ query: String(query || '') })
+    const next = String(query || '')
+    if (next !== state.query) clearSticky()
+    set({ query: next })
   }
 
   function move(offset: number): void {
@@ -383,7 +415,7 @@ export function createController(t: Translate): Controller {
     const ids = list.map(function (item) { return item.id })
     const unread = list.filter(function (item) { return !state.read.has(item.id) }).length
     if (!unread) return
-    mark(ids, true)
+    mark(ids, true, false)
     bumpList()
     toast(tf(t, 'toast.marked', { n: unread }))
   }
@@ -394,7 +426,7 @@ export function createController(t: Translate): Controller {
     const ids = list.map(function (item) { return item.id })
     const unread = list.filter(function (item) { return !state.read.has(item.id) }).length
     if (!unread) return
-    mark(ids, true)
+    mark(ids, true, false)
     bumpList()
     toast(tf(t, 'toast.marked', { n: unread }))
   }
@@ -405,7 +437,7 @@ export function createController(t: Translate): Controller {
       .filter(function (item) { return item.feed === feedId && !state.read.has(item.id) })
       .map(function (item) { return item.id })
     if (!ids.length) return
-    mark(ids, true)
+    mark(ids, true, false)
     bumpList()
     toast(tf(t, 'toast.marked', { n: ids.length }))
   }
@@ -418,7 +450,39 @@ export function createController(t: Translate): Controller {
       })
       .map(function (item) { return item.id })
     if (!ids.length) return
-    mark(ids, true)
+    mark(ids, true, false)
+    bumpList()
+    toast(tf(t, 'toast.marked', { n: ids.length }))
+  }
+
+  /**
+   * How many unread items each marking scope would touch. The mark menu shows
+   * these numbers before it acts, so a five-figure action never hides behind a
+   * button that looks like the small one next to it.
+   */
+  function markCounts(): MarkCounts {
+    let results = 0
+    for (const item of getList()) if (!state.read.has(item.id)) results += 1
+    const folder = state.feedId ? feedFolderOf(state.feedId) : null
+    let source = 0
+    let folderCount = 0
+    let all = 0
+    for (const item of state.items) {
+      if (state.read.has(item.id)) continue
+      all += 1
+      if (state.feedId && item.feed === state.feedId) source += 1
+      if (folder && feedFolderOf(item.feed) === folder) folderCount += 1
+    }
+    return { results: results, source: source, folder: folderCount, all: all, folderName: folder }
+  }
+
+  /** Mark every unread item in the reader, whatever the scope on screen is. */
+  function markEverything(): void {
+    const ids = state.items
+      .filter(function (item) { return !state.read.has(item.id) })
+      .map(function (item) { return item.id })
+    if (!ids.length) return
+    mark(ids, true, false)
     bumpList()
     toast(tf(t, 'toast.marked', { n: ids.length }))
   }
@@ -566,7 +630,7 @@ export function createController(t: Translate): Controller {
     listeners.clear()
   }
 
-  return {
+  const api: Controller = {
     get: get,
     subscribe: subscribe,
     getList: getList,
@@ -583,6 +647,8 @@ export function createController(t: Translate): Controller {
     openCurrent: openCurrent,
     escape: escape,
     markAll: markAll,
+    markCounts: markCounts,
+    markEverything: markEverything,
     markGroup: markGroup,
     markFeed: markFeed,
     markFolder: markFolder,
@@ -603,4 +669,5 @@ export function createController(t: Translate): Controller {
     feedFolder: feedFolderOf,
     groupKey: groupKeyOf
   }
+  return api
 }

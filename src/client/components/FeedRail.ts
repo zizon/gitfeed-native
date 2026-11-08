@@ -43,6 +43,17 @@ export function FeedRail({ state, controller, t, compact, onPick }: FeedRailProp
   // A folder opens or closes only when it first appears or when the reader
   // toggles it. Deriving the state from the live unread count made the list
   // collapse and expand on every background refresh while it was on screen.
+  // A feed or folder that was on screen stays on screen until the scope
+  // changes. Dropping rows the moment their last unread item is marked read
+  // made the whole tree shift under the pointer mid-click.
+  const scopeKey = state.filter + "\u0000" + (state.feedId || "");
+  const seenRef = useRef<{ key: string; feeds: Set<string>; folders: Set<string> }>({
+    key: "", feeds: new Set(), folders: new Set()
+  });
+  if (seenRef.current.key !== scopeKey) {
+    seenRef.current = { key: scopeKey, feeds: new Set(), folders: new Set() };
+  }
+  const seen = seenRef.current;
   const seededOpen = useRef<Map<string, boolean>>(new Map());
   function folderOpenOf(name: string, unread: number): boolean {
     if (Object.prototype.hasOwnProperty.call(state.folderOpen, name)) return !!state.folderOpen[name];
@@ -116,12 +127,14 @@ export function FeedRail({ state, controller, t, compact, onPick }: FeedRailProp
     const feeds = entry[1];
     let unread = 0;
     for (const feed of feeds) unread += grouped.counts.get(feed.id) || 0;
-    if (hiding && unread === 0) continue;
+    if (hiding && unread === 0 && !seen.folders.has(name)) continue;
+    seen.folders.add(name);
     const open = folderOpenOf(name, unread);
     const children: any[] = [];
     for (const feed of feeds) {
       const count = grouped.counts.get(feed.id) || 0;
-      if (hiding && count === 0) continue;
+      if (hiding && count === 0 && !seen.feeds.has(feed.id)) continue;
+      seen.feeds.add(feed.id);
       if (pendingRemove === feed.id) {
         children.push(h("div", { key: feed.id, className: "gf-feed gf-confirm" },
           h("span", { className: "name" }, t("confirm.unsubscribe")),

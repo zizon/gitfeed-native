@@ -3,7 +3,7 @@
 import { h, useCallback, useEffect, useMemo, useRef, useState } from "../react.js";
 import type { Item } from "../../shared/types.js";
 import { GROUP_H, ROW_H, ROW_H_PLAIN } from "../constants.js";
-import { lowerBound } from "../hooks.js";
+import { lowerBound, useOutsideClose } from "../hooks.js";
 import { tf } from "../locales.js";
 import type { ItemListProps } from "../types.js";
 import { fmtTime } from "../util.js";
@@ -47,9 +47,21 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
   const lastTop = useRef(0);
   /** Scroll offset this surface moved to on its own, which must not mark anything. */
   const programmatic = useRef<number | null>(null);
-  /** First click arms the list-wide "mark read" action; the second one runs it. */
-  const [armed, setArmed] = useState(false);
-  const armedTimer = useRef(0);
+  /** The scope menu for marking read; it shows its counts before acting. */
+  const markRef = useRef<HTMLDivElement>(null);
+  const [markOpen, setMarkOpen] = useState(false);
+  /** Only the whole-library entry needs a second, differently placed click. */
+  const [markArmed, setMarkArmed] = useState(false);
+  function closeMark() {
+    setMarkOpen(false);
+    setMarkArmed(false);
+  }
+  useOutsideClose(markRef, markOpen, closeMark);
+
+  /** Counts for the mark menu; recomputed when the list or the read set moves. */
+  const counts = useMemo(function () {
+    return controller.markCounts();
+  }, [state.items, state.read, state.version, state.listEpoch, state.feedId, state.query, state.filter, controller]);
 
   const entries = useMemo<Entry[]>(function () {
     if (groupBy === "none") {
@@ -191,14 +203,17 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
 
   const listRows = slice.map(function (entry) {
     if (entry.kind === "group") {
+      const groupUnread = entry.group.items.filter(function (item) { return !state.read.has(item.id); }).length;
       return h("div", { key: entry.key, className: "gf-group" },
         h("span", { className: "gf-group-name" }, entry.group.label),
         h("span", { className: "gf-group-count" }, String(entry.group.items.length)),
         h("button", {
           type: "button",
           className: "gf-group-read",
+          disabled: !groupUnread,
+          title: t("action.markGroup"),
           onClick: function () { controller.markGroup(entry.group.key); }
-        }, t("action.markGroup")));
+        }, groupUnread ? tf(t, "action.markGroupCount", { n: groupUnread }) : t("action.markGroup")));
     }
     const item = entry.item;
     const unread = !state.read.has(item.id);
@@ -224,31 +239,67 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
 
   const count = list.length;
   const paneClass = "gf-listpane" + (wide ? " wide" : "") + (showDigest ? "" : " rows-plain");
-  const markScope = state.feedId
-    ? t("action.markSource")
-    : state.query.trim() ? t("action.markResults") : t("action.markAll");
-  function markAllClick() {
-    if (!count) return;
-    if (!armed) {
-      setArmed(true);
-      if (armedTimer.current) clearTimeout(armedTimer.current);
-      armedTimer.current = window.setTimeout(function () {
-        armedTimer.current = 0;
-        setArmed(false);
-      }, 5000);
-      return;
-    }
-    if (armedTimer.current) clearTimeout(armedTimer.current);
-    armedTimer.current = 0;
-    setArmed(false);
-    controller.markAll();
+
+  function markRow(label: string, n: number, run: () => void, extraClass?: string) {
+    return h("button", {
+      type: "button",
+      className: "gf-menu-row" + (extraClass ? " " + extraClass : ""),
+      disabled: !n,
+      role: "menuitem",
+      onClick: function () { closeMark(); run(); }
+    },
+    h("span", { className: "gf-menu-text" }, label),
+    h("span", { className: "gf-menu-count" }, String(n)));
   }
+
+  // Every scope names its own count, so the biggest action is never a
+  // neighbour that looks like the smallest one.
+  const markRows: any[] = [];
+  if (counts.results > 0 || count > 0) {
+    markRows.push(markRow(t("action.markResults"), counts.results, function () { controller.markAll(); }));
+  }
+  if (state.feedId && counts.source > 0) {
+    markRows.push(markRow(t("action.markSource"), counts.source, function () { controller.markFeed(state.feedId as string); }));
+  }
+  if (state.feedId && counts.folderName && counts.folder > counts.source) {
+    markRows.push(markRow(t("action.markFolder"), counts.folder, function () {
+      if (counts.folderName) controller.markFolder(counts.folderName);
+    }));
+  }
+  if (counts.all > 0 && counts.all !== counts.results) {
+    markRows.push(h("div", { key: "sep", className: "gf-menu-sep" }));
+    markRows.push(h("button", {
+      type: "button",
+      className: "gf-menu-row danger" + (markArmed ? " armed" : ""),
+      role: "menuitem",
+      onClick: function () {
+        if (!markArmed) {
+          setMarkArmed(true);
+          return;
+        }
+        closeMark();
+        controller.markEverything();
+      }
+    },
+    h("span", { className: "gf-menu-text" },
+      markArmed ? tf(t, "action.markAllConfirm", { n: counts.all }) : t("action.markEverything")),
+    h("span", { className: "gf-menu-count" }, String(counts.all))));
+  }
+
   const header = h("div", { className: "gf-listbar" },
     h("span", { className: "gf-count-label" }, tf(t, "items.count", { n: count })),
-    h("button", {
-      type: "button", className: "gf-linkbtn" + (armed ? " armed" : ""), disabled: !count,
-      onClick: markAllClick
-    }, armed ? tf(t, "action.markAllConfirm", { n: count }) : markScope));
+    h("div", { className: "gf-markwrap", ref: markRef },
+      h("button", {
+        type: "button", className: "gf-linkbtn", disabled: !counts.all && !count,
+        "aria-haspopup": "menu", "aria-expanded": markOpen,
+        onClick: function () {
+          if (markOpen) closeMark();
+          else { setMarkOpen(true); setMarkArmed(false); }
+        }
+      }, t("action.markMenu") + " ▾"),
+      markOpen
+        ? h("div", { className: "gf-menu gf-markmenu", role: "menu" }, markRows)
+        : null));
 
   if (state.status === "loading" && !state.items.length) {
     return h("div", { className: paneClass }, header, h("div", { className: "gf-empty" }, t("status.loading")));
