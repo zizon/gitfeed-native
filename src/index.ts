@@ -78,10 +78,10 @@ export function apply(ctx: PluginContext, config?: GitfeedConfig) {
   const tool =  settings.tool
   const service = createGitfeed({
     root: root,
-    // Read the mixin at call time, so the timer registers on *this* plugin's
-    // fiber: a reload disposes the pending wake with the rest of the plugin.
+    // Read the mixin at call time, so the heartbeat registers on *this*
+    // plugin's fiber: a reload stops it with the rest of the plugin.
     timers: {
-      timeout: function (callback, delayMs) { return ctx.timeout(callback, delayMs) },
+      interval: function (callback, delayMs) { return ctx.interval(callback, delayMs) },
     },
     refreshMinutes: refreshMinutes,
     idleMinutes: idleMinutes,

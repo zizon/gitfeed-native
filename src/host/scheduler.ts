@@ -10,10 +10,12 @@
 // burst of local changes before running, which is how a read mark turns into a
 // sync about twenty seconds after the last mark instead of one commit per mark.
 //
-// The single wake-up comes from the timer service the Host provides
-// (`ctx.timer`): one pending timer, re-armed for the next due job, owned by the
-// plugin's fiber, so a reload or dispose clears it with the rest of the plugin.
-// There is no second clock and nothing to unref: the Harness owns the runtime.
+// The clock is the Host's timer service (`ctx.timer`): one interval heartbeat,
+// started once and owned by the plugin's fiber, and no other timer anywhere.
+// Every deadline is data in `.local/schedule.json`, so a pass is a comparison
+// and a pass costs nothing when nothing is due. There is no wake-up arithmetic
+// to get wrong, nothing to re-arm on every request, and nothing to unref: a
+// reload or a dispose kills the heartbeat with the rest of the plugin.
 //
 // The state is machine-local (`.local/schedule.json`): restarts keep the
 // clocks without committing them to the data repository, and version 1 -- the
@@ -102,13 +104,13 @@ export interface Scheduler {
 
 /**
  * The timer surface the scheduler runs on. The Harness `TimerService` backs it
- * (`ctx.timer`, `@deepseek-ai/cordis-plugin-timer`), so a pending wake belongs
- * to the plugin's fiber and is cleared when the plugin is disposed or reloaded
- * — the scheduler does not own a clock of its own.
+ * (`ctx.timer`, `@deepseek-ai/cordis-plugin-timer`): the heartbeat is an
+ * interval owned by the plugin's fiber, so it starts once and dies with the
+ * plugin. The scheduler keeps no timers of its own.
  */
 export interface SchedulerTimers {
-  /** Run `callback` once after `delayMs`; the returned disposer cancels it. */
-  timeout(callback: () => void, delayMs: number): () => void
+  /** Call `callback` every `delayMs`; the returned disposer stops it. */
+  interval(callback: () => void, delayMs: number): () => void
 }
 
 export interface SchedulerOptions {
@@ -116,7 +118,7 @@ export interface SchedulerOptions {
   logger: Logger
   /** Reader inactivity after which an activity-gated job pauses. */
   idleMinutes: number
-  /** Where wake-ups come from: the Harness timer service, or a test double. */
+  /** The heartbeat: the Harness timer service, or a test double. */
   timers: SchedulerTimers
   /** Called after a run or a manual fold, so caches keyed on data files drop. */
   onRun?: (jobId: string) => void
@@ -124,10 +126,13 @@ export interface SchedulerOptions {
   now?: () => number
 }
 
-/** The minimum sleep between scheduler passes. */
-const MIN_WAKE_MS = 1000
-/** The longest sleep, so a new feed or an idle window is noticed. */
-const MAX_WAKE_MS = 5 * 60000
+/**
+ * How often the scheduler looks at its jobs. A pass compares the clock against
+ * persisted deadlines and runs what is due, so this is the only timer in the
+ * reader and it is cheap enough to be the whole clock: no re-arming, and a
+ * stored deadline is honoured within one heartbeat.
+ */
+export const HEARTBEAT_MS = 1000
 
 interface JobState {
   intervalMin: number
@@ -261,8 +266,8 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
   let started = false
   let stopped = false
   let ticking = false
-  /** Cancels the single pending wake-up; owned by the timer service's fiber. */
-  let wake: (() => void) | null = null
+  /** Stops the heartbeat; owned by the timer service's fiber. */
+  let heartbeat: (() => void) | null = null
   let lastActivity = clock()
   let writing: Promise<void> = Promise.resolve()
 
@@ -336,31 +341,6 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
   function paused(job: ScheduledJob, now: number): boolean {
     const gate = job.activeWithinMin ?? 0
     return gate > 0 && now - lastActivity > gate * 60000
-  }
-
-  function arm(ms: number): void {
-    if (wake) wake()
-    wake = options.timers.timeout(function () {
-      wake = null
-      void tick()
-    }, Math.max(MIN_WAKE_MS, ms))
-  }
-
-  function scheduleNext(): void {
-    if (!started || stopped) return
-    const now = clock()
-    let wait = MAX_WAKE_MS
-    for (const runtime of jobs.values()) {
-      if (runtime.running || runtime.queued > 0) continue
-      const state = stateFor(runtime.job)
-      if (paused(runtime.job, now)) continue
-      if (!(state.nextAt > 0)) {
-        wait = MIN_WAKE_MS
-        continue
-      }
-      wait = Math.min(wait, state.nextAt - now)
-    }
-    arm(wait)
   }
 
   function applyOutcome(job: ScheduledJob, state: JobState, outcome: JobOutcome, now: number): void {
@@ -456,7 +436,6 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
       }
     } finally {
       ticking = false
-      if (!isStopped()) scheduleNext()
     }
   }
 
@@ -469,19 +448,19 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
     started = true
     stopped = false
     lastActivity = clock()
-    void (async function () {
-      await ensureLoaded()
-      if (!isStopped()) scheduleNext()
-    })()
-    arm(12000)
+    // One timer for the whole reader, owned by the caller's fiber. `tick` is
+    // idempotent and guarded, so a slow pass simply makes the next beat a
+    // no-op instead of stacking work.
+    heartbeat = options.timers.interval(function () { void tick() }, HEARTBEAT_MS)
+    void tick()
   }
 
   function stop(): void {
     started = false
     stopped = true
-    if (wake) {
-      wake()
-      wake = null
+    if (heartbeat) {
+      heartbeat()
+      heartbeat = null
     }
   }
 
@@ -499,7 +478,6 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
       return await run
     } finally {
       runtime.queued -= 1
-      if (started && !stopped) scheduleNext()
     }
   }
 
@@ -511,14 +489,14 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
     if (state.failures > 0) return
     const now = clock()
     if (!runtime.debounceSince) runtime.debounceSince = now
+    // A deadline, not a live debouncer: the burst cap is a property of the
+    // job's stored state, so a reload in the middle of a burst still syncs.
     const limit = runtime.debounceSince + Math.max(0, capMs)
-    state.nextAt = Math.max(now + 1000, Math.min(now + Math.max(0, delayMs), limit))
-    if (started && !stopped) scheduleNext()
+    state.nextAt = Math.max(now + HEARTBEAT_MS, Math.min(now + Math.max(0, delayMs), limit))
   }
 
   function touch(): void {
     lastActivity = clock()
-    if (started && !stopped) scheduleNext()
   }
 
   async function status(): Promise<ScheduleJobInfo[]> {

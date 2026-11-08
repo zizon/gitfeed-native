@@ -44,7 +44,7 @@ export interface PluginContext {
    * The Host timer service (`ctx.timer`), forwarded by the Cordis context: the
    * disposer it returns belongs to this plugin's fiber.
    */
-  timeout(callback: () => void, delayMs: number): () => void
+  interval(callback: () => void, delayMs: number): () => void
 }
 
 export interface GitfeedConfig {

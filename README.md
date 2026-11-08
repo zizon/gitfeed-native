@@ -198,8 +198,9 @@ The Host plugin owns one scheduler for every periodic thing the reader does.
 Each job has a base interval and a ceiling: a run that produced something
 (items fetched, state committed or pulled) returns the job to its base
 interval, while a quiet or failing run doubles the interval, up to the
-ceiling. The scheduler sleeps until the earliest job is due instead of polling
-on a fixed tick, so the Refresh and Sync clocks share one timer.
+ceiling. Every deadline is data — `nextAt` in `.local/schedule.json` — and one
+heartbeat a second looks at them: a pass is a comparison, it costs nothing
+when nothing is due, and the Refresh and Sync clocks need no separate timers.
 
 Two jobs are registered today. A new one implements `available`, `due`, and
 `run` and is registered next to them in `src/host/service.ts`.
@@ -238,10 +239,10 @@ committed, version 2; a version-1 file (the fetch-only format) is read as the
 Refresh job's state. **Fetch** in the reader still fetches everything.
 
 The scheduler's policy is its own; its clock is the Harness's. The plugin
-declares `inject: ['timer']` and the scheduler arms its single wake-up through
-`ctx.timer` (`@deepseek-ai/cordis-plugin-timer`): one pending timer, re-armed
-for the next due job and owned by the plugin's fiber, so a reload or a dispose
-clears it with the rest of the plugin and no timer is reimplemented here.
+declares `inject: ['timer']` and starts one `ctx.timer.interval`
+(`@deepseek-ai/cordis-plugin-timer`) on the plugin's fiber: the heartbeat is
+created once, never re-armed, and a reload or dispose stops it with the rest of
+the plugin. Nothing here reimplements delay, cancellation, or unref.
 
 The service still cannot replace the policy — it offers timeouts and
 interval/debounce wrappers, not per-job backoff, per-feed clocks, or persisted
