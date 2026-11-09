@@ -135,43 +135,32 @@ export function createEventsHandler(
     // One signal for the surface: the request closing, the response failing,
     // and this handler finishing all end the same pull.
     const stop = new AbortController()
-    // One line per stream, for the first thing that went wrong with the
-    // connection. A surface hanging up is ordinary and says nothing; a socket
-    // that failed is the one fact nobody could see after this handler returned.
-    let reported = false
-    const report = function (error: unknown): void {
-      if (reported) return
-      reported = true
-      log.warn(`gitfeed: the event stream broke off at rev ${rev}: ${messageOf(error)}`)
-    }
-    // The one boundary a write's rejection has: the response it would be told
-    // to no longer exists, so the reason goes to the log and the pull stops.
-    const send = function (text: string): Promise<boolean> {
-      return writeChunk(res, text, stop.signal).then(function () { return true }, function (error: unknown) {
-        report(error)
-        return false
-      })
+    // One line per stream, for the first thing that went wrong with it. A
+    // surface hanging up is ordinary and says nothing; a socket that failed is
+    // the one fact nobody could see after this handler returned.
+    let warned = false
+    const warn = function (error: unknown): void {
+      if (warned) return
+      warned = true
+      log.warn(`gitfeed: the event stream stopped at rev ${rev}: ${messageOf(error)}`)
     }
     req.on('close', function () { stop.abort() })
     res.on('error', function (error: Error) {
       // The response's own failure event, which a write callback does not
       // always report (a destroy during a write, for one).
-      report(error)
+      warn(error)
       stop.abort()
     })
 
-    // The retry hint is not a frame, and it comes first: a surface that hangs up
-    // before its first frame should still know when to come back.
-    if (!(await send(`retry: ${HEARTBEAT_MS}\n\n`))) {
-      res.end()
-      return
-    }
-
-    // Inside the try: a source whose `frames` throws on the way in is a failure
-    // to report like any other, not an escape past the finally that closes the
-    // response.
+    // Every write below is awaited where it stands. A rejection is a stream that
+    // is over — the pull failed, or the socket did — and the catch answers both
+    // with the same two things: one line in the log, one frame if the response
+    // can still take it.
     let iterator: AsyncIterator<StreamFrame> | undefined
     try {
+      // The retry hint is not a frame, and it comes first: a surface that hangs
+      // up before its first frame should still know when to come back.
+      await writeChunk(res, `retry: ${HEARTBEAT_MS}\n\n`, stop.signal)
       iterator = source.frames(rev, stop.signal)[Symbol.asyncIterator]()
       let pending = iterator.next()
       // One stop promise for the life of the stream. Created inside the loop it
@@ -188,23 +177,26 @@ export function createEventsHandler(
         if (outcome.kind === 'tick') {
           // Idle keep-alive. The pull is still pending; a comment is legal
           // between frames and the surface ignores it.
-          if (!(await send(': ping\n\n'))) break
+          await writeChunk(res, ': ping\n\n', stop.signal)
           continue
         }
         const result = outcome.result
         if (result.done) break
         pending = iterator.next()
         const frame = result.value
-        const text = `event: ${frame.t}\ndata: ${JSON.stringify(frame)}\n\n`
-        if (!(await send(text))) break
+        await writeChunk(res, `event: ${frame.t}\ndata: ${JSON.stringify(frame)}\n\n`, stop.signal)
       }
     } catch (err) {
-      // A pull that threw: the reader itself failed, which is a fault of ours
-      // rather than of the surface, so it is logged even when the frame that
-      // carries it to the surface gets written.
+      // The stream is over; say why, then give the surface the reason while the
+      // response can still take it. A frame that cannot be delivered is let go:
+      // the surface it was meant for is the one that just failed.
+      warn(err)
       const message = messageOf(err)
-      log.warn(`gitfeed: the event stream failed at rev ${rev}: ${message}`)
-      await send(`event: error\ndata: ${JSON.stringify({ t: 'error', protocol: PROTOCOL, message: message })}\n\n`)
+      await writeChunk(
+        res,
+        `event: error\ndata: ${JSON.stringify({ t: 'error', protocol: PROTOCOL, message: message })}\n\n`,
+        stop.signal,
+      ).catch(function () { /* the surface is gone; the log already has it */ })
     } finally {
       // The response is over; the pull is told, not waited on. A source that
       // honours the signal unwinds on its own (the reader's does, between its
