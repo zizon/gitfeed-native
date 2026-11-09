@@ -186,6 +186,78 @@ function streamReader(response) {
   await listener.close()
 }
 
+// --- the response's own backpressure is respected ---
+// `res.write` returning false is the contract to stop and wait for 'drain', not
+// a failure: the chunk was accepted. A handler that ignores it turns a slow
+// surface into unbounded memory in the process that serves the whole app.
+function fakeRequest() {
+  return { method: 'GET', url: '/gitfeed/events?rev=0', headers: {}, setTimeout() {}, on() {} }
+}
+function fakeResponse(options) {
+  const listeners = new Map()
+  const state = { written: [], destroyed: false, ended: false, accepts: options.accepts, writableLength: options.writableLength || 0 }
+  const res = {
+    get writableLength() { return state.writableLength },
+    writeHead() {},
+    write(chunk) {
+      state.written.push(chunk)
+      state.accepts -= 1
+      return state.accepts > 0
+    },
+    end() { state.ended = true },
+    destroy() { state.destroyed = true },
+    on(event, listener) {
+      const list = listeners.get(event) || []
+      list.push(listener)
+      listeners.set(event, list)
+      return res
+    },
+    emit(event) { for (const listener of listeners.get(event) || []) listener() },
+  }
+  return { res: res, state: state }
+}
+
+{
+  let send
+  const { res, state } = fakeResponse({ accepts: 2 })
+  const source = {
+    attach: async function (rev, receiver) {
+      send = receiver
+      receiver(welcome)
+      return function () {}
+    },
+  }
+  await createEventsHandler(source, function () { return undefined })(fakeRequest(), res)
+  ok(state.written.length === 2, 'frames are written while the response accepts them', state.written.length)
+
+  send(delta)
+  send(delta)
+  ok(state.written.length === 2, 'and held once it answers false', state.written.length)
+
+  state.accepts = 10
+  res.emit('drain')
+  ok(state.written.length === 4, 'a drained response receives what was held, in order', state.written.length)
+  ok(state.written[2].includes('event: delta') && state.written[3].includes('event: delta'), 'the held frames are the frames that were queued', state.written.slice(2).map(function (chunk) { return chunk.slice(0, 20) }))
+  res.emit('error')
+  ok(state.ended === true, 'closing the response ends the stream', state.ended)
+}
+
+{
+  let send
+  const { res, state } = fakeResponse({ accepts: 2, writableLength: 64 * 1024 * 1024 })
+  const source = {
+    attach: async function (rev, receiver) {
+      send = receiver
+      receiver(welcome)
+      return function () {}
+    },
+  }
+  await createEventsHandler(source, function () { return undefined })(fakeRequest(), res)
+  send(delta)
+  ok(state.destroyed === true, 'a surface that never drains is dropped at the bound', state.destroyed)
+  ok(state.destroyed && !state.ended, 'and nothing is appended to a connection that is gone')
+}
+
 // --- a reader that cannot open its data root hears why ---
 {
   const controller = new AbortController()

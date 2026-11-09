@@ -31,17 +31,20 @@ export interface StreamSource {
 /** Keeps the connection warm across a proxy that idles quiet sockets out. */
 const HEARTBEAT_MS = 20000
 /**
- * Backlog allowed before a surface that stopped reading is dropped, so one
+ * How much a surface may leave unread — frames waiting behind it plus whatever
+ * the response is still holding — before its connection is dropped, so one
  * stalled tab cannot hold the whole process's memory.
  *
- * It is checked *before* a frame is written, never after one: the first frame a
- * surface receives is the whole archive (tens of megabytes on a real library),
- * and a check made right after writing it sees that frame still queued and
- * drops the connection — which is exactly what an ordinary first load looks
- * like. A frame bigger than the cap is therefore allowed through, and the cap
- * governs what piles up behind it.
+ * This is the bound, not the mechanism: the mechanism is the response's own
+ * backpressure signal. `res.write` answers whether it wants more *right now*;
+ * a false answer is the contract to stop writing until 'drain'. Honouring it is
+ * what keeps a slow surface's backlog inside this process, and this number is
+ * what stops a surface that never drains. Dropping one is safe because the
+ * revision it reconnects with describes exactly what it holds. The number has
+ * to clear the largest single frame — the whole archive on a first connection —
+ * which is why it is tens of megabytes today.
  */
-const MAX_BUFFERED = 64 * 1024 * 1024
+const MAX_QUEUED = 64 * 1024 * 1024
 
 /**
  * Create the request handler for the event stream route.
@@ -86,28 +89,69 @@ export function createEventsHandler(
 
     // One object, not two locals: the close handler assigns them from outside
     // this function, which a control-flow narrowing of a plain `let` would miss.
-    const life: { closed: boolean; detach: (() => void) | null } = { closed: false, detach: null }
+    const life: { closed: boolean; detach: (() => void) | null; blocked: boolean } = {
+      closed: false,
+      detach: null,
+      blocked: false,
+    }
+    /** Frames the response has not accepted yet, in order. */
+    const queue: string[] = []
+    let queued = 0
+    let heartbeat: ReturnType<typeof setInterval> | null = null
+    const stopHeartbeat = function (): void {
+      if (heartbeat === null) return
+      clearInterval(heartbeat)
+      heartbeat = null
+    }
+
+    /** Keep writing while the response accepts bytes; a false answer means stop. */
+    const drainQueue = function (): void {
+      while (!life.closed && !life.blocked && queue.length > 0) {
+        const chunk = queue.shift()
+        if (chunk === undefined) return
+        queued -= chunk.length
+        if (!res.write(chunk)) life.blocked = true
+      }
+    }
+    /**
+     * Offer one chunk to the response, respecting what it says about its own
+     * backlog. `res.write` returning false is the contract to stop and wait for
+     * 'drain'; writing anyway is what lets a stalled reader grow the process.
+     */
     const write = function (chunk: string): void {
       if (life.closed) return
-      // A surface that is this far behind is not reading; the reconnect that
-      // follows asks for the delta from the revision it holds.
-      if (res.writableLength > MAX_BUFFERED) {
-        life.closed = true
-        res.destroy()
+      if (!life.blocked && queue.length === 0) {
+        if (!res.write(chunk)) life.blocked = true
         return
       }
-      res.write(chunk)
+      queue.push(chunk)
+      queued += chunk.length
+      if (queued + res.writableLength > MAX_QUEUED) {
+        // A whole archive's worth of frames is waiting behind this surface: it
+        // is not reading. Dropping the connection loses nothing — it reconnects
+        // asking from the revision it holds.
+        life.closed = true
+        queue.length = 0
+        queued = 0
+        stopHeartbeat()
+        res.destroy()
+      }
     }
+    res.on('drain', function () {
+      if (life.closed) return
+      life.blocked = false
+      drainQueue()
+    })
     const send = function (frame: StreamFrame): void {
       write(`event: ${frame.t}\ndata: ${JSON.stringify(frame)}\n\n`)
     }
-    const heartbeat = setInterval(function () {
+    heartbeat = setInterval(function () {
       write(': ping\n\n')
     }, HEARTBEAT_MS)
     const end = function (): void {
+      stopHeartbeat()
       if (life.closed) return
       life.closed = true
-      clearInterval(heartbeat)
       const running = life.detach
       life.detach = null
       if (running) {
