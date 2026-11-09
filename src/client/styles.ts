@@ -217,6 +217,24 @@ export const CSS = `
   .gf-feed:hover .gf-rail-x, .gf-folder-head:hover .gf-rail-x { color: var(--dsw-alias-state-error-primary); }
 }
 .gf-folder { margin-top: 2px; }
+/* A row is a container: its name is a button of its own and the row's actions
+   are siblings, so a row never announces its buttons' labels as its name. */
+.gf-feed-main, .gf-folder-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.gf-folder-main { gap: 4px; }
 .gf-folder-head {
   display: flex;
   align-items: center;

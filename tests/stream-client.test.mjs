@@ -263,6 +263,23 @@ if (engine === undefined || esbuild === undefined) {
     ok(controller.get().toast !== null && controller.get().toast.error === true,
       'and the reader is told, rather than left with a stale list', controller.get().toast)
 
+    // A list holding nothing has no position to protect: the scroll flag can
+    // outlive the list that set it, and a refresh must still land its rows.
+    const emptied = createController(t, createPrefs())
+    emptied.mount()
+    await sleep(0)
+    const emptiedStream = FakeEventSource.instances[FakeEventSource.instances.length - 1]
+    emptiedStream.fire('welcome', welcome(9, [item('gone', '2026-11-09T10:00:00.000Z')], ['gone']))
+    emptied.setFilter('unread')
+    emptied.setScrolled(true)
+    ok(ids(emptied).length === 0, 'the unread list holds nothing after its last row is read', ids(emptied))
+    emptiedStream.fire('delta', delta(10, {
+      items: { added: [item('fresh', '2026-11-09T11:00:00.000Z')], updated: [], removed: [] },
+    }))
+    ok(ids(emptied).length === 1 && ids(emptied)[0] === 'fresh',
+      'and an arrival lands in it instead of being held behind the stale flag', ids(emptied))
+    emptied.dispose()
+
     // A surface that never received a frame says so on the empty pane.
     const blank = createController(t, createPrefs())
     blank.mount()

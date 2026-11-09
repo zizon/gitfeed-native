@@ -136,6 +136,14 @@ Proposal: the row becomes a plain container; the name is its own button and the
 actions are siblings. That is the app's own list-row shape, and it changes what
 a screen reader announces, so it is its own commit.
 
+**Landed for the rail.** Feed rows, folder headers, `All items` and `Add feed`
+are containers whose name is a button of their own, with the row's actions as
+siblings. The live tree now reads `button "V2EX"`, `button "Move to folder:
+V2EX"`, `button "Mark source read: V2EX"`, `button "Unsubscribe: V2EX"` instead
+of one row named after all four. Still open: the item row's star sits inside the
+row's button, so the same shape lands there when that row's title line is
+re-laid-out.
+
 ### F9. Two toast hosts for one banner *(low, inspected, kept)*
 
 `GitfeedPage` and `GitfeedRail` each render `<Toasts>`, so with the page and the

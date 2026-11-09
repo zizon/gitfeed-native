@@ -145,7 +145,11 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     setBusy: setBusy,
     toast: toast,
     titleOf: function (id: string) { return feedTitle(data.feedMap, id) },
-    scrolled: function () { return scrolled },
+    // A list with nothing on screen has no position to protect. The flag can
+    // outlive the list that set it — a scroll to the end, then the filter
+    // emptying it — and no scroll pass would clear it, because an empty list
+    // renders no viewport.
+    scrolled: function () { return scrolled && getList().length > 0 },
     refilter: function () {
       // The model moved under a query: ask again for the text the reader left
       // in the box, so a row a refresh brought in is searchable at once.

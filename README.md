@@ -424,6 +424,7 @@ rebuilt the rows, the count, and the digest text under the pointer several
 times a second while scrolling. And a refresh that lands while the reader is
 scrolled into the archive holds its new rows back: the count says they are
 there, the rows arrive when the reader leaves the spot they would have moved.
+An empty list has no spot to protect, so its arrivals land at once.
 
 - **Sections hold one order.** Grouped sections are ordered by name — the way
   the rail lists folders and sources — instead of being re-ranked by item

@@ -1,7 +1,7 @@
 /** Feed folders, subscriptions, and the add/unsubscribe controls. */
 
 import { useEffect, useId, useMemo, useRef, useState } from '../react.js'
-import type { ReactKeyboardEvent, ReactNode } from '../react.js'
+import type { ReactNode } from '../react.js'
 import {
   Button,
   IconCheckOutlineRegular,
@@ -121,34 +121,20 @@ export function FeedRail({ state, controller, t, compact, onPick }: FeedRailProp
   }
 
   const rows: ReactNode[] = [
-    <div
-      key="all"
-      className={`gf-feed${state.feedId ? '' : ' on'}`}
-      role="button"
-      tabIndex={0}
-      onClick={function () { pick(null) }}
-      onKeyDown={function (event: ReactKeyboardEvent<HTMLDivElement>) {
-        if (event.key === 'Enter' || event.key === ' ') pick(null)
-      }}
-    >
-      <span className="name">{t('feed.all')}</span>
+    <div key="all" className={`gf-feed${state.feedId ? '' : ' on'}`}>
+      <button type="button" className="gf-feed-main" onClick={function () { pick(null) }}>
+        <span className="name">{t('feed.all')}</span>
+      </button>
       <span className="count">{grouped.total ? String(grouped.total) : ''}</span>
     </div>,
   ]
 
   rows.push(
-    <div
-      key="add"
-      className="gf-feed gf-addbtn"
-      role="button"
-      tabIndex={0}
-      onClick={function () { setAddOpen(!addOpen) }}
-      onKeyDown={function (event: ReactKeyboardEvent<HTMLDivElement>) {
-        if (event.key === 'Enter' || event.key === ' ') setAddOpen(!addOpen)
-      }}
-    >
-      <IconPlusOutlineRegular size={14} />
-      <span className="name">{t('action.addFeed')}</span>
+    <div key="add" className="gf-feed gf-addbtn">
+      <button type="button" className="gf-feed-main" onClick={function () { setAddOpen(!addOpen) }}>
+        <IconPlusOutlineRegular size={14} />
+        <span className="name">{t('action.addFeed')}</span>
+      </button>
     </div>,
   )
 
@@ -258,19 +244,18 @@ export function FeedRail({ state, controller, t, compact, onPick }: FeedRailProp
         <div
           key={feed.id}
           className={`gf-feed${state.feedId === feed.id ? ' on' : ''}${feed.error ? ' error' : ''}`}
-          role="button"
-          tabIndex={0}
-          title={feed.error || feed.url || ''}
-          onClick={function () { pick(feed.id) }}
-          onKeyDown={function (event: ReactKeyboardEvent<HTMLDivElement>) {
-            if (event.target !== event.currentTarget) return
-            if (event.key === 'Enter' || event.key === ' ') pick(feed.id)
-          }}
         >
-          <span className="name">{feed.title}</span>
-          {feed.error
-            ? <span className="gf-danger" title={feed.error}><IconWarningOutlineRegular size={12} /></span>
-            : null}
+          <button
+            type="button"
+            className="gf-feed-main"
+            title={feed.error || feed.url || ''}
+            onClick={function () { pick(feed.id) }}
+          >
+            <span className="name">{feed.title}</span>
+            {feed.error
+              ? <span className="gf-danger" title={feed.error}><IconWarningOutlineRegular size={12} /></span>
+              : null}
+          </button>
           <span className="count">{count ? String(count) : ''}</span>
           <FolderMenu
             folder={feed.folder}
@@ -305,7 +290,7 @@ export function FeedRail({ state, controller, t, compact, onPick }: FeedRailProp
               label={`${t('action.markSource')}: ${feed.title}`}
               small
               className="gf-rail-check"
-              onClick={function (event) { event.stopPropagation(); controller.markFeed(feed.id) }}
+              onClick={function () { controller.markFeed(feed.id) }}
             />
           ) : null}
           <IconButton
@@ -313,33 +298,30 @@ export function FeedRail({ state, controller, t, compact, onPick }: FeedRailProp
             label={`${t('action.remove')}: ${feed.title}`}
             small
             className="gf-rail-x"
-            onClick={function (event) { event.stopPropagation(); setCreating(null); setPendingRemove(feed.id) }}
+            onClick={function () { setCreating(null); setPendingRemove(feed.id) }}
           />
         </div>,
       )
     }
     rows.push(
       <div key={`folder:${name}`} className="gf-folder">
-        <div
-          className="gf-folder-head"
-          role="button"
-          tabIndex={0}
-          aria-expanded={open}
-          onClick={function () { controller.setFolderOpen(name, !open) }}
-          onKeyDown={function (event: ReactKeyboardEvent<HTMLDivElement>) {
-            if (event.target !== event.currentTarget) return
-            if (event.key === 'Enter' || event.key === ' ') controller.setFolderOpen(name, !open)
-          }}
-        >
-          <Chevron open={open} />
-          <span className="gf-folder-name">{name}</span>
+        <div className="gf-folder-head">
+          <button
+            type="button"
+            className="gf-folder-main"
+            aria-expanded={open}
+            onClick={function () { controller.setFolderOpen(name, !open) }}
+          >
+            <Chevron open={open} />
+            <span className="gf-folder-name">{name}</span>
+          </button>
           {unread ? (
             <IconButton
               icon={<IconCheckOutlineRegular size={14} />}
               label={`${t('action.markFolder')}: ${name}`}
               small
               className="gf-rail-check"
-              onClick={function (event) { event.stopPropagation(); controller.markFolder(name) }}
+              onClick={function () { controller.markFolder(name) }}
             />
           ) : null}
           <span className="count">{unread ? String(unread) : ''}</span>
