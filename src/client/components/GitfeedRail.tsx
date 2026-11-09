@@ -11,7 +11,7 @@ import {
 import { Chevron } from '../icons.js'
 import { DEFAULT_LIST, LIST_MAX, LIST_MIN } from '../constants.js'
 import { useElementWidth, useKeyboard, useMount, useOutsideClose } from '../hooks.js'
-import { clamp, fmtIn, fmtTime } from '../util.js'
+import { clamp } from '../util.js'
 import type { ClientState, GitfeedRailProps } from '../types.js'
 import type { Controller } from '../types.js'
 import type { Translate } from '../locales.js'
@@ -22,7 +22,7 @@ import { IconButton } from './Controls.js'
 import { FilterTabs, SearchBox } from './FilterBar.js'
 import { ErrorState } from './Placeholders.js'
 import { DisplayPrefs } from './Prefs.js'
-import { jobOf, RefreshState } from './Status.js'
+import { jobOf, jobWords, RefreshState } from './Status.js'
 import { Toasts } from './Toasts.js'
 
 function RailMenu({ state, controller, t, onClose }: {
@@ -48,36 +48,16 @@ function RailMenu({ state, controller, t, onClose }: {
   }
   const fetchJob = jobOf(state, 'fetch')
   const syncJob = jobOf(state, 'git')
-  const fetchCadence = fetchJob && fetchJob.enabled
-    ? t('status.autoEvery', { n: Math.max(1, Math.round(fetchJob.intervalMs / 60000)) })
+  const fetch = jobWords(fetchJob, t)
+  const sync = jobWords(syncJob, t)
+  // A run in progress has no counts yet, and the previous run's figures would
+  // be stale beside it, so the marker says "running" on its own.
+  const fetchInfo = fetchJob
+    ? [fetchJob.running ? t('status.running') : fetch.last, fetchJob.running ? '' : fetch.feeds, fetchJob.running ? '' : fetch.counts]
+      .filter(Boolean).join(' · ')
     : ''
-  const fetchNext = fetchJob && fetchJob.nextDueAt
-    ? ` · ${t('status.nextIn', { age: fmtIn(fetchJob.nextDueAt) })}`
-    : ''
-  const fetchState = fetchJob
-    ? fetchJob.running
-      ? t('status.running')
-      : `${t('status.lastRefresh')}: ${fetchJob.lastRunAt ? fmtTime(fetchJob.lastRunAt) : t('status.never')}`
-    : ''
-  const fetchCounts = fetchJob && fetchJob.last && !fetchJob.running
-    ? [
-      t('status.feedCount', { n: fetchJob.last.detail?.feeds ?? 0 }),
-      t('status.fetchLine', {
-        fresh: fetchJob.last.detail?.added ?? 0,
-        failed: fetchJob.last.detail?.failed ?? 0,
-      }),
-    ].join(' · ')
-    : ''
-  const fetchInfo = `${fetchState}${fetchCounts ? ` · ${fetchCounts}` : ''}`
-  const syncCadence = syncJob && syncJob.enabled
-    ? t('status.autoSyncEvery', { n: Math.max(1, Math.round(syncJob.intervalMs / 60000)) })
-    : ''
-  const syncNext = syncJob && syncJob.nextDueAt
-    ? ` · ${t('status.nextIn', { age: fmtIn(syncJob.nextDueAt) })}`
-    : ''
-  const syncOk = syncJob && syncJob.last ? (syncJob.last.ok ? t('status.synced') : t('status.syncFailed')) : ''
   const syncState = syncJob && syncJob.lastRunAt
-    ? `${t('status.lastSync')}: ${fmtTime(syncJob.lastRunAt)}${syncOk ? ` · ${syncOk}` : ''}`
+    ? [sync.last, sync.verdict].filter(Boolean).join(' · ')
     : null
   return (
     <MenuSurface ref={ref} className="gf-popover gf-rail-menu">
@@ -97,13 +77,13 @@ function RailMenu({ state, controller, t, onClose }: {
       <div className="gf-menu-sep" />
       <div className="gf-menu-label">{t('menu.refresh')}</div>
       <div className="gf-menu-info">
-        {fetchJob && fetchJob.enabled ? `${fetchCadence}${fetchNext}` : t('status.autoOff')}
+        {fetchJob && fetchJob.enabled ? [fetch.cadence, fetch.next].filter(Boolean).join(' · ') : t('status.autoOff')}
       </div>
       {fetchJob ? <div className="gf-menu-info">{fetchInfo}</div> : null}
       <div className="gf-menu-sep" />
       <div className="gf-menu-label">{t('menu.sync')}</div>
       <div className="gf-menu-info" title={syncJob?.error ?? undefined}>
-        {syncJob && syncJob.enabled ? `${syncCadence}${syncNext}` : t('status.autoSyncOff')}
+        {syncJob && syncJob.enabled ? [sync.cadence, sync.next].filter(Boolean).join(' · ') : t('status.autoSyncOff')}
       </div>
       {syncState ? <div className="gf-menu-info">{syncState}</div> : null}
       <div className="gf-menu-sep" />
