@@ -75,6 +75,13 @@ try {
   const afterWrite = await service.search('tide table')
   ok(afterWrite.ids.sort().join() === 'row-long,row-new', 'a newly written row is found without a restart', afterWrite.ids)
 
+  // A query nobody waits for stops before it builds anything.
+  const aborted = new AbortController()
+  aborted.abort()
+  let refused = false
+  await service.search('tides', aborted.signal).catch(function () { refused = true })
+  ok(refused, 'a query with an aborted signal is not built', refused)
+
   // The route: the same question over the API the surface uses.
   const handler = createHandler(service)
   const server = createServer((req, res) => { void handler(req, res) })

@@ -89,6 +89,7 @@ if (engine === undefined || esbuild === undefined) {
       marks: [],
       stars: [],
       queries: [],
+      searchSignals: [],
     }
     const feed = { id: 'f1', title: 'Feed one', folder: 'News', siteUrl: null, url: null, error: null, checkedAt: null }
     globalThis.fetch = async function (url, init) {
@@ -96,6 +97,7 @@ if (engine === undefined || esbuild === undefined) {
       const body = init && init.body ? JSON.parse(init.body) : {}
       if (target.indexOf('/search') !== -1) {
         host.queries.push(body.query)
+        host.searchSignals.push(init && init.signal)
         const needle = String(body.query || '').trim().toLowerCase()
         const ids = host.items
           .filter((row) => `${row.title} ${String(row.summary).replace(/<[^>]*>/g, ' ')}`.toLowerCase().includes(needle))
@@ -301,6 +303,32 @@ if (engine === undefined || esbuild === undefined) {
     ok(host.marks.some((mark) => mark.ids.includes('m1')), 'the mark reaches the Host', host.marks)
     ok(marker.getList().length === rowsBefore, 'and the rows the reader was on stay as they were', marker.getList().length)
     marker.dispose()
+
+    // --- a query the reader replaced is cancelled, not just ignored ---
+    // The Host's index build is the expensive part; a query nobody waits for
+    // should stop where it is.
+    host.queries = []
+    host.searchSignals = []
+    const searching = createController(t, createPrefs())
+    host.items = [item('q1', 'Tides one')]
+    host.read = []
+    await loaded(searching)
+    searching.setQuery('tides')
+    searching.setQuery('one')
+    await sleep(20)
+    ok(host.searchSignals.length >= 2, 'both queries reached the Host', host.searchSignals.length)
+    ok(host.searchSignals[0].aborted === true, 'and the replaced one was aborted', host.searchSignals.map((signal) => signal.aborted))
+    ok(ids(searching).join(',') === 'q1', 'the newest answer is the one applied', ids(searching))
+    searching.dispose()
+
+    // --- a mark resolves when the Host has it ---
+    const marking = createController(t, createPrefs())
+    host.items = [item('k1', 'K one')]
+    host.read = []
+    await loaded(marking)
+    await marking.mark(['k1'], true, true)
+    ok(host.marks.some((mark) => mark.ids.includes('k1')), 'a settled mark promise means the Host has it', host.marks.length)
+    marking.dispose()
 
     // --- a queued mark is sent before the surface goes ---
     const before = host.marks.length

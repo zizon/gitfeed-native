@@ -136,6 +136,11 @@ Each slice is independently reviewable and leaves the reader working.
 | S5 | `settings()` async behind the existing cache, or the cache documented as the reason it may stay sync | `settings.ts`, call sites | low |
 | S6 | Request-signal plumbing on the HTTP routes (abort the build when the client hangs up) | `http.ts`, `index.ts` | low |
 
+**Progress.** S1–S6 are landed or resolved as of 3.7.1, each with tests in the
+suite that owns its surface (`stream.test`, `live.test`, `controller.test`,
+`search.test`, `items-model.test`). The findings above are kept as written: they
+describe the code the review was run against, not the code that replaced it.
+
 ## What this buys
 
 The stream stops having a size policy: a slow surface simply does not advance its

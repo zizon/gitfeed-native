@@ -164,7 +164,7 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
     const markIds = next.passedIds.filter(function (id) { return !state.read.has(id) })
     // Implicit marks keep their rows: a row must not vanish from under the
     // pointer. The section releases them once it has nothing unread left.
-    if (markIds.length) controller.mark(markIds, true, true)
+    if (markIds.length) void controller.mark(markIds, true, true)
   }, [offsets, entries, groupFloor, groupBy, markOnScroll, state.read, state.filter, controller])
 
   const onScroll = useCallback(function () {

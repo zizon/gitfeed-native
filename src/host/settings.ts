@@ -103,6 +103,13 @@ let cache: { root: string; mtime: number; value: RepoConfig } | null = null
 /**
  * Read `config.json` with environment overrides applied.
  *
+ * Synchronous on purpose, and the one place this is true. The file is a few
+ * hundred bytes, it is read only when its mtime moves, and the result is cached
+ * for every call in between — so the cost of the sync read is a stat on the rare
+ * change, which is below the noise of the async work every caller is already
+ * inside. Making it a promise would push `await` through every snapshot read for
+ * that stat.
+ *
  * Throws a readable error when the file exists but is not valid JSON; a
  * missing file keeps the built-in defaults so a fresh checkout still mounts.
  * @param {string} root checkout directory.

@@ -91,10 +91,12 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
   /** The last explicit scope mark, so a too-wide action can be taken back. */
   let lastScopeMark: string[] | null = null
   /**
-   * Which query the Host is answering. Only the newest answer may be applied:
-   * a slower earlier one would list rows for text the reader already changed.
+   * Which query the Host is answering, and how to cancel it. Only the newest
+   * answer may be applied, and the query it replaced is told to stop: the
+   * Host's index build is the expensive part, and nobody is waiting for it.
    */
   let searchSeq = 0
+  let searchAbort: AbortController | null = null
   /**
    * Whether the list is scrolled into the archive. The transport asks before it
    * lets a refresh put rows where the reader is looking; it is not published,
@@ -223,14 +225,18 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
    */
   function searchFor(needle: string): void {
     const seq = ++searchSeq
-    transport.search(needle).then(function (ids) {
+    if (searchAbort) searchAbort.abort()
+    const controller = new AbortController()
+    searchAbort = controller
+    transport.search(needle, controller.signal).then(function (ids) {
       // A newer query was typed while this one was answered.
-      if (seq !== searchSeq) return
+      if (seq !== searchSeq || controller.signal.aborted) return
       if (ui.query.trim() !== needle) return
       setUi({ searchIds: new Set(ids) })
       bumpList()
     }).catch(function (err: unknown) {
-      if (seq !== searchSeq) return
+      // A cancelled query says nothing: the reader already moved on.
+      if (seq !== searchSeq || controller.signal.aborted) return
       toast(t('toast.failed', { error: messageOf(err) }), true)
       setUi({ searchIds: new Set() })
       bumpList()
@@ -270,15 +276,19 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
    * them so nothing moves under the pointer; an explicit "mark these read"
    * command drops them, because that is the feedback the reader asked for.
    */
-  function mark(ids: string[], value: boolean, keepList?: boolean): void {
+  function mark(ids: string[], value: boolean, keepList?: boolean): Promise<void> {
     const clean = (Array.isArray(ids) ? ids : []).filter(function (id) {
       return typeof id === 'string' && id.length > 0 && id.length < 64
     })
-    if (!clean.length) return
+    if (!clean.length) return Promise.resolve()
     // An implicit mark keeps the rows that are on screen; the transport applies
     // the mark and holds those rows until the scope changes.
     const shown = keepList && value ? new Set(getList().map(function (item) { return item.id })) : null
-    transport.mark(clean, value, shown)
+    const request = transport.mark(clean, value, shown)
+    // The transport already reconnected and told the reader what failed; most
+    // callers are event handlers that never look at this promise.
+    request.catch(function () { })
+    return request
   }
 
   /**
@@ -352,7 +362,7 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     }
     if (!data.byId.has(id)) return
     setUi({ current: id })
-    if (!data.read.has(id)) mark([id], true, true)
+    if (!data.read.has(id)) void mark([id], true, true)
   }
 
   function closeArticle() {
@@ -380,6 +390,7 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     }
     // An empty box is the whole view again, and no answer is pending for it.
     searchSeq += 1
+    if (searchAbort) searchAbort.abort()
     if (ui.searchIds) setUi({ searchIds: null })
   }
 
@@ -399,7 +410,7 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     // Marking read keeps the row where it is, the way opening an article does:
     // the section fade or the band trim lets it go once it is out of the way.
     // Marking unread puts it back, so that direction rebuilds at once.
-    mark([id], !isRead, !isRead)
+    void mark([id], !isRead, !isRead)
     if (isRead) bumpList()
   }
 
@@ -445,6 +456,7 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     // scope kept reachable go with it.
     if (ui.query || ui.feedId) clearSticky()
     searchSeq += 1
+    if (searchAbort) searchAbort.abort()
     setUi({ query: '', feedId: null, searchIds: null })
   }
 
@@ -455,7 +467,7 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
   function runScopeMark(ids: string[]): void {
     if (!ids.length) return
     lastScopeMark = ids.slice()
-    mark(ids, true, false)
+    void mark(ids, true, false)
     bumpList()
     toast(t('toast.marked', { n: ids.length }), false, true)
   }
@@ -493,7 +505,7 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     const last = lastScopeMark
     lastScopeMark = null
     if (!last || !last.length) return
-    mark(last, false, false)
+    void mark(last, false, false)
     bumpList()
     toast(t('toast.unmarked', { n: last.length }))
   }
@@ -575,7 +587,7 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     subscribe: subscribe,
     reader: reader,
     getList: getList,
-    load: transport.load,
+    reconnect: transport.reconnect,
     mark: mark,
     select: select,
     closeArticle: closeArticle,

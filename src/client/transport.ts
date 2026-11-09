@@ -58,15 +58,24 @@ export interface TransportPorts {
 }
 
 export interface Transport {
-  load: (options?: { force?: boolean }) => Promise<void>
-  mark: (ids: string[], value: boolean, shown: ReadonlySet<string> | null) => void
+  /** Replace the stream: the only way the reader gets state again. */
+  reconnect: () => void
+  /**
+   * Mark rows, optimistically and in the next flush.
+   * @returns settled when the Host has the flush; rejected when it did not.
+   */
+  mark: (ids: string[], value: boolean, shown: ReadonlySet<string> | null) => Promise<void>
   star: (id: string, on: boolean) => Promise<void>
   addFeed: (url: string, folder: string) => Promise<boolean>
   removeFeed: (id: string) => Promise<boolean>
   setFeedFolder: (id: string, folder: string) => Promise<boolean>
   runAction: (name: string) => Promise<void>
-  /** Ask the Host which rows match a query; empty when the query is blank. */
-  search: (query: string) => Promise<string[]>
+  /**
+   * Ask the Host which rows match a query; empty when the query is blank.
+   * @param query - what the reader typed.
+   * @param signal - cancels a query the reader has already replaced.
+   */
+  search: (query: string, signal?: AbortSignal) => Promise<string[]>
   mount: () => void
   unmount: () => void
   dispose: () => void
@@ -113,6 +122,8 @@ export function createTransport(ports: TransportPorts): Transport {
 
   let flushTimer: ReturnType<typeof setTimeout> | null = null
   let freshTimer: ReturnType<typeof setTimeout> | null = null
+  /** Mark promises waiting for the next flush to tell them what happened. */
+  let markWaiters: Array<{ resolve: () => void; reject: (error: unknown) => void }> = []
   let visibilityHandler: (() => void) | null = null
   let mounted = 0
   let disposed = false
@@ -128,14 +139,16 @@ export function createTransport(ports: TransportPorts): Transport {
   let streamAttempts = 0
   let streamRetry: ReturnType<typeof setTimeout> | null = null
 
-  function request(route: string, body?: unknown): Promise<ApiResponse> {
-    return fetch(PREFIX + route, {
+  function request(route: string, body?: unknown, signal?: AbortSignal): Promise<ApiResponse> {
+    const init: RequestInit = {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body || {}),
       cache: 'no-store',
       credentials: 'same-origin',
-    }).then(async function (res) {
+    }
+    if (signal) init.signal = signal
+    return fetch(PREFIX + route, init).then(async function (res) {
       let payload: ApiResponse = {}
       try {
         payload = (await res.json()) as ApiResponse
@@ -225,25 +238,14 @@ export function createTransport(ports: TransportPorts): Transport {
   }
 
   /**
-   * Make sure the reader is current. There is no state request to make: the
-   * Host announces its state over the stream, so this only makes sure the
-   * stream is up.
-   * @param options - `force` replaces a live stream instead of leaving it alone.
-   */
-  function load(options?: { force?: boolean }): Promise<void> {
-    if (!streaming || options?.force === true) openStream()
-    return Promise.resolve()
-  }
-
-  /**
    * Ask the Host which rows match a query. The body text is the Host's to
    * search: it holds it whole, and the reader holds the list's half of it.
    * @param query - what the reader typed.
    * @returns the matching ids, in archive order.
    */
-  function search(query: string): Promise<string[]> {
+  function search(query: string, signal?: AbortSignal): Promise<string[]> {
     if (!query.trim()) return Promise.resolve([])
-    return request('/search', { query: query }).then(function (payload) {
+    return request('/search', { query: query }, signal).then(function (payload) {
       return Array.isArray(payload.ids) ? payload.ids : []
     })
   }
@@ -400,6 +402,17 @@ export function createTransport(ports: TransportPorts): Transport {
   }
 
   /**
+   * Replace the stream. The reader has no state request to make, so getting its
+   * state again means reconnecting; a surface that is already streaming can use
+   * it to ask for a fresh whole state (the Retry button after a Host restart).
+   */
+  function reconnect(): void {
+    if (disposed) return
+    closeStream()
+    openStream()
+  }
+
+  /**
    * Open the surface's stream. This is the only path: the Host sends the whole
    * state once and then only what changed, and a page whose client bundle is
    * newer than the running Host says so instead of showing an empty list.
@@ -465,26 +478,27 @@ export function createTransport(ports: TransportPorts): Transport {
     const unreadIds = Array.from(pendingUnread)
     pendingRead.clear()
     pendingUnread.clear()
-    if (!readIds.length && !unreadIds.length) return
+    // Every mark queued since the last flush settles with it: one write is one
+    // answer, and the caller's promise means "the Host has this".
+    const waiting = markWaiters
+    markWaiters = []
+    if (!readIds.length && !unreadIds.length) {
+      for (const settle of waiting) settle.resolve()
+      return
+    }
     const jobs: Array<Promise<ApiResponse>> = []
     if (readIds.length) jobs.push(request('/mark', { ids: readIds, read: true }))
     if (unreadIds.length) jobs.push(request('/mark', { ids: unreadIds, read: false }))
     Promise.all(jobs).then(function () {
-      // No reload here. The marks are already applied, and reloading after
-      // every burst rebuilt the rows, the count, and the digest text under the
-      // reader's pointer several times a second while scrolling — the list that
-      // flashed while it was being read. Marks are the one write whose result
-      // the caller already holds; the poll and every scope change still bring
-      // whatever changed elsewhere.
-      //
-      // And the version the mark answers with is *not* adopted: it describes
-      // the root as it stands, which may already hold item shards this reader
-      // never loaded. Adopting it made the next poll answer "unchanged", and
-      // those rows were never delivered — rows missing until something else
-      // moved the version. The version stays the one the last full load named.
+      // The Host announces the mark back as a delta; the version its answer
+      // carries is not adopted, because it describes the root as it stands —
+      // including item shards this reader never loaded. Adopting it made the
+      // next request answer "unchanged" and those rows were never delivered.
+      for (const settle of waiting) settle.resolve()
     }).catch(function (err: unknown) {
+      for (const settle of waiting) settle.reject(err)
       ports.toast(t('toast.readFailed', { error: messageOf(err) }), true)
-      load({ force: true }).catch(function () { })
+      reconnect()
     })
   }
 
@@ -495,7 +509,7 @@ export function createTransport(ports: TransportPorts): Transport {
    * @param shown the rows on screen when an implicit mark keeps them; null when
    * the mark should drop them.
    */
-  function mark(ids: string[], value: boolean, shown: ReadonlySet<string> | null): void {
+  function mark(ids: string[], value: boolean, shown: ReadonlySet<string> | null): Promise<void> {
     const read = new Set(data().read)
     for (const id of ids) {
       if (value) read.add(id)
@@ -516,14 +530,15 @@ export function createTransport(ports: TransportPorts): Transport {
     }
     ports.setData({ read: read })
     if (!flushTimer) flushTimer = setTimeout(flushMarks, 350)
+    return new Promise(function (resolve, reject) {
+      markWaiters.push({ resolve: resolve, reject: reject })
+    })
   }
 
   function star(id: string, on: boolean): Promise<void> {
     // The load that follows is what settles the version: the answer to the
     // star names the root, not the state this reader is holding.
-    return request('/star', { ids: [id], star: on }).then(function () {
-      return load().catch(function () { })
-    })
+    return request('/star', { ids: [id], star: on }).then(function () { })
   }
 
   async function addFeed(url: string, folder: string): Promise<boolean> {
@@ -650,7 +665,7 @@ export function createTransport(ports: TransportPorts): Transport {
   }
 
   return {
-    load: load,
+    reconnect: reconnect,
     search: search,
     mark: mark,
     star: star,

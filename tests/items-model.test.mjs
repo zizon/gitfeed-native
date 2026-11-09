@@ -171,6 +171,15 @@ ok(listed.items.length === 3, 'the agent tool still lists rows')
   removeRoot(entityRoot)
 }
 
+// A state build nobody is waiting for stops at its first await.
+{
+  const cancelled = new AbortController()
+  cancelled.abort()
+  let refused = false
+  await service.getState(null, null, cancelled.signal).catch(function () { refused = true })
+  ok(refused, 'a cancelled state build does not read the model', refused)
+}
+
 service.dispose()
 removeRoot(root)
 finish()

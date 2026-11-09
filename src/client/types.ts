@@ -77,8 +77,15 @@ export interface Controller {
    */
   reader: ReaderSource
   getList(): Item[]
-  load(options?: { force?: boolean }): Promise<void>
-  mark(ids: string[], value: boolean, keepList?: boolean): void
+  /** Replace the stream; the reader holds no state request to make. */
+  reconnect(): void
+  /**
+   * Mark rows; resolves when the Host has the flush, rejects when it did not.
+   * @param ids - item ids.
+   * @param value - target read state.
+   * @param [keepList] - keep the rows listed until the scope changes.
+   */
+  mark(ids: string[], value: boolean, keepList?: boolean): Promise<void>
   select(id: string): void
   closeArticle(): void
   selectFeed(id: string | null): void

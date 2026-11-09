@@ -66,6 +66,21 @@ async function readBody(req: IncomingMessage): Promise<ApiBody> {
 }
 
 /**
+ * A signal that fires when the response is over — sent, or the client gone.
+ *
+ * Only reads take it. A build nobody is waiting for should stop; a write must
+ * finish, because its side effect is the point and a half-done fetch is worse
+ * than a fetch nobody watched.
+ * @param res - the response the work is being done for.
+ * @returns an abort signal tied to that response's lifetime.
+ */
+function responseSignal(res: ServerResponse): AbortSignal {
+  const controller = new AbortController()
+  res.on('close', function () { controller.abort() })
+  return controller.signal
+}
+
+/**
  * Create the Node request handler mounted at the web server prefix.
  * @param {object} service Host reader created by `createGitfeed`.
  * @returns {(req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse) => Promise<void>} handler.
@@ -93,7 +108,7 @@ export function createHandler(service: GitfeedService) {
       if (route === '/state' && (method === 'GET' || method === 'HEAD')) {
         const known = url.searchParams.get('version') || undefined
         const knownItems = url.searchParams.get('itemsVersion') || undefined
-        const state = await service.getState(known, knownItems)
+        const state = await service.getState(known, knownItems, responseSignal(res))
         if (method === 'HEAD') {
           sendEmpty(res, 200)
           return
@@ -110,7 +125,7 @@ export function createHandler(service: GitfeedService) {
       const input = await readBody(req)
 
       if (route === '/search') {
-        const result = await service.search(input.query)
+        const result = await service.search(input.query, responseSignal(res))
         sendJson(res, 200, { ok: true, ids: result.ids })
         return
       }
@@ -168,6 +183,9 @@ export function createHandler(service: GitfeedService) {
 
       sendJson(res, 404, { ok: false, error: 'no such endpoint' })
     } catch (err) {
+      // A client that went away is not an error to report to it; the response
+      // is already unreachable.
+      if (res.destroyed) return
       const status = /too large|invalid JSON/.test(messageOf(err)) ? 400 : 500
       if (!res.headersSent) sendJson(res, status, { ok: false, error: messageOf(err) })
       else res.end()

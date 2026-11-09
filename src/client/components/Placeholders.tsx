@@ -19,7 +19,7 @@ export function ErrorState({ state, controller, t }: {
         <Button
           variant="primary"
           size="sm"
-          onClick={function () { void controller.load({ force: true }) }}
+          onClick={function () { controller.reconnect() }}
         >
           {t('action.retry')}
         </Button>

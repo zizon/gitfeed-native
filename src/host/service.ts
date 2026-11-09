@@ -195,8 +195,17 @@ export function createGitfeed(options: GitfeedOptions) {
     return run
   }
 
-  /** The whole state, read from disk, in the shape the stream diffs. */
-  async function readSnapshot(cfg: RepoConfig, version: string, recomputeGit: boolean): Promise<LiveSnapshot> {
+  /**
+   * The whole state, read from disk, in the shape the stream diffs.
+   * @param cfg - the reader's settings.
+   * @param recomputeGit - re-read the git facts the status line shows.
+   * @param signal - cancels between reads.
+   * @returns the state, carrying the version it measured for itself.
+   */
+  async function readSnapshot(cfg: RepoConfig, recomputeGit: boolean, signal?: AbortSignal): Promise<LiveSnapshot> {
+    signal?.throwIfAborted()
+    const version = await fileVersion()
+    signal?.throwIfAborted()
     const model = await buildItems()
     const data = await buildSnapshot(cfg, model.items)
     return {
@@ -228,10 +237,11 @@ export function createGitfeed(options: GitfeedOptions) {
     return serialize(async function () {
       if (disposed) return
       try {
-        const version = await fileVersion()
         const held = live.info()
-        if (!options?.force && held && held.version === version) return
-        const next = await readSnapshot(settings(), version, options?.git === true || held === null)
+        // A cheap look decides whether a rebuild is worth it at all; the
+        // snapshot itself measures the version it actually read.
+        if (!options?.force && held && held.version === await fileVersion()) return
+        const next = await readSnapshot(settings(), options?.git === true || held === null)
         live.apply(next)
       } catch (err) {
         logger.warn(`gitfeed: could not refresh the reader: ${messageOf(err)}`)
@@ -487,7 +497,7 @@ export function createGitfeed(options: GitfeedOptions) {
    * first query on a cold process reads every body, and the Host serves the
    * whole application, so it must not block on that.
    */
-  async function searchableTexts(items: readonly Item[], titles: Map<string, string>): Promise<Map<string, string>> {
+  async function searchableTexts(items: readonly Item[], titles: Map<string, string>, signal?: AbortSignal): Promise<Map<string, string>> {
     const signature = titlesSignature(titles)
     const rebuildAll = searchTexts === null || signature !== searchTitles
     if (rebuildAll) {
@@ -503,6 +513,7 @@ export function createGitfeed(options: GitfeedOptions) {
     }
     if (!rebuildAll) for (const id of texts.keys()) if (!live.has(id)) texts.delete(id)
     for (let i = 0; i < todo.length; i++) {
+      signal?.throwIfAborted()
       const item = todo[i]
       texts.set(item.id, `${item.title} ${plainText(item.summary)} ${titles.get(item.feed) || item.feed}`.toLowerCase())
       if (i % SEARCH_CHUNK === SEARCH_CHUNK - 1) await yieldToLoop()
@@ -513,16 +524,20 @@ export function createGitfeed(options: GitfeedOptions) {
   /**
    * Ask the archive which rows match a query.
    * @param query - the reader's text; matched case-insensitively.
+   * @param signal - cancels the answer; an abandoned query stops building.
    * @returns the matching ids in archive order.
    */
-  async function search(query: unknown): Promise<{ ids: string[] }> {
+  async function search(query: unknown, signal?: AbortSignal): Promise<{ ids: string[] }> {
     touch()
     const needle = typeof query === 'string' ? query.trim().toLowerCase() : ''
     if (!needle) return { ids: [] }
+    signal?.throwIfAborted()
     const model = await buildItems()
+    signal?.throwIfAborted()
     const data = await buildSnapshot(settings(), model.items)
     const titles = new Map<string, string>(data.feeds.map(function (feed): [string, string] { return [feed.id, feed.title] }))
-    const texts = await searchableTexts(model.items, titles)
+    const texts = await searchableTexts(model.items, titles, signal)
+    signal?.throwIfAborted()
     const ids: string[] = []
     for (const item of model.items) {
       const text = texts.get(item.id)
@@ -585,9 +600,10 @@ export function createGitfeed(options: GitfeedOptions) {
    * @param {string} [knownItemsVersion] item-model version the caller holds.
    * @returns {Promise<object>} state payload.
    */
-  async function getState(knownVersion?: string, knownItemsVersion?: string): Promise<StateResponse> {
+  async function getState(knownVersion?: string, knownItemsVersion?: string, signal?: AbortSignal): Promise<StateResponse> {
     touch()
     const version = await fileVersion()
+    signal?.throwIfAborted()
     let cfg
     try {
       cfg = settings()
@@ -621,7 +637,9 @@ export function createGitfeed(options: GitfeedOptions) {
       })
     }
     if (knownVersion && knownVersion === version) return Object.assign({ unchanged: true }, base)
+    signal?.throwIfAborted()
     const model = await buildItems()
+    signal?.throwIfAborted()
     const data = await buildSnapshot(cfg, model.items)
     // A reader that loaded over HTTP then opens the stream must be caught up
     // from the same copy the stream holds, so this read feeds the live state too.
