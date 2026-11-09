@@ -68,10 +68,29 @@ export interface Tag {
   selfClosing: boolean
 }
 
+/**
+ * The three patterns one element name needs, compiled once. A run over a few
+ * hundred feeds does tens of thousands of lookups, and building a RegExp for
+ * each one was the parser's largest cost.
+ */
+const patterns = new Map<string, { open: RegExp; close: RegExp; attr: RegExp }>()
+
+function patternsFor(name: string): { open: RegExp; close: RegExp; attr: RegExp } {
+  let found = patterns.get(name)
+  if (found === undefined) {
+    found = {
+      open: new RegExp(`<${name}(?=[\\s/>])[^>]*>`, 'i'),
+      close: new RegExp(`</${name}\\s*>`, 'i'),
+      attr: new RegExp(`${name}\\s*=\\s*("([^"]*)"|'([^']*)')`, 'i'),
+    }
+    patterns.set(name, found)
+  }
+  return found
+}
+
 export function attr(attrs: string | null | undefined, name: string): string | null {
   if (!attrs) return null
-  const re = new RegExp(`${name}\\s*=\\s*("([^"]*)"|'([^']*)')`, 'i')
-  const m = re.exec(attrs)
+  const m = patternsFor(name).attr.exec(attrs)
   if (!m) return null
   const groups: Array<string | undefined> = m
   const value = groups[2] ?? groups[3]
@@ -80,15 +99,15 @@ export function attr(attrs: string | null | undefined, name: string): string | n
 
 export function findTag(xml: string | null | undefined, name: string): Tag | null {
   if (!xml) return null
-  const open = new RegExp(`<${name}(?=[\\s/>])[^>]*>`, 'i')
-  const m = open.exec(xml)
+  const compiled = patternsFor(name)
+  const m = compiled.open.exec(xml)
   if (!m) return null
   const tag = m[0]
   const selfClosing = /\/>\s*$/.test(tag)
   const attrs = tag.slice(name.length + 1, selfClosing ? tag.length - 2 : tag.length - 1)
   if (selfClosing) return { inner: '', attrs: attrs, selfClosing: true }
   const start = m.index + tag.length
-  const close = new RegExp(`</${name}\\s*>`, 'i').exec(xml.slice(start))
+  const close = compiled.close.exec(xml.slice(start))
   if (!close) return null
   return { inner: xml.slice(start, start + close.index), attrs: attrs, selfClosing: false }
 }
