@@ -175,11 +175,13 @@ export function exhaustedGroups(
   entries: readonly Entry[],
   read: ReadonlySet<string>,
   filter: Filter,
+  hold?: string | null,
 ): string[] {
   if (filter !== 'unread') return []
   const out: string[] = []
   for (const entry of entries) {
     if (entry.kind !== 'group') continue
+    if (hold && entry.group.key === hold) continue
     if (entry.group.items.every(function (item) { return read.has(item.id) })) out.push(entry.group.key)
   }
   return out

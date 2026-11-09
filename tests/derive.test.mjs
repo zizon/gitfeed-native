@@ -153,6 +153,16 @@ if (esbuild === undefined) {
       'the all filter keeps finished sections',
     )
     ok(
+      exhaustedGroups(sections, new Set(['a1', 'a2']), 'unread', 'Daily').length === 0,
+      'the section the open article sits in keeps its rows until the reader leaves it',
+    )
+    const others = exhaustedGroups(sections, new Set(['a1', 'a2', 'b1', 'b2']), 'unread', 'Daily')
+    ok(
+      others.length === 1 && others[0] !== 'Daily',
+      'and holding one section still retires the others',
+      others,
+    )
+    ok(
       exhaustedGroups(entriesOf(items, 'none', 10, 10, titleOf, folderOf), new Set(['a1', 'a2']), 'unread').length === 0,
       'an ungrouped list has no section to finish',
     )

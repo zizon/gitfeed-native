@@ -275,9 +275,22 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
    * so nothing moves under the pointer, so they fade where they stand and the
    * list is rebuilt without them once the fade is done.
    */
+  // The section the open article is in keeps its rows, even once nothing in it
+  // is unread: the reader is looking at that row, and fading it out under the
+  // click is the one movement opening an article should not cause. The section
+  // leaves when the reader closes the article or moves to another one.
+  const holdKey = useMemo(function () {
+    if (!state.current) return null
+    const index = itemIndex.get(state.current)
+    if (index === undefined) return null
+    const floor = groupFloor[index]
+    if (floor < 0) return null
+    const header = entries[floor]
+    return header.kind === 'group' ? header.group.key : null
+  }, [state.current, itemIndex, groupFloor, entries])
   const finished = useMemo(function () {
-    return exhaustedGroups(entries, state.read, state.filter)
-  }, [entries, state.read, state.filter])
+    return exhaustedGroups(entries, state.read, state.filter, holdKey)
+  }, [entries, state.read, state.filter, holdKey])
   const finishedKey = finished.join('\u0000')
   const finishedSet = new Set(finished)
   useEffect(function () {

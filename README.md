@@ -375,9 +375,10 @@ not carry its own theme setting.
   A row that is marked read stays in the Unread list while it is still under
   the pointer, so nothing shifts under it while reading; then it goes without
   the list moving: a grouped section fades where it stands and leaves once
-  nothing in it is unread, and a flat list lets rows go in one batch as they
-  scroll out of the mounted band. A feed or folder that was on screen stays in
-  the Feeds list for the same reason.
+  nothing in it is unread — except the section the open article is in, which
+  keeps its rows until the reader closes it or opens another — and a flat list
+  lets rows go in one batch as they scroll out of the mounted band. A feed or
+  folder that was on screen stays in the Feeds list for the same reason.
 - **Read on scroll**: a row counts as read once it has been on screen for a
   moment and the viewport has moved off it, so a fling or a scrollbar drag
   leaves everything it skipped unread. The list scrolls one screen past its
