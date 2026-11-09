@@ -9,13 +9,14 @@ import {
   MenuItemButton,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { GROUP_H, ROW_H, ROW_H_PLAIN } from '../constants.js'
-import { entriesOf, exhaustedGroups } from '../derive.js'
+import { entriesOf, exhaustedGroups, folderNames } from '../derive.js'
 import type { Entry, GroupEntry } from '../derive.js'
 import { groupFloorOf, offsetIndex, settledAbove, windowOf } from '../window.js'
 import type { ItemListProps, MarkScope } from '../types.js'
 import { fmtTime } from '../util.js'
 import { IconStar } from '../icons.js'
 import { EmptyState, IconButton } from './Controls.js'
+import { FolderMenu } from './FolderMenu.js'
 
 /** One menu row: the scope label on the left and what it would touch on the right. */
 function scopeLabel(label: string, n: number) {
@@ -268,16 +269,18 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
   const pinned = range.headerIndex === null ? undefined : entries[range.headerIndex]
 
   /**
-   * One section header: its name, and the two things done *while reading a
-   * feed* — mark the section read, and stop following it. A folder section can
-   * only be marked. The same markup renders in place and pinned at the top of
-   * the band, so the pinned bar never drifts from the row it stands for.
+   * One section header: its name, and the things done *while reading a feed* —
+   * move it to another folder, mark the section read, and stop following it. A
+   * folder section can only be marked. The same markup renders in place and
+   * pinned at the top of the band, so the pinned bar never drifts from the row
+   * it stands for.
    * @param entry - the section header entry.
    * @returns the header's children.
    */
   function sectionHeader(entry: GroupEntry) {
     const groupUnread = entry.group.items.filter(function (item) { return !state.read.has(item.id) }).length
     const feedId = groupBy === 'feed' ? entry.group.key : ''
+    const feed = feedId ? state.feedMap.get(feedId) || null : null
     const confirming = feedId !== '' && pendingUnsub === feedId
     return (
       <>
@@ -312,6 +315,38 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
               </Button>,
             ]
             : [
+              // A source's own actions sit together, where unsubscribe already
+              // is: the header is the one place a source is acted on without
+              // leaving the rows.
+              feedId
+                ? (
+                  <FolderMenu
+                    key="move"
+                    folder={feed ? feed.folder : null}
+                    folders={folderNames(state.feeds)}
+                    label={t('action.moveFolder')}
+                    t={t}
+                    align="end"
+                    onMove={function (name) {
+                      setPendingUnsub(null)
+                      void controller.setFeedFolder(feedId, name)
+                    }}
+                    trigger={function (picker) {
+                      return (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="gf-group-read"
+                          title={t('action.moveSource')}
+                          onClick={picker.toggle}
+                        >
+                          {t('action.move')}
+                        </Button>
+                      )
+                    }}
+                  />
+                )
+                : null,
               feedId
                 ? (
                   <Button

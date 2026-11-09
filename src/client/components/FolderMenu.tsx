@@ -11,9 +11,8 @@
 import { useState } from 'react'
 import { IconPlusOutlineRegular, Menu } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
-import { IconFolder } from '../icons.js'
+import type { ReactNode } from '../react.js'
 import type { Translate } from '../locales.js'
-import { IconButton } from './Controls.js'
 
 /** The row id the "name a new folder" entry carries; not a folder name. */
 const NEW = '\u0000new'
@@ -25,10 +24,8 @@ export interface FolderMenuProps {
   folder: string | null
   /** Every folder name in use, from `folderNames`. */
   folders: readonly string[]
-  /** The menu's heading, and the trigger's label unless `title` says more. */
+  /** The menu's heading. */
   label: string
-  /** The trigger's own label, e.g. which source it would move. */
-  title?: string
   t: Translate
   /** Whether the menu offers to name a new folder. */
   allowNew?: boolean
@@ -38,6 +35,12 @@ export interface FolderMenuProps {
   onMove: (folder: string) => void
   /** Ask the caller for a new name: naming a folder needs a field, not a row. */
   onNew?: () => void
+  /**
+   * The control that opens the picker. It is the surface's own: a row opens it
+   * with an icon, a section header with the text button its other source
+   * actions use, and neither should borrow the other's shape.
+   */
+  trigger: (picker: { open: boolean; toggle: (event?: { stopPropagation: () => void }) => void }) => ReactNode
 }
 
 export function FolderMenu(props: FolderMenuProps) {
@@ -59,6 +62,12 @@ export function FolderMenu(props: FolderMenuProps) {
       icon: <IconPlusOutlineRegular size={14} />,
     })
   }
+  function toggle(event?: { stopPropagation: () => void }) {
+    // A row under the trigger selects the source; the trigger is an action on
+    // that row, not a way into it.
+    if (event) event.stopPropagation()
+    setOpen(!open)
+  }
   function select(id: string) {
     setOpen(false)
     if (id === NEW) {
@@ -72,21 +81,7 @@ export function FolderMenu(props: FolderMenuProps) {
     <Menu
       open={open}
       className="gf-foldermenu"
-      anchor={(
-        <IconButton
-          icon={<IconFolder size={14} />}
-          label={props.title || props.label}
-          small
-          hasPopup="menu"
-          expanded={open}
-          onClick={function (event) {
-            // The row under the trigger selects the source; the trigger is an
-            // action on that row, not a way into it.
-            event.stopPropagation()
-            setOpen(!open)
-          }}
-        />
-      )}
+      anchor={props.trigger({ open: open, toggle: toggle })}
       items={items}
       selectedId={`${FOLDER}${current}`}
       onSelect={select}

@@ -12,7 +12,7 @@ import { folderNames } from '../derive.js'
 import { EmptyArticle } from './Placeholders.js'
 import { IconButton } from './Controls.js'
 import { FolderMenu } from './FolderMenu.js'
-import { IconStar, IconUnreadDot } from '../icons.js'
+import { IconFolder, IconStar, IconUnreadDot } from '../icons.js'
 import { fmtDate, sanitize } from '../util.js'
 
 export function Article({ state, controller, t, compact }: ArticleProps) {
@@ -84,10 +84,20 @@ export function Article({ state, controller, t, compact }: ArticleProps) {
               folder={feed.folder}
               folders={folderNames(state.feeds)}
               label={t('action.moveSource')}
-              title={`${t('action.moveSource')}: ${feed.title}`}
               t={t}
               align="end"
               onMove={function (name) { void controller.setFeedFolder(feed.id, name) }}
+              trigger={function (picker) {
+                return (
+                  <IconButton
+                    icon={<IconFolder size={14} />}
+                    label={`${t('action.moveSource')}: ${feed.title}`}
+                    hasPopup="menu"
+                    expanded={picker.open}
+                    onClick={picker.toggle}
+                  />
+                )
+              }}
             />
           )
           : null}

@@ -10,7 +10,7 @@ import {
   IconWarningOutlineRegular,
   Input,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import { Chevron } from '../icons.js'
+import { Chevron, IconFolder } from '../icons.js'
 import { folderNames } from '../derive.js'
 import { FolderMenu } from './FolderMenu.js'
 import type { Feed } from '../../shared/types.js'
@@ -276,7 +276,6 @@ export function FeedRail({ state, controller, t, compact, onPick }: FeedRailProp
             folder={feed.folder}
             folders={folders}
             label={t('action.moveFolder')}
-            title={`${t('action.moveFolder')}: ${feed.title}`}
             t={t}
             allowNew
             onMove={function (name) {
@@ -286,6 +285,18 @@ export function FeedRail({ state, controller, t, compact, onPick }: FeedRailProp
             onNew={function () {
               setPendingRemove(null)
               setCreating({ id: feed.id, value: '' })
+            }}
+            trigger={function (picker) {
+              return (
+                <IconButton
+                  icon={<IconFolder size={14} />}
+                  label={`${t('action.moveFolder')}: ${feed.title}`}
+                  small
+                  hasPopup="menu"
+                  expanded={picker.open}
+                  onClick={picker.toggle}
+                />
+              )
             }}
           />
           {count ? (

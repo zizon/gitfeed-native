@@ -340,13 +340,16 @@ not carry its own theme setting.
   again — so a move is one click and lands in a folder that exists.
   `New folder…` is its own row and swaps the feed's row for a field to name one.
   Nothing is re-fetched: the entry keeps its id, URL, title, and custom-feed
-  declaration, so only the tree above it changes. The same picker sits in the
-  article's action row, because the source is named in the metadata line beside
-  it: a source is moved while it is being read, not by leaving the article.
+  declaration, so only the tree above it changes. The picker opens from three
+  controls, one per place a source is in front of you: the feed row, the source
+  section header next to `Unsubscribe` (the same grammar its other source
+  actions use), and the article's action row — which is the only one reachable
+  while reading in the Sidebar, where the list and its header sit behind the
+  article.
 - **List**: one line per item, grouped by folder or source on request. A
   section header sticks to the top while its section is in view and carries
-  that section's actions — `Mark {n} read`, plus `Unsubscribe` when the section
-  is a source. Rows are virtualized at fixed heights.
+  that section's actions — `Mark {n} read`, plus `Move` and `Unsubscribe` when
+  the section is a source. Rows are virtualized at fixed heights.
   A row that is marked read stays in the Unread list while it is still under
   the pointer, so nothing shifts under it while reading; then it goes without
   the list moving: a grouped section fades where it stands and leaves once
