@@ -145,6 +145,47 @@ function streamReader(response) {
   await listener.close()
 }
 
+// --- the first frame is the whole archive, and a large one must arrive ---
+// A backpressure guard that fires right after writing a big frame drops the
+// connection on the very first load: the frame is queued, not stalled, and the
+// surface sees a broken stream instead of its state.
+{
+  const body = 'x'.repeat(6 * 1024 * 1024)
+  const large = {
+    t: 'welcome',
+    protocol: 1,
+    rev: 1,
+    version: 'v1',
+    itemsVersion: 'm1',
+    items: [{ id: 'big-1', feed: 'feed-a', title: 'A long body', link: '', date: '2026-11-01T10:00:00.000Z', author: '', summary: body }],
+    read: [],
+    starred: [],
+    feeds: [],
+    reader: { hideEmptyFeeds: true, markReadOnScroll: true, groupBy: 'none' },
+    git: null,
+    schedule: [],
+    repo: '/tmp/gitfeed-root',
+    allowGit: false,
+  }
+  const controller = new AbortController()
+  const source = {
+    attach: async function (rev, send) {
+      send(large)
+      return function () {}
+    },
+  }
+  const handler = createEventsHandler(source, function () { return undefined })
+  const listener = await listen(handler)
+  const res = await fetch(`http://127.0.0.1:${listener.port}/gitfeed/events?rev=0`, { signal: controller.signal })
+  const stream = streamReader(res)
+  const text = await stream.until('"big-1"', 8000)
+  ok(text.includes('event: welcome') && text.includes('"big-1"'), 'a frame larger than a socket buffer arrives whole', text.length)
+  await stream.stop()
+  controller.abort()
+  await sleep(20)
+  await listener.close()
+}
+
 // --- a reader that cannot open its data root hears why ---
 {
   const controller = new AbortController()

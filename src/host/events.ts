@@ -31,11 +31,17 @@ export interface StreamSource {
 /** Keeps the connection warm across a proxy that idles quiet sockets out. */
 const HEARTBEAT_MS = 20000
 /**
- * Above this much unflushed output the surface is not reading, and holding the
- * bytes for it costs the whole process. Dropping the stream is safe: the
- * surface reconnects and asks for the delta from the revision it holds.
+ * Backlog allowed before a surface that stopped reading is dropped, so one
+ * stalled tab cannot hold the whole process's memory.
+ *
+ * It is checked *before* a frame is written, never after one: the first frame a
+ * surface receives is the whole archive (tens of megabytes on a real library),
+ * and a check made right after writing it sees that frame still queued and
+ * drops the connection — which is exactly what an ordinary first load looks
+ * like. A frame bigger than the cap is therefore allowed through, and the cap
+ * governs what piles up behind it.
  */
-const MAX_BUFFERED = 4 * 1024 * 1024
+const MAX_BUFFERED = 64 * 1024 * 1024
 
 /**
  * Create the request handler for the event stream route.
@@ -83,11 +89,14 @@ export function createEventsHandler(
     const life: { closed: boolean; detach: (() => void) | null } = { closed: false, detach: null }
     const write = function (chunk: string): void {
       if (life.closed) return
-      res.write(chunk)
+      // A surface that is this far behind is not reading; the reconnect that
+      // follows asks for the delta from the revision it holds.
       if (res.writableLength > MAX_BUFFERED) {
         life.closed = true
         res.destroy()
+        return
       }
+      res.write(chunk)
     }
     const send = function (frame: StreamFrame): void {
       write(`event: ${frame.t}\ndata: ${JSON.stringify(frame)}\n\n`)
