@@ -525,7 +525,8 @@ reaches them. Its own sheet covers only the surfaces kept custom below.
 - **Adopted**: `Button` for the toolbar and inline actions, `Pill` for the
   filter and group-by chips, `Input` for search and the add-feed form,
   `Menu` for the marking scope, `MenuSurface` for the preferences popover and
-  the rail menu, `Switch` for the display prefs, `Toast` for transient
+  the rail menu, `Switch` for the display prefs, `Tooltip` for the actions
+  whose labels the page bar drops when it is narrow, `Toast` for transient
   banners with an inline **Undo**, and the product `Icon*` set for the
   chevrons, checks, close, refresh, plus, ellipsis, and open-original glyphs.
 - **Kept custom, deliberately**: feed and item rows, the section header (sticky

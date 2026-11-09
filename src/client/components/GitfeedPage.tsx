@@ -9,6 +9,7 @@ import {
   IconRefreshOutlineRegular,
   IconSlidersTwoOutlineRegular,
   MenuSurface,
+  Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { DEFAULT_LIST, DEFAULT_RAIL, LIST_MAX, LIST_MIN, RAIL_MAX, RAIL_MIN } from '../constants.js'
 import { useKeyboard, useMount, useOutsideClose } from '../hooks.js'
@@ -60,6 +61,16 @@ export function GitfeedPage({ controller, t, useReader }: GitfeedPageProps) {
     }
   }
 
+  // What each action would say if its label is collapsed away: the verb, and
+  // the state that makes it the one worth pressing.
+  const pullTip = state.git && state.git.behind
+    ? `${t('action.pull')} · ${t('status.behind', { n: state.git.behind })}`
+    : t('action.pull')
+  const fetchTip = state.busy.fetch ? t('status.running') : t('action.fetch')
+  const syncTip = state.git && state.git.dirty
+    ? `${t('action.sync')} · ${t('status.dirty')}`
+    : t('action.sync')
+
   if (state.status === 'error' && !state.items.length) {
     return (
       <div className="gf gf-page">
@@ -90,16 +101,20 @@ export function GitfeedPage({ controller, t, useReader }: GitfeedPageProps) {
         <GitStatus state={state} t={t} />
         <div className="gf-actions">
           <div className="gf-prefs-wrap" ref={prefsRef}>
-            <Button
-              variant="ghost"
-              size="sm"
-              icon={<IconSlidersTwoOutlineRegular size={14} />}
-              aria-haspopup="dialog"
-              aria-expanded={prefsOpen}
-              onClick={function () { setPrefsOpen(!prefsOpen) }}
-            >
-              {t('action.prefs')}
-            </Button>
+            <Tooltip label={t('action.prefs')} side="bottom" delayMs={500} portal>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="gf-actbtn"
+                icon={<IconSlidersTwoOutlineRegular size={13} />}
+                aria-label={t('action.prefs')}
+                aria-haspopup="dialog"
+                aria-expanded={prefsOpen}
+                onClick={function () { setPrefsOpen(!prefsOpen) }}
+              >
+                <span className="gf-actbtn-label">{t('action.prefs')}</span>
+              </Button>
+            </Tooltip>
             {prefsOpen
               ? (
                 <MenuSurface className="gf-popover gf-prefs">
@@ -108,35 +123,45 @@ export function GitfeedPage({ controller, t, useReader }: GitfeedPageProps) {
               )
               : null}
           </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            icon={<IconDownloadOutlineRegular size={14} />}
-            disabled={state.busy.pull || !state.allowGit || !state.git || !state.git.repo}
-            title={state.git && state.git.behind ? t('status.behind', { n: state.git.behind }) : t('action.pull')}
-            onClick={function () { void controller.runAction('pull') }}
-          >
-            {t('action.pull')}
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            icon={<IconRefreshOutlineRegular size={14} />}
-            disabled={state.busy.fetch}
-            onClick={function () { void controller.runAction('fetch') }}
-          >
-            {state.busy.fetch ? t('status.running') : t('action.fetch')}
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            icon={<IconBranchOutlineRegular size={14} />}
-            disabled={state.busy.sync || !state.allowGit || !state.git || !state.git.repo}
-            title={state.git && state.git.dirty ? t('status.dirty') : t('action.sync')}
-            onClick={function () { void controller.runAction('sync') }}
-          >
-            {t('action.sync')}
-          </Button>
+          <Tooltip label={pullTip} side="bottom" delayMs={500} portal>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="gf-actbtn"
+              icon={<IconDownloadOutlineRegular size={13} />}
+              aria-label={pullTip}
+              disabled={state.busy.pull || !state.allowGit || !state.git || !state.git.repo}
+              onClick={function () { void controller.runAction('pull') }}
+            >
+              <span className="gf-actbtn-label">{t('action.pull')}</span>
+            </Button>
+          </Tooltip>
+          <Tooltip label={fetchTip} side="bottom" delayMs={500} portal>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="gf-actbtn"
+              icon={<IconRefreshOutlineRegular size={13} />}
+              aria-label={fetchTip}
+              disabled={state.busy.fetch}
+              onClick={function () { void controller.runAction('fetch') }}
+            >
+              <span className="gf-actbtn-label">{state.busy.fetch ? t('status.running') : t('action.fetch')}</span>
+            </Button>
+          </Tooltip>
+          <Tooltip label={syncTip} side="bottom" delayMs={500} portal>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="gf-actbtn"
+              icon={<IconBranchOutlineRegular size={13} />}
+              aria-label={syncTip}
+              disabled={state.busy.sync || !state.allowGit || !state.git || !state.git.repo}
+              onClick={function () { void controller.runAction('sync') }}
+            >
+              <span className="gf-actbtn-label">{t('action.sync')}</span>
+            </Button>
+          </Tooltip>
         </div>
       </header>
       {state.loadError

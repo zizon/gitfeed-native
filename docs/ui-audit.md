@@ -40,13 +40,16 @@ container query (`:1796`). The reader has no `@container` at all
 (`grep @container src/client/styles.ts` is empty); it wraps the whole toolbar
 instead, which makes the bar taller as the pane narrows.
 
-Consequence: three control heights in one row, and a bar that changes shape
-where the reference keeps one line.
+Measured on the assembled page at 1200px (920px bar): the four actions wrapped
+to a second row at the left, and that row was 89px tall instead of 44px.
 
-Proposal: 32px/13px actions and 8px gaps; container query that drops the
-labels; the tab row stays under the title only if it still holds at 320px.
-Needs the rendered check — this is the finding most likely to be wrong on a
-screenshot.
+**Landed.** The bar is a container (`container-type: inline-size`). Its actions
+are 32px controls with 13px labels, following the reference page; under 1140px
+they drop the labels and become 32px icon buttons, the search gives up 70px, and
+the bar stays one row — the group also takes `margin-left: auto`, so where it
+still wraps (narrow main panels) it sits at the right edge under the status
+instead of under the brand. Verified light and dark at 900px (two rows, icons
+right-aligned), 1200px (one row, icons) and 1560px (one row, labels).
 
 ### F2. Two implementations of one toolbar *(medium, debt)*
 
@@ -57,7 +60,14 @@ shared components are shared; their arrangement is not. A change to the filter
 row has to be made twice and agrees only because nobody has changed one.
 
 Proposal: one arrangement component with a `compact` flag, so the rail is a
-variant of the page bar rather than a second one.
+variant of the page bar rather than a second one. **Decided against**, after
+seeing both: the rail's first bar is a source picker with a refresh button and
+an overflow menu and no brand, its second is filters, search and the refresh
+age; the page's is brand, filters, search, the git status and four actions.
+Sharing one arrangement would make every child conditional. The parts that are
+the same (`FilterTabs`, `SearchBox`, `GitStatus`/`RefreshState`, the job words)
+already are shared components, which is where the duplication that mattered
+was.
 
 ### F3. One scheduler, three descriptions *(medium, debt)*
 
@@ -85,14 +95,15 @@ the GUI styles for itself.
 Proposal: keep the control, list it under "Kept custom, deliberately" with the
 reason, and stop claiming zero CSS for shared controls.
 
-### F5. Action explanations are native `title` *(low, debt)*
+### F5. Action explanations are native `title` *(landed with F1)*
 
-Pull and Sync carry `title` (behind count, dirty state); Fetch carries none in
-any state, including disabled, and Prefs carries none (`GitfeedPage.tsx:112`).
-The app pairs header actions with `Tooltip` (`PluginManagerPage.tsx:1689`), and
-the plugin already owns a `Tooltip`-wrapped icon button (`Controls.tsx:35`), so
-the page bar is the odd surface. Tooltips only pay for themselves once the
-labels can collapse (F1); they belong in that change, not before it.
+Pull and Sync carried `title` (behind count, dirty state); Fetch carried none in
+any state, including disabled, and Prefs carried none. The app pairs header
+actions with `Tooltip` (`PluginManagerPage.tsx:1689`), and the plugin already
+owned a `Tooltip`-wrapped icon button (`Controls.tsx:35`). All four actions are
+`Tooltip` + `aria-label` now, and the label says the state: `Sync ·
+uncommitted`, `Pull · 2 behind`. The tooltip is portalled, so it clears the
+page's own `overflow: hidden`; verified in both themes.
 
 ### F6. Loading is a sentence where the rule asks for a skeleton *(low, visual)*
 
@@ -109,14 +120,21 @@ atoms ship no empty-state component, so this is not a rule break; it is worth
 deciding once whether the reader's empty panes should look like the app's
 (this is the surface most likely to read as "another product" on first use).
 
-### F8. Selectable rows are `role="button"` with `aria-current` *(low, accessibility)*
+### F8. Rows swallow the names of the actions inside them *(low, accessibility)*
 
 `ItemList.tsx:405` and `FeedRail.tsx:127`/`:143` render rows as
 `div role="button"` with `aria-current` for the open item, and `tabIndex={-1}`
 because the reader is walked with `j`/`k`. The app uses `role="button"` divs in
-nine places, so this is a choice, not a violation; a virtualized selectable list
-is the case where `listbox`/`option` with `aria-selected` would describe what
-the pointer and the keyboard actually do.
+nine places, so the pattern is a choice, not a violation — but a `role=button`
+with real buttons inside it is not: the row's accessible name becomes the
+concatenation of its children. On the assembled page the feed rows read as
+`Hacker News 4 Move to folder: Hacker News Mark source read: Hacker News
+Unsubscribe: Hacker News`, and the item rows read as their title, feed, time and
+digest, with the star's label mixed in.
+
+Proposal: the row becomes a plain container; the name is its own button and the
+actions are siblings. That is the app's own list-row shape, and it changes what
+a screen reader announces, so it is its own commit.
 
 ### F9. Two toast hosts for one banner *(low, inspected, kept)*
 
@@ -145,9 +163,8 @@ for a new registration and a second subscriber to the same state. Kept.
    rendered page: the words it builds are compared against the parent commit's
    expressions for the same scheduler fixtures, and must be identical.
    *(landed: `jobWords()`; identical on seven fixtures)*
-3. **Chrome** — F1, F2, F5 in one change: one arrangement, the page bar's
-   measures, labels that collapse with tooltips to carry them. *(waiting for
-   the assembled page)*
+3. **Chrome** — F1 and F5. *(landed: 32px actions, labels that collapse to
+   tooltips, one row from 900px up; F2 decided against)*
 4. **States** — F6, then F7 against a rendered check. *(F6 landed: the list's
    first paint is a skeleton at the row height)*
 5. **Accessibility** — F8, if the reader is to be operated by anything but

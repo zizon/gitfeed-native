@@ -37,12 +37,25 @@ export const CSS = `
   padding: 8px 12px;
   border-bottom: 0.5px solid var(--dsw-alias-border-l1);
   background: var(--dsw-alias-bg-base);
+  /* The bar is also the container that decides when its actions may drop
+     their labels; below that width they become icon buttons with tooltips. */
+  container: gf-pagebar / inline-size;
 }
 .gf-brand { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .gf-brand-name { font-size: 20px; line-height: 28px; font-weight: 500; }
 .gf-spacer { flex: 1 1 auto; }
-.gf-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.gf-search { width: 220px; min-width: 120px; flex: none; }
+.gf-search { flex: 0 1 220px; min-width: 120px; }
+.gf-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-left: auto; }
+/* Page-toolbar actions keep the Harness page bar's control height and type
+   size rather than the menu-sized 28px capsule. */
+.gf-actbtn { height: 32px; padding: 0 12px; border-radius: var(--dsw-radius-md); font-size: 13px; line-height: 20px; }
+@container gf-pagebar (max-width: 1140px) {
+  .gf-actbtn { width: 32px; min-width: 32px; padding: 0; }
+  .gf-actbtn-label { display: none; }
+  /* The actions gave up their labels; the field gives up 70px so the bar
+     stays one row instead of dropping the group under the filters. */
+  .gf-search { flex-basis: 148px; }
+}
 .gf-search.compact { flex: 1 1 auto; width: auto; min-width: 90px; }
 .gf-pills { display: flex; flex-wrap: wrap; gap: 6px; }
 .gf-pills.compact { flex-wrap: nowrap; gap: 4px; }
