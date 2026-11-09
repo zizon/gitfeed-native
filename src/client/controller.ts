@@ -21,6 +21,7 @@ import {
   markCountsOf,
 } from './derive.js'
 import type { ReaderView } from './derive.js'
+import { LIST_MAX, LIST_MIN, RAIL_MAX, RAIL_MIN } from './constants.js'
 import type { PrefsStore } from './prefs.js'
 import { createTransport } from './transport.js'
 import type { Transport } from './transport.js'
@@ -74,8 +75,8 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     markOnScroll: saved.markOnScroll,
     showDigest: saved.showDigest,
     folderOpen: saved.folderOpen,
-    railW: clamp(saved.railW, 150, 460),
-    listW: clamp(saved.listW, 260, 760),
+    railW: clamp(saved.railW, RAIL_MIN, RAIL_MAX),
+    listW: clamp(saved.listW, LIST_MIN, LIST_MAX),
     listEpoch: 0,
     busy: {},
     toast: null,
@@ -452,12 +453,12 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
   function setWidths(patch: { railW?: number; listW?: number }): void {
     const next: { railW?: number; listW?: number } = {}
     if (typeof patch.railW === 'number' && Number.isFinite(patch.railW)) {
-      const railW = clamp(Math.round(patch.railW), 150, 460)
+      const railW = clamp(Math.round(patch.railW), RAIL_MIN, RAIL_MAX)
       next.railW = railW
       prefs.update(function (draft) { draft.railW = railW })
     }
     if (typeof patch.listW === 'number' && Number.isFinite(patch.listW)) {
-      const listW = clamp(Math.round(patch.listW), 260, 900)
+      const listW = clamp(Math.round(patch.listW), LIST_MIN, LIST_MAX)
       next.listW = listW
       prefs.update(function (draft) { draft.listW = listW })
     }

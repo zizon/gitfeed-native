@@ -9,7 +9,7 @@ import {
   MenuSurface,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { Chevron } from '../icons.js'
-import { DEFAULT_LIST } from '../constants.js'
+import { DEFAULT_LIST, LIST_MAX, LIST_MIN } from '../constants.js'
 import { useElementWidth, useKeyboard, useMount, useOutsideClose } from '../hooks.js'
 import { clamp, fmtIn, fmtTime } from '../util.js'
 import type { ClientState, GitfeedRailProps } from '../types.js'
@@ -130,7 +130,7 @@ export function GitfeedRail({ controller, t, useReader, useTabInfo }: GitfeedRai
 
   // The list keeps at least 320px for the article, so the stored width is
   // clamped to this Surface's own width instead of only to its global range.
-  const wideListW = clamp(state.listW, 260, Math.max(260, width - 325))
+  const wideListW = clamp(state.listW, LIST_MIN, Math.max(LIST_MIN, width - 325))
 
   function startResize() {
     return function (event: React.PointerEvent) {
@@ -138,9 +138,9 @@ export function GitfeedRail({ controller, t, useReader, useTabInfo }: GitfeedRai
       const startX = event.clientX
       const start = wideListW
       const total = rootRef.current ? rootRef.current.clientWidth : width
-      const max = Math.max(260, Math.min(900, total - 325))
+      const max = Math.max(LIST_MIN, Math.min(LIST_MAX, total - 325))
       function move(moveEvent: PointerEvent) {
-        controller.setWidths({ listW: clamp(start + (moveEvent.clientX - startX), 260, max) })
+        controller.setWidths({ listW: clamp(start + (moveEvent.clientX - startX), LIST_MIN, max) })
       }
       function up() {
         window.removeEventListener('pointermove', move)

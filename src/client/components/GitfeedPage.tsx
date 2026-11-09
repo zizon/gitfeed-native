@@ -10,7 +10,7 @@ import {
   IconSlidersTwoOutlineRegular,
   MenuSurface,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import { DEFAULT_LIST, DEFAULT_RAIL } from '../constants.js'
+import { DEFAULT_LIST, DEFAULT_RAIL, LIST_MAX, LIST_MIN, RAIL_MAX, RAIL_MIN } from '../constants.js'
 import { useKeyboard, useMount, useOutsideClose } from '../hooks.js'
 import type { ClientState, GitfeedPageProps } from '../types.js'
 import { clamp } from '../util.js'
@@ -42,9 +42,9 @@ export function GitfeedPage({ controller, t, useReader }: GitfeedPageProps) {
       function move(moveEvent: PointerEvent) {
         const delta = moveEvent.clientX - startX
         if (which === 'rail') {
-          controller.setWidths({ railW: clamp(start + delta, 150, Math.min(460, total - 520)) })
+          controller.setWidths({ railW: clamp(start + delta, RAIL_MIN, Math.min(RAIL_MAX, total - 520)) })
         } else {
-          controller.setWidths({ listW: clamp(start + delta, 260, Math.min(760, total - state.railW - 340)) })
+          controller.setWidths({ listW: clamp(start + delta, LIST_MIN, Math.min(LIST_MAX, total - state.railW - 340)) })
         }
       }
       function up() {
