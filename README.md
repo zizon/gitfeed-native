@@ -18,16 +18,16 @@ article beside them. A feed row carries its own actions — move it to a folder,
 mark the source read, unsubscribe — and the star sits on the item row, so
 keeping something does not mean opening it first.
 
-![The gitfeed page: feed folders and their unread counts, the item list with digests, and an open article](docs/screenshots/panel.png)
+![The gitfeed page: feed folders and their unread counts, the item list with digests, and an open article](https://raw.githubusercontent.com/zizon/gitfeed-native/main/docs/screenshots/panel.png)
 
 The same reader in the right Sidebar, beside whatever session is open:
 
-![The reader in the right Sidebar of the Harness window](docs/screenshots/sidebar.png)
+![The reader in the right Sidebar of the Harness window](https://raw.githubusercontent.com/zizon/gitfeed-native/main/docs/screenshots/sidebar.png)
 
 Moving a source lists the folders already in use, marks the one it is in, and
 keeps naming a new one on its own row:
 
-![The folder picker open over the feed rail, listing the folders in use and a New folder row](docs/screenshots/picker.png)
+![The folder picker open over the feed rail, listing the folders in use and a New folder row](https://raw.githubusercontent.com/zizon/gitfeed-native/main/docs/screenshots/picker.png)
 
 The library in those images is a fixture (`docs/screenshots/demo-library.js`),
 not a real reading list: it answers the reader's own API with invented
@@ -869,12 +869,11 @@ anonymously, and the lockfile records only integrity hashes
 (`lockfileIncludeTarballUrl: false`), so a machine that installs through a
 mirror produces the same file CI can verify.
 
-Publishing does not pass `--provenance` yet: npm attestation requires the
-source repository to be public, and this one is only now being opened up. Once
-it is, add the flag to both publish steps (`npm publish --access public
---provenance`); the workflow already carries the `id-token: write` permission
-that lets npm attest, and `npm attest` or the package page can then verify which
-workflow run and commit produced the tarball.
+Publishing passes `--provenance`: npm signs a statement that the tarball came
+from this workflow run and this commit, and attaches it to the version, where
+`npm attest` or the package page can verify it. It needs a public source
+repository and the `id-token: write` permission the workflow carries; without
+either, drop the flag rather than the release.
 
 Everything else in the release path needs no manual setup: the repository is
 public, the package is published through a trusted publisher, and the two things

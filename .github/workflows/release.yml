@@ -3,12 +3,11 @@ name: release
 # A tag publishes that version. A manual run builds and checks the tarball
 # without publishing unless `publish` is ticked.
 #
-# Publishing does not pass `--provenance` yet: npm attestation needs the source
-# repository to be public, and it is only now being opened up. Once it is, add
-# `--provenance` to both publish steps; the `id-token: write` permission below
-# is already what npm attests with. Authentication is either a trusted publisher
-# (no secret, what this repository uses) or an NPM_TOKEN secret, and the steps
-# handle both.
+# Publishing passes `--provenance`: npm signs the tarball against this workflow
+# run and commit, which needs a public source repository and the
+# `id-token: write` permission below. Authentication is either a trusted
+# publisher (no secret, what this repository uses) or an NPM_TOKEN secret, and
+# the steps handle both.
 on:
   push:
     tags: ['v*']
@@ -81,13 +80,13 @@ jobs:
 
       - name: publish with the token
         if: (startsWith(github.ref, 'refs/tags/v') || inputs.publish) && env.HAS_TOKEN == 'true'
-        run: npm publish --access public
+        run: npm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: publish through the trusted publisher
         if: (startsWith(github.ref, 'refs/tags/v') || inputs.publish) && env.HAS_TOKEN != 'true'
-        run: npm publish --access public
+        run: npm publish --access public --provenance
 
       - name: GitHub release
         if: startsWith(github.ref, 'refs/tags/v')
