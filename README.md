@@ -654,19 +654,36 @@ Two workflows in `.github/workflows/`. `ci.yml` runs the gates on every push to
    the tarball (which is also uploaded as a build artifact and attached to a
    GitHub release), and runs `npm publish --access public`.
 
-It needs one repository secret, `NPM_TOKEN`: a granular access token on
-npmjs.com with publish rights on `gitfeed-native`. Granular tokens bypass the
-account's 2FA, which classic tokens do not in CI. No registry setting is needed
-anywhere — the install reads the public registry anonymously, and the lockfile
-records only integrity hashes (`lockfileIncludeTarballUrl: false`), so a machine
-that installs through a mirror produces the same file CI can verify. A manual run with `publish` unticked
-builds and checks the tarball without touching the registry.
+A manual run with `publish` unticked builds and checks the tarball without
+touching the registry.
+
+Authentication is either of two things, and the workflow handles both: it
+publishes with `NPM_TOKEN` when that secret exists, and through the package's
+trusted publisher when it does not.
+
+**With a token** — a granular access token on npmjs.com with publish rights on
+`gitfeed-native`, stored as the repository secret `NPM_TOKEN`. Granular rather
+than classic, because granular tokens bypass the account's 2FA in CI. This is
+the only option for the *first* publish: a trusted publisher is configured on a
+package that already exists, so until one version is on the registry there is no
+page to set it up on.
+
+**With a trusted publisher** — no secret at all. After the first publish, open
+the package on npmjs.com → **Settings → Trusted Publisher**, choose **GitHub
+Actions**, and fill in user `zizon`, repository `gitfeed-native`, and workflow
+filename `release.yml`. Allow **direct publish** there as well as staged
+publish, or the workflow's `npm publish` is refused. Then delete `NPM_TOKEN`.
+Without a token the workflow upgrades npm first, because trusted publishing
+needs npm 11.5.1 or newer.
+
+No registry setting is needed anywhere — installs read the public registry
+anonymously, and the lockfile records only integrity hashes
+(`lockfileIncludeTarballUrl: false`), so a machine that installs through a
+mirror produces the same file CI can verify.
 
 Publishing runs without `--provenance` on purpose: npm attestation requires the
 source repository to be public, and this one is not yet. When it is, add
-`id-token: write` to the workflow's permissions and `--provenance` to the
-publish command — or configure the package on npmjs.com as a trusted publisher
-and drop the token.
+`--provenance` to both publish steps.
 
 Before anything is published, these are the repo-side steps:
 
