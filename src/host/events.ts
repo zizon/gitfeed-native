@@ -58,56 +58,35 @@ function aborted(signal: AbortSignal): Promise<void> {
 }
 
 /**
- * How one chunk's write ended. Not a boolean: a surface hanging up and a socket
- * that failed are both reasons to stop writing, and flattening them into `false`
- * is how a broken connection came to look exactly like a reader closing its tab.
- */
-type WriteOutcome =
-  | { ok: true }
-  | { ok: false; reason: 'cancelled' }
-  | { ok: false; reason: 'error'; error: unknown }
-
-/**
  * Write one chunk and answer when the response has taken it. The callback is
  * the contract: it runs when the chunk reached the socket, so a peer that is not
  * reading keeps this promise pending — which is exactly the pause the pull loop
- * needs. The abort resolves it too, so a closed socket cannot wedge the loop.
+ * needs.
  *
- * This promise never rejects, on purpose, and that is not the same as swallowing
- * the error: the failure is carried out in the value, where the caller has to
- * look at it, instead of escaping as a rejection whose only reader would be the
- * route, long after the response that could explain it is gone. A response that
- * throws synchronously (write-after-end does) is folded into the same outcome
- * for the same reason.
+ * The promise keeps the ordinary contract: a failed write rejects with the error
+ * the callback was given, and a chunk that cannot even be handed over (a response
+ * that throws, which is what write-after-end does) rejects the same way. A
+ * surface going away resolves: a reader closing its tab is the normal end of a
+ * stream, not an error, and `fetch`-style AbortError rejection would only force
+ * every caller to tell the two apart again.
  * @param res - the held-open response.
  * @param text - one complete SSE chunk.
  * @param signal - the surface's cancellation.
- * @returns how the write ended, and the error when it failed.
+ * @returns when the chunk was written, or the surface is gone.
  */
-function writeChunk(res: ServerResponse, text: string, signal: AbortSignal): Promise<WriteOutcome> {
-  return new Promise(function (resolve) {
-    let settled = false
-    const finish = function (outcome: WriteOutcome): void {
-      if (settled) return
-      settled = true
-      signal.removeEventListener('abort', cancel)
-      resolve(outcome)
-    }
-    const cancel = function (): void { finish({ ok: false, reason: 'cancelled' }) }
+function writeChunk(res: ServerResponse, text: string, signal: AbortSignal): Promise<void> {
+  return new Promise(function (resolve, reject) {
     if (signal.aborted) {
-      resolve({ ok: false, reason: 'cancelled' })
+      resolve()
       return
     }
-    signal.addEventListener('abort', cancel, { once: true })
-    try {
-      res.write(text, function (error?: Error | null) {
-        finish(error === undefined || error === null
-          ? { ok: true }
-          : { ok: false, reason: 'error', error: error })
-      })
-    } catch (error) {
-      finish({ ok: false, reason: 'error', error: error })
-    }
+    const onAbort = function (): void { resolve() }
+    signal.addEventListener('abort', onAbort, { once: true })
+    res.write(text, function (error?: Error | null) {
+      signal.removeEventListener('abort', onAbort)
+      if (error) reject(error)
+      else resolve()
+    })
   })
 }
 
@@ -165,11 +144,16 @@ export function createEventsHandler(
       reported = true
       log.warn(`gitfeed: the event stream broke off at rev ${rev}: ${messageOf(error)}`)
     }
+    // The one boundary a write's rejection has: the response it would be told
+    // to no longer exists, so the reason goes to the log and the pull stops.
     const send = async function (text: string): Promise<boolean> {
-      const outcome = await writeChunk(res, text, stop.signal)
-      if (outcome.ok) return true
-      if (outcome.reason === 'error') report(outcome.error)
-      return false
+      try {
+        await writeChunk(res, text, stop.signal)
+        return true
+      } catch (error) {
+        report(error)
+        return false
+      }
     }
     req.on('close', function () { stop.abort() })
     res.on('error', function (error: Error) {
@@ -182,7 +166,7 @@ export function createEventsHandler(
     // The retry hint is not a frame, and it comes first: a surface that hangs up
     // before its first frame should still know when to come back.
     if (!(await send(`retry: ${HEARTBEAT_MS}\n\n`))) {
-      endQuietly(res)
+      res.end()
       return
     }
 
@@ -230,24 +214,10 @@ export function createEventsHandler(
       // own awaits), and this handler must not hold the socket open for one
       // that does not.
       stop.abort()
-      endQuietly(res)
+      res.end()
       // The unwind's own failure is not news: the stream is already over, and
       // the source was handed a signal that told it so.
       void iterator?.return?.(undefined).catch(function () { })
     }
-  }
-}
-
-/**
- * End the response when it may already be gone. A socket the peer destroyed is
- * the ordinary way this handler finishes, and `end` on it is not a failure to
- * pass on.
- * @param res - the held-open response.
- */
-function endQuietly(res: ServerResponse): void {
-  try {
-    res.end()
-  } catch {
-    // Already closed; there is nothing left to close.
   }
 }

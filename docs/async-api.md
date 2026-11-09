@@ -141,7 +141,7 @@ Each slice is independently reviewable and leaves the reader working.
 | S4 | `mark(): Promise<void>`, `load` → `reconnect()`; the transport stops owning UI toasts for flush failures (the controller does) | `transport.ts`, `controller.ts`, components | low |
 | S5 | `settings()` async behind the existing cache, or the cache documented as the reason it may stay sync | `settings.ts`, call sites | low |
 | S6 | Request-signal plumbing on the HTTP routes (abort the build when the client hangs up) | `http.ts`, `index.ts` | low |
-| **S7 (landed)** | The write's outcome names the failure instead of being a boolean; the handler reports the first one per stream, with the revision it broke at; the route is given the Host logger. `source.frames()` moves inside the `try`, and the per-frame cancellation promise is hoisted out of the loop | `events.ts`, `index.ts`, tests | done — 22/22 suites |
+| **S7 (landed)** | The chunk write keeps the promise contract: it rejects with the error the platform reported and resolves when the surface is gone. The handler holds the one catch boundary — nobody above it can be told — which names the first failure per stream, with the revision it broke at. `source.frames()` moves inside the `try`, and the per-frame cancellation promise is hoisted out of the loop | `events.ts`, `index.ts`, tests | done — 22/22 suites |
 
 **Progress.** S1–S7 are landed or resolved as of 3.8.2, each with tests in the
 suite that owns its surface (`stream.test`, `live.test`, `controller.test`,
