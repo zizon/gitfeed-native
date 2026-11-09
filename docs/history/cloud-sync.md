@@ -7,7 +7,7 @@ the fetcher there, committing `data/` back with the repository's own
 `GITHUB_TOKEN`.
 
 It is gone in 3.0.0. Fetching now happens only in the Host process — the job
-runner described in [jobs.md](jobs.md) — and the data repository holds nothing
+runner described in [jobs.md](../jobs.md) — and the data repository holds nothing
 but data.
 
 This note records why, with the evidence, and what to do if GitHub's scheduler

@@ -265,7 +265,7 @@ checkout already uses.
 This package used to generate a GitHub Actions job for the data repository. It
 was removed in 3.0.0 because GitHub never dispatched its schedule on this
 account — with the evidence, the community reports behind it, and the restore
-recipe in [`docs/cloud-sync.md`](docs/cloud-sync.md).
+recipe in [`docs/history/cloud-sync.md`](docs/history/cloud-sync.md).
 
 ### CLI
 
@@ -550,8 +550,7 @@ src/cli.ts                  `gitfeed fetch | import-opml | init`
 src/host/                   settings, scaffold, store, OPML, XML, fetch, git, runner, jobs, service, HTTP, tool
 tests/                      behaviour suites, fixtures, and the runner (`pnpm test`)
 docs/jobs.md                runner contract, primitives, and the ratchet
-docs/cloud-sync.md          why the GitHub Actions job was removed, and restoring it
-docs/audit-2026-11-09.md    point-in-time review: bugs, doc drift, and shape findings
+docs/history/               point-in-time records: the removed Actions job, the 2026-11-09 review
 src/client/                 native reader: controller, transport, derivations, viewport, prefs, hooks, components, styles, locales
 src/shared/                 item/feed/state types shared by both halves
 build.mjs                   tsc Host + esbuild Client into the loader envelope
