@@ -1,0 +1,79 @@
+name: release
+
+# A tag publishes that version. A manual run builds and checks the tarball
+# without publishing unless `publish` is ticked.
+#
+# The repository is private today, so this publishes without `--provenance`:
+# npm attestation requires the source repository to be public. Once it is
+# public, add `id-token: write` to `permissions` and `--provenance` to the
+# publish command — or configure the package on npmjs.com as a trusted
+# publisher and drop NPM_TOKEN entirely.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish this version to npm
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - name: install
+        run: pnpm install --frozen-lockfile
+
+      # The tag is the version that reaches the registry, so the two must agree
+      # before anything is built.
+      - name: the tag names this version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$version" ]; then
+            echo "::error::tag $tag does not match package.json version $version"
+            exit 1
+          fi
+
+      - name: gates
+        run: pnpm test
+
+      # `prepare` builds lib/ before packing, and pack also proves the file list
+      # the registry would receive.
+      - name: pack
+        run: |
+          npm pack --dry-run
+          npm pack
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tarball
+          path: '*.tgz'
+
+      - name: publish
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" ./*.tgz --generate-notes

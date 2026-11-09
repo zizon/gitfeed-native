@@ -1,0 +1,37 @@
+name: ci
+
+# Push, pull request, and manual runs only. GitHub never dispatched `schedule`
+# events for this account — that is why the Actions fetcher was removed — but
+# push and tag runs do fire, which is what this workflow needs.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # No DSH checkout here: the client suites resolve the shared store engine
+      # from the published package this repository installs as a devDependency,
+      # and the one suite that needs the Harness sources reports a skip.
+      - name: install
+        run: pnpm install --frozen-lockfile
+      - name: lint
+        run: pnpm lint
+      - name: test
+        run: pnpm test

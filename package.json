@@ -1,9 +1,12 @@
 {
   "name": "gitfeed-native",
   "version": "3.3.0",
-  "private": true,
   "type": "module",
   "description": "Git-backed RSS reader as a native DeepSeek Harness bundle: reader page, adaptive refresh and read-state schedule, git sync, and an agent tool. The package is code only; the data lives in a separate gitfeed data repository.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zizon/gitfeed-native.git"
+  },
   "engines": {
     "node": ">=20"
   },
@@ -48,6 +51,7 @@
     "lint:fix": "oxlint src --fix && oxlint src --fix"
   },
   "devDependencies": {
+    "@deepseek-ai/dsh-client-store": "0.1.2-alpha.2",
     "@stylistic/eslint-plugin": "^5.10.0",
     "@types/node": "22.20.1",
     "@types/react": "18.3.31",

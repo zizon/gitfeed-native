@@ -7,16 +7,12 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { finish, ok, repoRoot, skip } from './harness.mjs'
+import { esbuildBin, finish, ok, repoRoot, skip, storeEngine } from './harness.mjs'
 
-const checkout = process.env.DSH_CHECKOUT || path.join(os.homedir(), 'deepseek-harness')
-const engine = path.join(checkout, 'packages/client/store/lib/index.js')
-const esbuild = [
-  path.join(repoRoot, 'node_modules', '.bin', 'esbuild'),
-  path.join(checkout, 'node_modules', '.bin', 'esbuild'),
-].find(existsSync)
+const engine = storeEngine()
+const esbuild = esbuildBin()
 
-if (!existsSync(engine) || esbuild === undefined) {
+if (engine === undefined || esbuild === undefined) {
   skip('the client state layer', 'no DSH checkout with the shared store engine')
 } else {
   const out = mkdtempSync(path.join(os.tmpdir(), 'gitfeed-controller-'))

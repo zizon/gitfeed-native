@@ -2,16 +2,13 @@
 // past marked. These are the list's invariants, and until now each one lived
 // only in a comment beside code that could not be exercised without a browser.
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { finish, ok, repoRoot } from './harness.mjs'
+import { esbuildBin, finish, ok, repoRoot } from './harness.mjs'
 
-const esbuild = [
-  path.join(repoRoot, 'node_modules', '.bin', 'esbuild'),
-  path.join(process.env.DSH_CHECKOUT || path.join(os.homedir(), 'deepseek-harness'), 'node_modules', '.bin', 'esbuild'),
-].find(existsSync)
+const esbuild = esbuildBin()
 
 if (esbuild === undefined) {
   console.log('skip the viewport suite (no esbuild to compile the client module)')

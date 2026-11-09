@@ -1,22 +1,19 @@
 // The reader's display preferences: one persisted snapshot, seeded once from
 // the per-key entries it used to write, and durable across a reload. The store
-// engine is a shared Harness module, so this suite needs a DSH checkout; with
-// none available it reports the checks as skipped instead of failing.
+// engine is a shared Harness module: the suite compiles against the checkout the
+// package is developed against, or the published copy installed as a
+// devDependency, so it also runs in CI. Without either it reports a skip.
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { finish, ok, repoRoot, skip } from './harness.mjs'
+import { esbuildBin, finish, ok, repoRoot, skip, storeEngine } from './harness.mjs'
 
-const checkout = process.env.DSH_CHECKOUT || path.join(os.homedir(), 'deepseek-harness')
-const engine = path.join(checkout, 'packages/client/store/lib/index.js')
-const esbuild = [
-  path.join(repoRoot, 'node_modules', '.bin', 'esbuild'),
-  path.join(checkout, 'node_modules', '.bin', 'esbuild'),
-].find(existsSync)
+const engine = storeEngine()
+const esbuild = esbuildBin()
 
-if (!existsSync(engine) || esbuild === undefined) {
+if (engine === undefined || esbuild === undefined) {
   skip('the reader persists one prefs snapshot', 'no DSH checkout with the shared store engine')
 } else {
   const out = mkdtempSync(path.join(os.tmpdir(), 'gitfeed-prefs-'))

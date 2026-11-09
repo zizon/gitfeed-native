@@ -102,28 +102,38 @@ lets the Client poll compactly after an optimistic update.
 
 ## Install
 
-Harness installs the bundle from GitHub the same way it installs any external
-plugin: `plugin_manager` with the repository's Git address, or **Plugins → Add
-source** in the Web UI.
+Harness installs the bundle the same way it installs any external plugin:
+`plugin_manager` with a package spec, or **Plugins → Add source** in the Web UI.
+Two forms work.
 
-While this repository is private, use the SSH address:
+**From the npm registry** (preferred once a version is published):
+
+```json
+{ "action": "install_bundle", "target": "gitfeed-native" }
+```
+
+The manager reads the published version list, so an update is a version bump in
+the same panel. Nothing is built in the profile: the tarball already carries
+`lib/`, so there are no `devDependencies` to install and no build script to
+approve.
+
+**From Git**, which is the only form while this repository is private:
 
 ```json
 { "action": "install_bundle", "target": "git+ssh://git@github.com/zizon/gitfeed-native.git" }
 ```
 
-After it is published, `github:zizon/gitfeed-native` (HTTPS, no key) works too.
-
 pnpm clones the package into the profile, installs its `devDependencies`, and
 runs `prepare` (`node build.mjs`), so the installed copy carries `lib/`,
-`bin/`, and the bundle metadata. The profile records a git dependency pinned to
-the installed commit.
-
-pnpm blocks dependency build scripts by default. The first attempt stops with
-the package listed under `pendingBuilds`; approve that
+`bin/`, and the bundle metadata; the profile records a git dependency pinned to
+the installed commit. pnpm blocks dependency build scripts by default, so the
+first attempt stops with the package under `pendingBuilds`: approve that
 `gitfeed-native@<url>#<commit>` key (**Allow these scripts and retry** under
 Plugins, or `approvedBuilds` on the tool's retry) and the installation
-finishes.
+finishes. A registry install skips this step entirely.
+
+After the repository is public, `github:zizon/gitfeed-native` (HTTPS, no key)
+works too.
 
 ### Data root
 
@@ -181,11 +191,16 @@ Then set `repo` in the profile patch if the path is not `~/gitfeed`.
 
 ### Updating
 
-After pushing a change to this repository, reinstall: `plugin_manager
-remove_bundle` with `gitfeed-native`, then `install_bundle` with the same Git
-address (in the Web UI, remove the source and add it again). The new commit
-rebuilds through the same `prepare` script, and the approval key follows the new
-commit. The data root is untouched.
+A **registry** install updates in place: `install_bundle` with the same package
+name and the newer version, or the update entry the manager offers once a newer
+version is published. Nothing in the profile is rebuilt.
+
+A **Git** install is replaced: `plugin_manager remove_bundle` with
+`gitfeed-native`, then `install_bundle` with the same address (in the Web UI,
+remove the source and add it again). The new commit rebuilds through the same
+`prepare` script, and the approval key follows the new commit.
+
+Either way the data root is untouched.
 
 ## Fetching and syncing
 
@@ -548,6 +563,7 @@ cordis.patch.yml            inserts the `gitfeed` Host row
 src/index.ts                typed Host entry: route, job runner, tool
 src/cli.ts                  `gitfeed fetch | import-opml | init`
 src/host/                   settings, scaffold, store, OPML, XML, fetch, git, runner, jobs, service, HTTP, tool
+.github/workflows/          ci.yml (gates) and release.yml (tag to npm and a GitHub release)
 tests/                      behaviour suites, fixtures, and the runner (`pnpm test`)
 docs/jobs.md                runner contract, primitives, and the ratchet
 docs/history/               point-in-time records: the removed Actions job, the 2026-11-09 review
@@ -619,13 +635,38 @@ cannot leave `${  value}` behind. `lint:fix` runs the fixer twice because the
 first pass rewrites concatenation and the second formats the interpolation it
 produced.
 
-## Publishing checklist
+## Release
+
+Two workflows in `.github/workflows/`. `ci.yml` runs the gates on every push to
+`main` and every pull request: `pnpm install --frozen-lockfile`, `pnpm lint`,
+`pnpm test`. It publishes nothing.
+
+`release.yml` turns a tag into a release:
+
+1. bump `version` in `package.json` and commit it;
+2. `git tag -a v3.4.0 -m 3.4.0 && git push origin v3.4.0`;
+3. the workflow checks that the tag names that version, runs the gates, packs
+   the tarball (which is also uploaded as a build artifact and attached to a
+   GitHub release), and runs `npm publish --access public`.
+
+It needs one repository secret, `NPM_TOKEN`, an npm automation token for an
+account that may publish `gitfeed-native`. A manual run with `publish` unticked
+builds and checks the tarball without touching the registry.
+
+Publishing runs without `--provenance` on purpose: npm attestation requires the
+source repository to be public, and this one is not yet. When it is, add
+`id-token: write` to the workflow's permissions and `--provenance` to the
+publish command — or configure the package on npmjs.com as a trusted publisher
+and drop the token.
+
+Before anything is published, these are the repo-side steps:
 
 1. Confirm `git log` has no data files, secrets, or local paths.
-2. Flip this repository to public (`gh repo edit --visibility public --accept-visibility-change-consequences`).
-3. Update the install spec in the README (and in any profile) from the SSH form
-   to `github:zizon/gitfeed-native`.
-4. Tag the release and reinstall the bundle in the profiles that use it.
+2. Choose a license. There is none today, which a published package should not
+   be missing; add `LICENSE` and a `license` field to `package.json`.
+3. Flip this repository to public (`gh repo edit --visibility public
+   --accept-visibility-change-consequences`), then switch the install spec in
+   this README to `gitfeed-native`.
 
 ## Limitations
 
