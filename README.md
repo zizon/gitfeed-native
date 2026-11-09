@@ -11,6 +11,24 @@ items, or read state — it writes nothing into that repository and asks for no
 token. Fetching happens where the reader runs, on the Host's own job runner;
 there is no server-side job to arm.
 
+## What it looks like
+
+The panel: folders on the left, one line per item with its digest, and the
+article beside them. A feed row carries its own actions — move it to a folder,
+mark the source read, unsubscribe — and the star sits on the item row, so
+keeping something does not mean opening it first.
+
+![The gitfeed page: feed folders and their unread counts, the item list with digests, and an open article](docs/screenshots/panel.png)
+
+The same reader in the right Sidebar, beside whatever session is open:
+
+![The reader in the right Sidebar of the Harness window](docs/screenshots/sidebar.png)
+
+Moving a source lists the folders already in use, marks the one it is in, and
+keeps naming a new one on its own row:
+
+![The folder picker open over the feed rail, listing Daily Aggregation, Daily Flood, Fresh, News, Papers, Publication, Uncategorized, and a New folder row](docs/screenshots/picker.png)
+
 ## Two repositories, one reader
 
 | repository | contents | visibility |
@@ -724,6 +742,7 @@ tests/                      behaviour suites, fixtures, and the runner (`pnpm te
 docs/jobs.md                runner contract, primitives, and the ratchet
 docs/custom-feeds.md        custom feeds: the script interface and the rules
 docs/history/               point-in-time records: the removed Actions job, the 2026-11-09 review
+docs/screenshots/           the images this README shows (shipped with the package)
 src/client/                 native reader: controller, transport, derivations, viewport, prefs, hooks, components, styles, locales
 src/shared/                 the types both halves import, and the one runtime helper they share
 src/skill/                  the custom-feeds skill: workflow, interface, failure modes
