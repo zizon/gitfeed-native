@@ -391,10 +391,10 @@ not carry its own theme setting.
   Past the opening of a piece a **Next →** control appears at the bottom of the
   pane, so moving on does not mean scrolling back up.
 - **Pull / Fetch / Sync** in the top bar, where the one that applies now is
-  filled and the others are plain: Pull while the branch is behind, Sync while
-  the worktree is dirty, Fetch otherwise. Pull and Sync are disabled when the
-  plugin `allowGit` switch is false, or when the data root is a local copy with
-  no git repository; the rail menu then shows why.
+  filled and the others are outlined: Pull while the branch is behind, Sync
+  while the worktree is dirty, Fetch otherwise. Pull and Sync are disabled when
+  the plugin `allowGit` switch is false, or when the data root is a local copy
+  with no git repository; the rail menu then shows why.
 - **Display preferences**: hide feeds with nothing unread, mark read on scroll,
   group by none/folder/source. Per-browser, in one `localStorage` snapshot
   (`gitfeed.prefs`) held by the shared store engine; the values in

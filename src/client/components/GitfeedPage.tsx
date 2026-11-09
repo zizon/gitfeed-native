@@ -4,9 +4,9 @@ import { useRef, useState } from '../react.js'
 import type { CSSProperties } from '../react.js'
 import {
   Button,
+  IconBranchOutlineRegular,
   IconDownloadOutlineRegular,
   IconRefreshOutlineRegular,
-  IconRightUpOutlineRegular,
   IconSlidersTwoOutlineRegular,
   MenuSurface,
 } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -98,7 +98,7 @@ export function GitfeedPage({ controller, t, useReader }: GitfeedPageProps) {
         <div className="gf-actions">
           <div className="gf-prefs-wrap" ref={prefsRef}>
             <Button
-              variant="ghost"
+              variant="outline"
               size="sm"
               icon={<IconSlidersTwoOutlineRegular size={14} />}
               aria-haspopup="dialog"
@@ -116,7 +116,7 @@ export function GitfeedPage({ controller, t, useReader }: GitfeedPageProps) {
               : null}
           </div>
           <Button
-            variant={primaryAction === 'pull' ? 'primary' : 'ghost'}
+            variant={primaryAction === 'pull' ? 'primary' : 'outline'}
             size="sm"
             icon={<IconDownloadOutlineRegular size={14} />}
             disabled={state.busy.pull || !state.allowGit || !state.git || !state.git.repo}
@@ -126,7 +126,7 @@ export function GitfeedPage({ controller, t, useReader }: GitfeedPageProps) {
             {t('action.pull')}
           </Button>
           <Button
-            variant={primaryAction === 'fetch' ? 'primary' : 'ghost'}
+            variant={primaryAction === 'fetch' ? 'primary' : 'outline'}
             size="sm"
             icon={<IconRefreshOutlineRegular size={14} />}
             disabled={state.busy.fetch}
@@ -135,9 +135,9 @@ export function GitfeedPage({ controller, t, useReader }: GitfeedPageProps) {
             {state.busy.fetch ? t('status.running') : t('action.fetch')}
           </Button>
           <Button
-            variant={primaryAction === 'sync' ? 'primary' : 'ghost'}
+            variant={primaryAction === 'sync' ? 'primary' : 'outline'}
             size="sm"
-            icon={<IconRightUpOutlineRegular size={14} />}
+            icon={<IconBranchOutlineRegular size={14} />}
             disabled={state.busy.sync || !state.allowGit || !state.git || !state.git.repo}
             title={state.git && state.git.dirty ? t('status.dirty') : t('action.sync')}
             onClick={function () { void controller.runAction('sync') }}
