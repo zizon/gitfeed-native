@@ -27,7 +27,7 @@ export interface Feed {
   url: string | null
   error: string | null
   checkedAt: string | null
-  /** How the entry is fetched; absent on payloads from before custom sources. */
+  /** How the entry is fetched; absent on payloads from before custom feeds. */
   kind?: SourceKind
 }
 
