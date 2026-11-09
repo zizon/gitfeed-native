@@ -112,7 +112,7 @@ Two forms work.
 **From the npm registry** (preferred once a version is published):
 
 ```json
-{ "action": "install_bundle", "target": "gitfeed-native" }
+{ "action": "install_bundle", "target": "@zizon/gitfeed-native" }
 ```
 
 The manager reads the published version list, so an update is a version bump in
@@ -131,7 +131,7 @@ runs `prepare` (`node build.mjs`), so the installed copy carries `lib/`,
 `bin/`, and the bundle metadata; the profile records a git dependency pinned to
 the installed commit. pnpm blocks dependency build scripts by default, so the
 first attempt stops with the package under `pendingBuilds`: approve that
-`gitfeed-native@<url>#<commit>` key (**Allow these scripts and retry** under
+`@zizon/gitfeed-native@<url>#<commit>` key (**Allow these scripts and retry** under
 Plugins, or `approvedBuilds` on the tool's retry) and the installation
 finishes. A registry install skips this step entirely.
 
@@ -199,7 +199,7 @@ name and the newer version, or the update entry the manager offers once a newer
 version is published. Nothing in the profile is rebuilt.
 
 A **Git** install is replaced: `plugin_manager remove_bundle` with
-`gitfeed-native`, then `install_bundle` with the same address (in the Web UI,
+`@zizon/gitfeed-native`, then `install_bundle` with the same address (in the Web UI,
 remove the source and add it again). The new commit rebuilds through the same
 `prepare` script, and the approval key follows the new commit.
 
@@ -599,7 +599,7 @@ node build.mjs                     # rebuild after an edit
 
 Then point the plugin at this checkout by installing the bundle (or, for an
 already installed profile, replace `node_modules/gitfeed-native` by a local
-install) and toggle **Plugins → gitfeed-native** off/on. With HMR on, a linked
+install) and toggle **Plugins → @zizon/gitfeed-native** off/on. With HMR on, a linked
 checkout's changed modules are replaced on the next profile recomposition (any
 Plugin Manager change, or an edit to the profile patch), so a rebuilt `lib/`
 usually takes effect without a restart; a `dsh web` restart is the fallback.
@@ -662,7 +662,7 @@ publishes with `NPM_TOKEN` when that secret exists, and through the package's
 trusted publisher when it does not.
 
 **With a token** — a granular access token on npmjs.com with publish rights on
-`gitfeed-native`, stored as the repository secret `NPM_TOKEN`. Granular rather
+`@zizon/gitfeed-native`, stored as the repository secret `NPM_TOKEN`. Granular rather
 than classic, because granular tokens bypass the account's 2FA in CI. This is
 the only option for the *first* publish: a trusted publisher is configured on a
 package that already exists, so until one version is on the registry there is no
@@ -692,7 +692,7 @@ Before anything is published, these are the repo-side steps:
    be missing; add `LICENSE` and a `license` field to `package.json`.
 3. Flip this repository to public (`gh repo edit --visibility public
    --accept-visibility-change-consequences`), then switch the install spec in
-   this README to `gitfeed-native`.
+   this README to `@zizon/gitfeed-native`.
 
 ## Limitations
 

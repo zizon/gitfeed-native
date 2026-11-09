@@ -8,7 +8,7 @@
 # deep-merges it), so an override restates every key it should keep, e.g.:
 #
 #   - id: gitfeed
-#     name: 'gitfeed-native'
+#     name: '@zizon/gitfeed-native'
 #     config:
 #       refreshMinutes: 10
 #       adaptive: true
@@ -19,7 +19,7 @@
 # GITFEED_SYNC_MIN, GITFEED_SYNC_MAX_MIN, GITFEED_ALLOW_GIT.
 - insert:
     - id: gitfeed
-      name: 'gitfeed-native'
+      name: '@zizon/gitfeed-native'
       config:
         # Data root of the reader. Empty uses ~/gitfeed, or $GITFEED_REPO.
         repo: ''

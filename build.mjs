@@ -11,7 +11,10 @@ import os from "node:os";
 import path from "node:path";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
-const BUNDLE_ID = "gitfeed-native";
+// The module-loader envelope registers a client bundle under the package name:
+// that is the id the shell resolves the package's client half by, and every
+// shipped bundle uses it.
+const BUNDLE_ID = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")).name;
 const typecheckOnly = process.argv.includes("--typecheck-only");
 
 function resolveBin(name) {
