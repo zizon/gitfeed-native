@@ -58,7 +58,13 @@ export function SearchBox({ controller, t, value, inputRef, compact }: {
 }) {
   const [text, setText] = useState(value)
   const timer = useRef(0)
-  useEffect(function () { setText(value) }, [value])
+  // A query that arrives from elsewhere (Escape, a source change) also cancels
+  // the keystroke still waiting to be sent: otherwise it re-applies the text
+  // the reader just cleared, a fifth of a second later.
+  useEffect(function () {
+    clearTimeout(timer.current)
+    setText(value)
+  }, [value])
   useEffect(function () {
     return function () { clearTimeout(timer.current) }
   }, [])
