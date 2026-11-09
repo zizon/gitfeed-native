@@ -588,8 +588,10 @@ export const CSS = `
   display: flex;
   background: var(--dsw-alias-bg-base);
 }
-.gf-wide { flex: 1 1 auto; display: flex; min-height: 0; }
-.gf-wide .gf-listpane { flex: 0 0 var(--gf-list, 340px); border-right: 0.5px solid var(--dsw-alias-border-l1); }
+.gf-rail-body.split > .gf-listpane.wide {
+  flex: 0 0 var(--gf-list, 340px);
+  border-right: 0.5px solid var(--dsw-alias-border-l1);
+}
 .gf-wide-article { flex: 1 1 auto; min-width: 0; display: flex; min-height: 0; }
 
 /* Placement only: the menu material, radius, and elevation come from the

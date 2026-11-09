@@ -196,44 +196,45 @@ export function GitfeedRail({ controller, t, useReader, useTabInfo }: GitfeedRai
         : null}
       {state.status === 'error' && !state.items.length
         ? <ErrorState state={state} controller={controller} t={t} />
-        // An open article splits the rail; with nothing open the list owns the
-        // whole surface, so closing the article hands the space straight back
-        // instead of leaving an empty pane next to a half-width list.
-        : state.current
-          ? wide
-            ? (
-              <div className="gf-wide" style={{ '--gf-list': `${wideListW}px` } as CSSProperties}>
-                <ItemList state={state} controller={controller} t={t} wide />
-                <div
-                  className="gf-splitter"
-                  role="separator"
-                  aria-orientation="vertical"
-                  title={t('action.resize')}
-                  onPointerDown={startResize()}
-                  onDoubleClick={function () { controller.setWidths({ listW: DEFAULT_LIST }) }}
-                />
-                <div className="gf-wide-article">
-                  <Article state={state} controller={controller} t={t} />
-                </div>
-              </div>
-            )
-            : (
-              // The list stays mounted under the article: the Sidebar has one
-              // pane, so replacing the list with the article threw its scroll
-              // position away and every close put the reader back at the top of
-              // a freshly mounted list.
-              <div className="gf-rail-body">
-                <ItemList state={state} controller={controller} t={t} wide />
-                {state.current
-                  ? (
-                    <div className="gf-rail-article">
-                      <Article state={state} controller={controller} t={t} compact />
+        // The container is the same in every state on purpose. Swapping the
+        // list between branches — a bare list when nothing is open, a wrapped
+        // one when an article is — unmounts it, and a remounted list starts at
+        // the top: the reader lost their place on every close. So the list is
+        // always this box's first child, and an open article is only something
+        // added beside it (wide) or over it (one pane).
+        : (
+          <div
+            className={`gf-rail-body${wide ? ' wide' : ''}${state.current ? ' split' : ''}`}
+            style={{ '--gf-list': `${wideListW}px` } as CSSProperties}
+          >
+            <ItemList state={state} controller={controller} t={t} wide />
+            {state.current
+              ? wide
+                ? (
+                  <>
+                    <div
+                      className="gf-splitter"
+                      role="separator"
+                      aria-orientation="vertical"
+                      title={t('action.resize')}
+                      onPointerDown={startResize()}
+                      onDoubleClick={function () { controller.setWidths({ listW: DEFAULT_LIST }) }}
+                    />
+                    <div className="gf-wide-article">
+                      <Article state={state} controller={controller} t={t} />
                     </div>
-                  )
-                  : null}
-              </div>
-            )
-          : <ItemList state={state} controller={controller} t={t} wide />}
+                  </>
+                )
+                : (
+                  // One pane: the article is drawn over the list, so it carries
+                  // its own way back instead of the list's close button.
+                  <div className="gf-rail-article">
+                    <Article state={state} controller={controller} t={t} compact />
+                  </div>
+                )
+              : null}
+          </div>
+        )}
       {feedsOpen
         ? (
           <MenuSurface className="gf-popover gf-feedpop">
