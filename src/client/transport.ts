@@ -383,6 +383,10 @@ export function createTransport(ports: TransportPorts): Transport {
 
   function dispose(): void {
     disposed = true
+    // Marks queued a moment ago were already applied optimistically; dropping
+    // them here would silently unmark what the reader just read (the next load
+    // would bring the old state back).
+    if (flushTimer) flushMarks()
     mounted = 0
     unmount()
     if (flushTimer) clearTimeout(flushTimer)
