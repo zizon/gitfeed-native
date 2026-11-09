@@ -60,13 +60,6 @@ export function GitfeedPage({ controller, t, useReader }: GitfeedPageProps) {
     }
   }
 
-  // The toolbar emphasises the git action that actually applies right now:
-  // pull when the branch is behind, sync when there is something to push,
-  // fetch otherwise. The others stay available, just not as the primary.
-  const primaryAction = !state.git || !state.git.repo ? 'fetch'
-    : state.git.behind ? 'pull'
-      : state.git.dirty ? 'sync' : 'fetch'
-
   if (state.status === 'error' && !state.items.length) {
     return (
       <div className="gf gf-page">
@@ -98,7 +91,7 @@ export function GitfeedPage({ controller, t, useReader }: GitfeedPageProps) {
         <div className="gf-actions">
           <div className="gf-prefs-wrap" ref={prefsRef}>
             <Button
-              variant="outline"
+              variant="ghost"
               size="sm"
               icon={<IconSlidersTwoOutlineRegular size={14} />}
               aria-haspopup="dialog"
@@ -116,7 +109,7 @@ export function GitfeedPage({ controller, t, useReader }: GitfeedPageProps) {
               : null}
           </div>
           <Button
-            variant={primaryAction === 'pull' ? 'primary' : 'outline'}
+            variant="ghost"
             size="sm"
             icon={<IconDownloadOutlineRegular size={14} />}
             disabled={state.busy.pull || !state.allowGit || !state.git || !state.git.repo}
@@ -126,7 +119,7 @@ export function GitfeedPage({ controller, t, useReader }: GitfeedPageProps) {
             {t('action.pull')}
           </Button>
           <Button
-            variant={primaryAction === 'fetch' ? 'primary' : 'outline'}
+            variant="ghost"
             size="sm"
             icon={<IconRefreshOutlineRegular size={14} />}
             disabled={state.busy.fetch}
@@ -135,7 +128,7 @@ export function GitfeedPage({ controller, t, useReader }: GitfeedPageProps) {
             {state.busy.fetch ? t('status.running') : t('action.fetch')}
           </Button>
           <Button
-            variant={primaryAction === 'sync' ? 'primary' : 'outline'}
+            variant="ghost"
             size="sm"
             icon={<IconBranchOutlineRegular size={14} />}
             disabled={state.busy.sync || !state.allowGit || !state.git || !state.git.repo}

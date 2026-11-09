@@ -1,6 +1,6 @@
 {
   "name": "@zizon/gitfeed-native",
-  "version": "3.9.3",
+  "version": "3.9.4",
   "type": "module",
   "description": "Git-backed RSS reader as a native DeepSeek Harness bundle: reader page, adaptive refresh and read-state schedule, git sync, and an agent tool. The package is code only; the data lives in a separate gitfeed data repository.",
   "repository": {
