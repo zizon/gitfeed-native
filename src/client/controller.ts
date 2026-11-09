@@ -214,10 +214,6 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
   }
 
   function getList(): Item[] {
-    // The epoch covers every rebuild the rows can see: a new item model, or a
-    // changed read/star set. The state version is not part of the key, because
-    // it also moves for git and schedule polling, and rebuilding the rows for
-    // those would hand the list a fresh array on every quiet refresh.
     // The epoch covers every rebuild the rows can see: a new item model, a
     // changed read/star set, or a fresh answer from the Host's search. The
     // state version is not part of the key, because it also moves for git and

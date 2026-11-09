@@ -178,4 +178,6 @@ for a new registration and a second subscriber to the same state. Kept.
 5. **Accessibility** — F8, if the reader is to be operated by anything but
    `j`/`k`; it changes what a screen reader announces, so it is its own commit.
 
-F1, F6 and F7 need the assembled page in front of me; the rest do not.
+Only **F7** is open: what the reader's empty panes should look like, which is
+a decision to take against a rendered check rather than a defect. Everything
+else has landed or been decided against.
