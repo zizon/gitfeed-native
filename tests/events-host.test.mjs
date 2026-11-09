@@ -22,6 +22,17 @@ const quiet = { info() {}, warn() {}, error() {} }
 
 const library = sampleLibrary(2)
 const root = makeDataRoot({ feeds: library.feeds, items: library.items })
+// A row whose body is far longer than a digest, so the wire cut is visible.
+const longBody = `<p>${'the body goes on. '.repeat(100)}</p>`
+appendItem(path.join(root, '.local', 'items'), {
+  id: 'long-row',
+  feed: 'feed-a',
+  title: 'A long post',
+  link: 'https://example.com/long',
+  date: '2026-11-05T10:00:00.000Z',
+  author: '',
+  summary: longBody,
+})
 const service = createGitfeed({
   root: root,
   logger: quiet,
@@ -91,8 +102,10 @@ try {
   ok(welcomes.length === 1, 'a surface with no revision gets one welcome', welcomes.length)
   const welcome = welcomes[0]
   ok(welcome.t === 'welcome' && welcome.protocol === 1, 'on the protocol this bundle speaks', welcome && welcome.protocol)
-  ok(welcome.items.length === 4, 'with the whole archive', welcome.items.length)
-  ok(welcome.items.every((row) => row.summary), 'including the row bodies the article view reads', welcome.items.length)
+  ok(welcome.items.length === 5, 'with the whole archive', welcome.items.length)
+  const longRow = welcome.items.find(function (row) { return row.id === 'long-row' })
+  ok(longRow !== undefined && longRow.summary.length === 400 && longRow.bodyChars === longBody.length,
+    'a row travels as a digest and the length of its body', longRow && [longRow.summary.length, longRow.bodyChars])
   ok(welcome.rev > 0, 'and a revision to continue from', welcome.rev)
 
   // A mark this process makes is one frame of ids, not a rebuilt archive.

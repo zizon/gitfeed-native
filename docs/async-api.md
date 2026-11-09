@@ -51,7 +51,8 @@ promises would buy nothing and cost every render.
 
 | Route | Current | Gap | Target |
 |---|---|---|---|
-| `state`, `search`, `mark`, `star`, `feeds*`, `fetch`, `pull`, `sync` | async handler, JSON body read | the request's abort signal is ignored: a client that hangs up still pays for the whole build; `getState` cannot be cancelled between awaits | handlers pass `req`'s abort into the service call; long reads check it |
+| `state`, `search`, `mark`, `star`, `feeds*`, `fetch`, `pull`, `sync` | async handler, JSON body read | the request's abort signal is ignored: a client that hangs up still pays for the whole build; `getState` cannot be cancelled between awaits | handlers pass the response's lifetime into the service call; long reads check it |
+| `item` | async handler | none: one row, whole, asked for by the article that shows it | as is |
 | `/gitfeed/events` | async handler, **sync `send(frame)`** | the sink has no capacity; the handler invented a queue and a 64 MB bound, and dropped the connection when a frame exceeded it | `service.frames(rev, signal): AsyncIterable<StreamFrame>`; the handler awaits each write; the live log is the only buffer and it is already bounded |
 
 **Verdict:** the stream route is the one real violation — rule 2 — and it is the

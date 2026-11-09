@@ -99,7 +99,7 @@ export function createHandler(service: GitfeedService) {
       }
       const route = url.pathname.slice(PREFIX.length) || '/'
       const method = req.method || 'GET'
-      const known = new Set(['/state', '/search', '/mark', '/star', '/feeds', '/feeds/remove', '/feeds/folder', '/fetch', '/pull', '/sync'])
+      const known = new Set(['/state', '/search', '/item', '/mark', '/star', '/feeds', '/feeds/remove', '/feeds/folder', '/fetch', '/pull', '/sync'])
       if (!known.has(route)) {
         sendJson(res, 404, { ok: false, error: 'no such endpoint' })
         return
@@ -127,6 +127,16 @@ export function createHandler(service: GitfeedService) {
       if (route === '/search') {
         const result = await service.search(input.query, responseSignal(res))
         sendJson(res, 200, { ok: true, ids: result.ids })
+        return
+      }
+      if (route === '/item') {
+        // The body an open article shows: the one row the digest was cut from.
+        const item = await service.itemBody(input.id)
+        if (!item) {
+          sendJson(res, 404, { ok: false, error: 'no such item' })
+          return
+        }
+        sendJson(res, 200, { ok: true, item: item })
         return
       }
       if (route === '/mark') {

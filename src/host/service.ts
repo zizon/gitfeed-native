@@ -522,6 +522,19 @@ export function createGitfeed(options: GitfeedOptions) {
   }
 
   /**
+   * One row as the archive holds it, body whole. The wire sends a digest of a
+   * row, so an article that opens asks for the one body it shows.
+   * @param id - item id.
+   * @returns the row, or null when the archive does not hold it.
+   */
+  async function itemBody(id: unknown): Promise<Item | null> {
+    const key = typeof id === 'string' ? id : ''
+    if (!key) return null
+    const { items } = await buildItems()
+    return items.find(function (item) { return item.id === key }) || null
+  }
+
+  /**
    * Ask the archive which rows match a query.
    * @param query - the reader's text; matched case-insensitively.
    * @param signal - cancels the answer; an abandoned query stops building.
@@ -1202,6 +1215,7 @@ export function createGitfeed(options: GitfeedOptions) {
     getForTool: getForTool,
     statusForTool: statusForTool,
     search: search,
+    itemBody: itemBody,
     frames: frames,
     /** Re-read the data root and announce what changed (the stream's probe, by hand). */
     refresh: refresh,

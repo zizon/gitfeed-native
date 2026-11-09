@@ -24,6 +24,13 @@ export const PROTOCOL = 1
 export const PROBE_MS = 5000
 /** Deltas kept for a surface that reconnected; older ones get a full state. */
 export const HISTORY = 400
+/**
+ * How much of a row's body the wire carries. The list draws a 240-character
+ * digest and the text filter is answered by the Host, so a row's body is only
+ * needed when its article is open — which reads the one row it needs instead of
+ * the archive carrying every body to every surface.
+ */
+export const SUMMARY_CAP = 400
 
 /** Rows that changed since the revision a surface holds. */
 export interface ItemDelta {
@@ -85,6 +92,17 @@ export interface StreamError {
 }
 
 export type StreamFrame = StreamWelcome | StreamDelta | StreamError
+
+/**
+ * One row as the wire carries it: its body cut to the digest, and how long the
+ * real one is so an open article knows to ask for it.
+ * @param item - the row as the archive holds it.
+ * @returns the row to send, unchanged when its body already fits.
+ */
+export function wireItem(item: Item): Item {
+  if (item.summary.length <= SUMMARY_CAP) return item
+  return Object.assign({}, item, { summary: item.summary.slice(0, SUMMARY_CAP), bodyChars: item.summary.length })
+}
 
 /**
  * The order the reader lists rows in: newest first, and the id as the tie-break

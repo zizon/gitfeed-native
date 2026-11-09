@@ -74,13 +74,20 @@ if (engine === undefined || esbuild === undefined) {
     globalThis.EventSource = FakeEventSource
 
     // The HTTP path, counted: while the stream is up it must not be used.
-    const http = { states: 0, marks: [], stars: [] }
+    const http = { states: 0, marks: [], stars: [], bodies: 0 }
+    // The one body a capped row's article reads.
+    const LONG = { id: 'long', full: `<p>${'a sentence. '.repeat(120)}</p>` }
     globalThis.fetch = async function (url, init) {
       const target = String(url)
       const body = init && init.body ? JSON.parse(init.body) : {}
       if (target.indexOf('/state') !== -1) {
         http.states += 1
         return { ok: true, status: 200, json: async function () { return { version: 'http', itemsVersion: 'http', items: [], feeds: [], read: [], starred: [], reader: { hideEmptyFeeds: true, markReadOnScroll: true, groupBy: 'none' }, repo: '/tmp/root', allowGit: false, git: null, schedule: [] } } }
+      }
+      if (target.indexOf('/item') !== -1) {
+        http.bodies += 1
+        const full = { id: LONG.id, feed: 'f1', title: 'Long row', link: 'https://example.com/long', date: '2026-11-06T10:00:00.000Z', author: '', summary: body.id === LONG.id ? LONG.full : '' }
+        return { ok: true, status: 200, json: async function () { return { ok: true, item: full } } }
       }
       if (target.indexOf('/mark') !== -1) {
         http.marks.push({ ids: body.ids, read: body.read })
@@ -193,6 +200,25 @@ if (engine === undefined || esbuild === undefined) {
     still.setScrolled(false)
     still.releaseHeld()
     ok(ids(still).includes('r4'), 'at the top the held row lands', ids(still))
+
+    // --- a row the wire cut is read when its article opens ---
+    const capped = createController(t, createPrefs())
+    capped.mount()
+    const cappedStream = FakeEventSource.instances[FakeEventSource.instances.length - 1]
+    cappedStream.fire('open')
+    cappedStream.fire('welcome', welcome(20, [
+      Object.assign(item('long', '2026-11-06T10:00:00.000Z'), { summary: LONG.full.slice(0, 400), bodyChars: LONG.full.length }),
+    ]))
+    await sleep(0)
+    ok(capped.get().byId.get('long').summary.length === 400, 'the list row holds a digest', capped.get().byId.get('long').summary.length)
+    capped.select('long')
+    await sleep(10)
+    ok(capped.get().byId.get('long').summary.length === LONG.full.length, 'opening the article reads the whole body', capped.get().byId.get('long').summary.length)
+    ok(http.bodies === 1, 'with one request for that one row', http.bodies)
+    capped.select('long')
+    await sleep(10)
+    ok(http.bodies === 1, 'and not another while it is open', http.bodies)
+    capped.dispose()
 
     // --- the surface going closes the stream ---
     still.unmount()

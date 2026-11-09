@@ -97,6 +97,8 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
    */
   let searchSeq = 0
   let searchAbort: AbortController | null = null
+  /** Rows whose body is being read, so an article opening twice reads it once. */
+  const bodyRequests = new Set<string>()
   /**
    * Whether the list is scrolled into the archive. The transport asks before it
    * lets a refresh put rows where the reader is looking; it is not published,
@@ -355,6 +357,36 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     setUi({ listEpoch: ui.listEpoch + 1 })
   }
 
+  /**
+   * Read the body of a row the wire only carried a digest of. The list draws a
+   * digest and the text filter is the Host's, so the one body worth reading is
+   * the one the reader is about to read.
+   * @param id - the row the article is opening.
+   */
+  function ensureBody(id: string): void {
+    const item = data.byId.get(id)
+    if (!item || !item.bodyChars || item.bodyChars <= item.summary.length) return
+    if (bodyRequests.has(id)) return
+    bodyRequests.add(id)
+    transport.body(id).then(function (full) {
+      bodyRequests.delete(id)
+      if (!full) return
+      const before = data
+      if (!before.byId.has(id)) return
+      const row = Object.assign({}, full)
+      Reflect.deleteProperty(row, 'bodyChars')
+      const byId = new Map(before.byId)
+      byId.set(id, row)
+      const items = before.items.map(function (item) { return item.id === id ? row : item })
+      // No list epoch: the digest is unchanged, and rebuilding the rows under
+      // the pointer to lengthen one body in the article is a reflow for nothing.
+      setData({ items: items, byId: byId })
+    }).catch(function (err: unknown) {
+      bodyRequests.delete(id)
+      toast(t('toast.failed', { error: messageOf(err) }), true)
+    })
+  }
+
   function select(id: string | null): void {
     if (!id) {
       setUi({ current: null })
@@ -362,6 +394,7 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     }
     if (!data.byId.has(id)) return
     setUi({ current: id })
+    ensureBody(id)
     if (!data.read.has(id)) void mark([id], true, true)
   }
 

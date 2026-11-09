@@ -26,6 +26,8 @@ interface ApiResponse {
   feed?: ApiFeed
   /** Ids one query matched, in archive order. */
   ids?: string[]
+  /** One row with its body whole, when an article asked for it. */
+  item?: Item | null
 }
 
 /** Failed stream attempts before the HTTP path takes over for a while. */
@@ -76,6 +78,8 @@ export interface Transport {
    * @param signal - cancels a query the reader has already replaced.
    */
   search: (query: string, signal?: AbortSignal) => Promise<string[]>
+  /** One row with its body whole, for the article that is open. */
+  body: (id: string, signal?: AbortSignal) => Promise<Item | null>
   mount: () => void
   unmount: () => void
   dispose: () => void
@@ -243,6 +247,12 @@ export function createTransport(ports: TransportPorts): Transport {
    * @param query - what the reader typed.
    * @returns the matching ids, in archive order.
    */
+  function body(id: string, signal?: AbortSignal): Promise<Item | null> {
+    return request('/item', { id: id }, signal).then(function (payload) {
+      return payload.item ? payload.item : null
+    })
+  }
+
   function search(query: string, signal?: AbortSignal): Promise<string[]> {
     if (!query.trim()) return Promise.resolve([])
     return request('/search', { query: query }, signal).then(function (payload) {
@@ -667,6 +677,7 @@ export function createTransport(ports: TransportPorts): Transport {
   return {
     reconnect: reconnect,
     search: search,
+    body: body,
     mark: mark,
     star: star,
     addFeed: addFeed,

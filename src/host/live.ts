@@ -17,7 +17,7 @@
  */
 
 import type { Feed, GitInfo, Item, ReaderPrefs, ScheduleJobInfo } from '../shared/types.js'
-import { HISTORY, PROTOCOL } from '../shared/stream.js'
+import { HISTORY, PROTOCOL, wireItem } from '../shared/stream.js'
 import type { ItemDelta, MarkDelta, StreamDelta, StreamFrame, StreamWelcome } from '../shared/stream.js'
 
 /** One complete read of the data root, as the service builds it. */
@@ -218,7 +218,8 @@ export function createLiveState(): LiveState {
       rev: rev,
       version: held.version,
       itemsVersion: held.itemsVersion,
-      items: held.items.slice(),
+      // The wire carries digests; the row's body is read when an article opens.
+      items: held.items.map(wireItem),
       read: Array.from(held.read),
       starred: Array.from(held.starred),
       feeds: held.feeds,
@@ -246,6 +247,15 @@ export function createLiveState(): LiveState {
     if (next) held = next
     if (!held) throw new Error('live: a delta without a state')
     rev += 1
+    // The same digest rule for the rows a delta carries, applied before the
+    // frame is built: the log and the socket must carry the same rows.
+    if (change.items) {
+      change.items = {
+        added: change.items.added.map(wireItem),
+        updated: change.items.updated.map(wireItem),
+        removed: change.items.removed,
+      }
+    }
     const frame: StreamDelta = Object.assign({
       t: 'delta' as const,
       protocol: PROTOCOL,

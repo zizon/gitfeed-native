@@ -448,6 +448,13 @@ at the source instead of filling a queue in the request handler; what it falls
 behind in is the revision cursor, and the kept history decides whether it is
 caught up by a delta or by the whole state.
 
+The wire carries a digest of a row: its body is cut to 400 characters and the
+row says how long the real one is. The list only ever draws a 240-character
+digest, and the text filter is answered by the Host, so nothing that needs the
+full text travels with the list; an article that opens reads the one row it
+shows, whole, over `/gitfeed/api/item`. The older `/state` route still answers
+with whole bodies, because a page from before this change may still poll it.
+
 The reader does not poll for its own state. Each surface opens one server-sent
 event stream at `/gitfeed/events` when it mounts, receives the whole archive
 once, and from then on only what changed: the rows a refresh added or repaired,
@@ -469,7 +476,9 @@ The stream replaces a 60-second poll with a full model behind it. On a personal
 library of 379 subscriptions and 3,860 items, an items write cost every open
 surface 26.9 MB of JSON, and the poll itself cost the Host five `git` spawns
 (190 ms) even when nothing had changed; a delta for the same write is about
-100 KB, and an idle surface costs a stat probe every few seconds.
+100 KB, and an idle surface costs a stat probe every few seconds. The first
+frame a surface receives is that model as digests — 25.7 MB before, 2.3 MB now
+(0.84 MB compressed).
 
 There is no second path. A surface that cannot open its stream — a page whose
 client bundle is newer than the running Host, a proxy that buffers event

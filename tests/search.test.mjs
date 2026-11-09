@@ -75,6 +75,11 @@ try {
   const afterWrite = await service.search('tide table')
   ok(afterWrite.ids.sort().join() === 'row-long,row-new', 'a newly written row is found without a restart', afterWrite.ids)
 
+  // The body of a row whose wire form was cut, and the route an article uses.
+  const whole = await service.itemBody('row-long')
+  ok(whole !== null && whole.summary === longBody, 'the Host still holds the whole body', whole && whole.summary.length)
+  ok(await service.itemBody('no-such-row') === null, 'an unknown row has no body')
+
   // A query nobody waits for stops before it builds anything.
   const aborted = new AbortController()
   aborted.abort()
@@ -94,6 +99,19 @@ try {
   })
   const payload = await response.json()
   ok(response.status === 200 && payload.ids.join() === 'row-short', 'the query is answered over the API route', payload.ids)
+  const bodyResponse = await fetch(`http://127.0.0.1:${port}/gitfeed/api/item`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ id: 'row-long' }),
+  })
+  const bodyPayload = await bodyResponse.json()
+  ok(bodyResponse.status === 200 && bodyPayload.item.summary === longBody, 'the body is answered over the API route', bodyPayload.item && bodyPayload.item.summary.length)
+  const missing = await fetch(`http://127.0.0.1:${port}/gitfeed/api/item`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ id: 'no-such-row' }),
+  })
+  ok(missing.status === 404, 'and an unknown row is a 404', missing.status)
   const foreign = await fetch(`http://127.0.0.1:${port}/gitfeed/api/search`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', origin: 'http://evil.example' },

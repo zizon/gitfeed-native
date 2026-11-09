@@ -17,6 +17,12 @@ export interface Item {
   date: string
   author: string
   summary: string
+  /**
+   * How long the body is in the archive, when `summary` carries only a digest of
+   * it. Absent when `summary` is whole. The wire carries digests; the body is
+   * read when an article opens.
+   */
+  bodyChars?: number
 }
 
 export interface Feed {
