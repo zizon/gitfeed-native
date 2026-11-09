@@ -411,6 +411,14 @@ The Sidebar has one pane, so an open article is drawn over the list rather than
 in place of it: the list stays mounted and closing an article returns to the
 same rows at the same scroll position.
 
+Two things follow from "nothing moves under the pointer". A row that has been
+read stays listed until something else rebuilds the list, so the header counts
+what is **left to read** rather than what is on screen — the number falls as the
+reading does, instead of in jumps when a rebuild finally releases those rows.
+And a mark burst does not reload the state behind it: the reader already holds
+the change it sent, and refetching rebuilt the rows, the count, and the digest
+text under the pointer several times a second while scrolling.
+
 - **Sections hold one order.** Grouped sections are ordered by name — the way
   the rail lists folders and sources — instead of being re-ranked by item
   count. Ranking by size meant that every fetch, and every read mark under the

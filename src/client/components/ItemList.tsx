@@ -435,6 +435,18 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
   })
 
   const count = list.length
+  /**
+   * What the header counts: the rows still to read in this view, not the rows
+   * on screen. A read row stays listed until something else moves the list, so
+   * counting the list made the number lag behind the reading and change in
+   * jumps when a rebuild finally released those rows.
+   */
+  const remaining = useMemo(function () {
+    if (state.filter !== 'unread') return count
+    let n = 0
+    for (const item of list) if (!state.read.has(item.id)) n++
+    return n
+  }, [list, state.read, state.filter, count])
   const paneClass = `gf-listpane${wide ? ' wide' : ''}${showDigest ? '' : ' rows-plain'}`
 
   // The bar follows the viewport, but the scope is picked from the strongest
@@ -483,7 +495,7 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
 
   const header = (
     <div className="gf-listbar">
-      <span className="gf-count-label">{t('items.count', { n: count })}</span>
+      <span className="gf-count-label">{t('items.count', { n: remaining })}</span>
     </div>
   )
 

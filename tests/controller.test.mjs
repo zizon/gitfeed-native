@@ -60,6 +60,7 @@ if (engine === undefined || esbuild === undefined) {
       starred: [],
       marks: [],
       stars: [],
+      states: 0,
     }
     const feed = { id: 'f1', title: 'Feed one', folder: 'News', siteUrl: null, url: null, error: null, checkedAt: null }
     function payload() {
@@ -82,6 +83,7 @@ if (engine === undefined || esbuild === undefined) {
       const target = String(url)
       const body = init && init.body ? JSON.parse(init.body) : {}
       if (target.indexOf('/state') !== -1) {
+        host.states += 1
         return { ok: true, status: 200, json: async function () { return payload() } }
       }
       if (target.indexOf('/mark') !== -1) {
@@ -188,6 +190,25 @@ if (engine === undefined || esbuild === undefined) {
     ok(!ids(starring).includes('s2'), 'unstarring it in the Starred view drops the row at once', ids(starring))
     ok(starring.get().starred.size === 0, 'and the mark is gone', [...starring.get().starred])
     starring.dispose()
+
+    // --- marking while scrolling does not reload the list under the pointer ---
+    // Every mark used to be followed by a full /state load, which rebuilt the
+    // rows, the count, and the digest text several times a second: the list
+    // that flashed while it was being read.
+    host.items = [item('m1', 'Mark one'), item('m2', 'Mark two')]
+    host.read = []
+    host.starred = []
+    const marker = createController(t, createPrefs())
+    await loaded(marker)
+    const statesBefore = host.states
+    const rowsBefore = marker.getList().length
+    ok(rowsBefore === 2, 'the list starts with both rows', rowsBefore)
+    marker.mark(['m1'], true, true)
+    await sleep(500)
+    ok(host.marks.some((mark) => mark.ids.includes('m1')), 'the mark reaches the Host', host.marks)
+    ok(host.states === statesBefore, 'and nothing reloads the state behind it', host.states - statesBefore)
+    ok(marker.getList().length === rowsBefore, 'the rows the reader was on stay as they were', marker.getList().length)
+    marker.dispose()
 
     // --- a queued mark is sent before the surface goes ---
     const before = host.marks.length

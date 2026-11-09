@@ -253,7 +253,12 @@ export function createTransport(ports: TransportPorts): Transport {
     Promise.all(jobs).then(function (results) {
       const last = results.at(-1)
       if (last?.version) ports.setData({ version: last.version })
-      load().catch(function () { })
+      // No reload here. The marks are already applied, and reloading after
+      // every burst rebuilt the rows, the count, and the digest text under the
+      // reader's pointer several times a second while scrolling — the list that
+      // flashed while it was being read. Marks are the one write whose result
+      // the caller already holds; the poll and every scope change still bring
+      // whatever changed elsewhere.
     }).catch(function (err: unknown) {
       ports.toast(t('toast.readFailed', { error: messageOf(err) }), true)
       load({ force: true }).catch(function () { })
