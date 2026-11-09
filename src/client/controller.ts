@@ -131,7 +131,12 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     setBusy: setBusy,
     toast: toast,
     titleOf: function (id: string) { return feedTitle(data.feedMap, id) },
-    resetText: function () { plainCache.clear() },
+    resetText: function () {
+      // A new item model can change a summary without changing its length, so
+      // both caches go together.
+      plainCache.clear()
+      digestCache.clear()
+    },
     t: t,
   })
 
@@ -189,10 +194,14 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
   }
 
   function searchHay(item: Item): string {
-    const key = `${item.id}:${item.summary ? item.summary.length : 0}`
+    // The source's name is part of the text being searched, so it is part of
+    // the key: a feed that renamed itself upstream would otherwise keep
+    // matching the name it used to have.
+    const source = feedTitle(data.feedMap, item.feed)
+    const key = `${item.id}:${item.summary ? item.summary.length : 0}:${source}`
     let text = plainCache.get(key)
     if (text === undefined) {
-      text = haystackOf(item, feedTitle(data.feedMap, item.feed))
+      text = haystackOf(item, source)
       if (plainCache.size > 4000) plainCache.clear()
       plainCache.set(key, text)
     }
