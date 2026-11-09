@@ -12,6 +12,8 @@ import { makeDataRoot, removeRoot } from './fixtures.mjs'
 
 const { runFetch } = await import(lib('host', 'fetch.js'))
 const { declarationOf, kindOf } = await import(lib('host', 'custom.js'))
+const { parseSkill, registerSkill } = await import(lib('host', 'skill.js'))
+const { registerCustomFeedTool, registerTool } = await import(lib('host', 'tool.js'))
 
 const PUBS_HTML = readFileSync(path.join(repoRoot, 'tests', 'fixtures', 'google-research-pubs.html'), 'utf8')
 const PUBS_SCRIPT = path.join(repoRoot, 'examples', 'google-research.mjs')
@@ -319,6 +321,100 @@ export default async function (input) {
   ok(!!kept && kept.type === 'custom' && kept.script === 'sources/google-research.mjs', 'an import keeps a custom feed it does not describe', kept)
   ok(!!renamed && renamed.folder === 'Daily', 'and still applies the export folder', renamed)
   removeRoot(root)
+}
+
+// 10. Scaffolding and checking: the loop an author actually iterates in.
+{
+  const root = makeDataRoot({ feeds: [] })
+  const { createGitfeed } = await import(lib('host', 'service.js'))
+  const service = createGitfeed({ root: root, timers: nodeTimers(), allowGit: false, refreshMinutes: 0 })
+
+  const made = await service.scaffoldCustomFeed({ name: 'draft' })
+  ok(made.script === 'sources/draft.mjs', 'scaffold writes the script feeds.json names', made.script)
+  const written = readFileSync(path.join(root, made.script), 'utf8')
+  ok(written.includes('export default async function'), 'the skeleton is a script, not a stub', written.slice(0, 40))
+  ok(written.includes('input.signal'), 'and it documents the interface it is handed')
+
+  let twice = null
+  try {
+    await service.scaffoldCustomFeed({ name: 'draft' })
+  } catch (err) {
+    twice = err
+  }
+  ok(!!twice && /already exists/.test(twice.message), 'scaffold refuses to overwrite', twice && twice.message)
+
+  let bad = null
+  try {
+    await service.scaffoldCustomFeed({ name: '../escape' })
+  } catch (err) {
+    bad = err
+  }
+  ok(!!bad && /lower-case/.test(bad.message), 'scaffold refuses a name that is not a file name', bad && bad.message)
+
+  // The skeleton parses and runs; it fails on its own assertion, which is the
+  // lesson it carries. A script that returns items then checks clean.
+  stub({ 'https://example.com/x': { body: '<html><body>nothing here</body></html>' } })
+  let unparsed = null
+  try {
+    await service.checkCustomFeed({ script: made.script, url: 'https://example.com/x' })
+  } catch (err) {
+    unparsed = err
+  }
+  ok(!!unparsed && /no items matched/.test(unparsed.message), 'the skeleton runs and carries its own assertion', unparsed && unparsed.message)
+
+  writeFileSync(path.join(root, made.script), `
+export default async function (input) {
+  return { title: 'Checked', items: [{ title: 'One', link: input.url + '/1', date: '2026-11-01T00:00:00.000Z' }, { title: 'Two' }] }
+}
+`)
+  const checked = await service.checkCustomFeed({ script: made.script, url: 'https://example.com/x' })
+  ok(checked.count === 2, 'check reports what the script returned', checked.count)
+  ok(checked.dated === 1, 'and how many items carried a date', checked.dated)
+  ok(checked.title === 'Checked' && checked.sample.length === 2, 'with the pseudo feed title and a sample', checked.title)
+  ok(rowsOf(root).length === 0, 'check writes nothing to the archive')
+
+  const listed = await service.customFeeds()
+  ok(listed.count === 0, 'no custom feed is declared yet', listed)
+  service.dispose()
+  removeRoot(root)
+}
+
+// 11. The authoring tool drives those same methods, and the skill that points
+// at it parses and advertises itself.
+{
+  const root = makeDataRoot({ feeds: [] })
+  const { createGitfeed } = await import(lib('host', 'service.js'))
+  const service = createGitfeed({ root: root, timers: nodeTimers(), allowGit: false, refreshMinutes: 0 })
+  const definitions = []
+  const ctx = { tools: { register(definition) { definitions.push(definition); return function () {} } } }
+  registerTool(ctx, service)
+  registerCustomFeedTool(ctx, service)
+  const byName = new Map(definitions.map(function (definition) { return [definition.name, definition] }))
+  ok(byName.has('gitfeed') && byName.has('gitfeed_custom_feed'), 'both tools register', [...byName.keys()])
+  const custom = byName.get('gitfeed_custom_feed')
+  ok(/custom feed/i.test(custom.description) && custom.description.includes('custom-feeds skill'), 'the authoring tool names the skill', custom.description.slice(0, 60))
+
+  const scaffolded = await custom.execute({ action: 'scaffold', name: 'tool-draft' })
+  ok(scaffolded.script === 'sources/tool-draft.mjs', 'the tool scaffolds through the same path', scaffolded)
+  writeFileSync(path.join(root, scaffolded.script), 'export default async () => ({ items: [{ title: "One", link: "https://example.com/tool/1" }] })\n')
+  const checked = await custom.execute({ action: 'check', script: scaffolded.script, url: 'https://example.com/tool' })
+  ok(checked.count === 1, 'and checks it', checked.count)
+  stub({})
+  const subscribed = await custom.execute({ action: 'subscribe', script: scaffolded.script, url: 'https://example.com/tool', title: 'Tool feed', folder: 'Papers' })
+  ok(subscribed.ok && subscribed.feed.type === 'custom', 'and subscribes it as a custom feed', subscribed.feed)
+  const listed = await custom.execute({ action: 'list' })
+  ok(listed.count === 1 && listed.feeds[0].script === scaffolded.script, 'the list action reports the declaration', listed)
+  ok(listed.feeds[0].items === 1, 'with the items it archived', listed.feeds[0].items)
+  service.dispose()
+  removeRoot(root)
+
+  const skill = parseSkill(readFileSync(path.join(repoRoot, 'src', 'skill', 'custom-feeds.md'), 'utf8'))
+  ok(skill.name === 'custom-feeds' && skill.description.length > 40, 'the skill parses with a routable description', skill.name)
+  ok(!!skill.whenToUse && skill.whenToUse.length > 10, 'and carries when-to-use guidance', skill.whenToUse)
+  ok(skill.content.includes('gitfeed_custom_feed') && skill.content.includes('input.signal'), 'the body documents the tool and the interface')
+  const registered = []
+  registerSkill({ skills: { register(value) { registered.push(value); return function () {} } } })
+  ok(registered.length === 1 && registered[0].name === 'custom-feeds', 'the plugin registers the skill', registered.length)
 }
 
 finish()

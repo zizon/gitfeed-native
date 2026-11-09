@@ -22,7 +22,8 @@ import { createHandler } from './host/http.js'
 import { scaffoldData } from './host/scaffold.js'
 import { resolveRoot } from './host/settings.js'
 import { createGitfeed } from './host/service.js'
-import { registerTool } from './host/tool.js'
+import { registerSkill } from './host/skill.js'
+import { registerCustomFeedTool, registerTool } from './host/tool.js'
 import type { GitfeedConfig, PluginContext } from './host/types.js'
 
 export const name = 'gitfeed'
@@ -115,6 +116,15 @@ export function apply(ctx: PluginContext, config?: GitfeedConfig) {
   if (tool) {
     ctx.inject(['tools'], (scope) => {
       scope.effect(() => registerTool(scope, service), 'gitfeed: agent tool')
+      scope.effect(() => registerCustomFeedTool(scope, service), 'gitfeed: custom feed tool')
+    })
+  }
+
+  // The skill is the guide the authoring tool's description points at. Default
+  // on: a profile patch written before this key existed must not lose it.
+  if (settings.skill !== false) {
+    ctx.inject(['skills'], (scope) => {
+      scope.effect(() => registerSkill(scope), 'gitfeed: custom feed skill')
     })
   }
 

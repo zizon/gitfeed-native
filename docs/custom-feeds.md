@@ -202,6 +202,31 @@ export default async function (input) {
 A `304` returns no items — a quiet run — and because `etag` is omitted, the
 stored validator survives for the next round.
 
+## Authoring with an agent
+
+A script is code, and writing one by hand means guessing at a page's markup until
+it parses. The plugin gives an agent three steps instead, through
+`gitfeed_custom_feed`:
+
+| action | what it returns |
+| --- | --- |
+| `scaffold` `{ name }` | writes `sources/<name>.mjs` — the interface as comments, and the one check a scraper must make |
+| `check` `{ script, url, options }` | runs the script exactly as the fetcher would, with the same deadline, and reports the item count, how many items carried a date, and five sample rows; writes nothing |
+| `subscribe` `{ script, url, title, folder, options }` | declares the entry, validates the script, and fetches it |
+
+`list` reports every declared custom feed with its item count and last error, so
+an agent can see a broken one without opening the rail.
+
+The `custom-feeds` skill (registered with the plugin; `skill: false` turns it
+off) is the guide an agent loads before writing one: the loop, the interface, the
+rules that matter — throw on a mismatch, pass `signal`, keep the script inside
+`data root` — and the failure modes. It points at the worked examples in
+`examples/`, which are the same forty-line shape.
+
+The point of `check` running outside a subscription is that a wrong script never
+becomes a red row: the feedback is one tool call, with the script's own error
+message and a sample of what it produced.
+
 ## Adding one
 
 By hand, which is the durable way:

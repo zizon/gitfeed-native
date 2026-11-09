@@ -2,7 +2,8 @@
 // cache, read/star state, subscriptions, git actions, and the job runner.
 
 import crypto from 'node:crypto'
-import { copyFile, mkdir, stat } from 'node:fs/promises'
+import path from 'node:path'
+import { copyFile, mkdir, stat, writeFile } from 'node:fs/promises'
 import { feedIdFor, normalizeUrl, readFeeds, resolveFeed, sourceUrl, writeFeeds } from './feeds.js'
 import { loadRuntimeFeeds, runFetch } from './fetch.js'
 import { pull as pullRemote, readGitInfo, sync as syncRemote } from './git.js'
@@ -10,7 +11,7 @@ import { createFetchJob, createSyncJob } from './jobs.js'
 import { createJobRunner } from './runner.js'
 import type { JobRunner, JobTimers } from './runner.js'
 import { pathsFor, readRepoConfig } from './settings.js'
-import { declarationOf, kindOf, scriptFile } from './custom.js'
+import { CUSTOM_FEED_TEMPLATE, declarationOf, kindOf, runCustom, scaffoldPath, scriptFile } from './custom.js'
 import { appendNdjson, listShards, readJson, readNdjson, updateNdjson } from './store.js'
 import type { FetchResult, GitActionResult, Logger, ReaderStateData, ReadyState, RepoConfig } from './types.js'
 import type { FeedDefinition } from './types.js'
@@ -416,6 +417,102 @@ export function createGitfeed(options: GitfeedOptions) {
     }
   }
 
+  /**
+   * Write the custom feed skeleton, and never over a script that exists.
+   * @param input `name` is the script's file name, without the `.mjs`.
+   * @returns the path as `feeds.json` writes it, plus what to do next.
+   */
+  async function scaffoldCustomFeed(input: { name?: string } | null | undefined) {
+    touch()
+    const target = scaffoldPath(root, input?.name || '')
+    await mkdir(path.dirname(target.file), { recursive: true })
+    try {
+      await writeFile(target.file, CUSTOM_FEED_TEMPLATE, { flag: 'wx' })
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
+        throw new Error(`custom feed: ${target.script} already exists; pick another name`)
+      }
+      throw err
+    }
+    return {
+      script: target.script,
+      file: target.file,
+      next: 'fill in the items loop, then check it with gitfeed_custom_feed check',
+    }
+  }
+
+  /**
+   * Run a script exactly the way the fetcher would, and write nothing: the loop
+   * an author iterates in.
+   * @param input the script, the URL to hand it, and its options.
+   * @returns what the script returned, with a sample of the items.
+   */
+  async function checkCustomFeed(input: { script?: string; url?: string; options?: unknown } | null | undefined) {
+    if (!input?.script) throw new Error('script is required')
+    const declaration = declarationOf({ type: 'custom', script: input.script, options: input.options })
+    if (declaration === null) throw new Error('script is required')
+    const file = await scriptFile(root, declaration.script)
+    const url = sourceUrl(input.url || 'https://example.com/')
+    const controller = new AbortController()
+    // The same deadline the fetcher would give it, armed on the Host timer.
+    const cancel = options.timers.timeout(function () { controller.abort() }, settings().fetch.timeoutMs)
+    try {
+      const feed = await runCustom(file, {
+        id: 'check',
+        url: url,
+        title: null,
+        options: declaration.options,
+        meta: { etag: null, lastModified: null },
+        fetch: globalThis.fetch,
+        signal: controller.signal,
+      })
+      return {
+        ok: true,
+        script: declaration.script,
+        url: url,
+        title: feed.title,
+        siteUrl: feed.siteUrl,
+        count: feed.items.length,
+        dated: feed.items.filter(function (item) { return item.date !== '' }).length,
+        sample: feed.items.slice(0, 5).map(function (item) {
+          return {
+            title: item.title.slice(0, 90),
+            link: item.link,
+            date: item.date,
+            author: item.author.slice(0, 60),
+          }
+        }),
+      }
+    } finally {
+      cancel()
+    }
+  }
+
+  /**
+   * The custom feeds the reader has declared, with what each one archived.
+   * @returns every declaration and its item count and last error.
+   */
+  async function customFeeds() {
+    const { data } = await snapshotNow()
+    const declared = await readFeeds(root)
+    const counts = new Map<string, number>()
+    for (const item of data.items) counts.set(item.feed, (counts.get(item.feed) || 0) + 1)
+    const rows = []
+    for (const feed of declared) {
+      if (feed.type !== 'custom') continue
+      const shown = data.feeds.find(function (candidate) { return candidate.id === feed.id })
+      rows.push({
+        id: feed.id,
+        title: shown ? shown.title : (feed.title || feed.id),
+        folder: feed.folder || null,
+        script: feed.script || null,
+        items: counts.get(feed.id) || 0,
+        error: shown ? shown.error : null,
+      })
+    }
+    return { count: rows.length, feeds: rows }
+  }
+
   // The runner owns every periodic run: the fetch job's per-feed clocks
   // and the sync job's push/pull debounce both live here, not in a timer.
   const runner: JobRunner = createJobRunner({
@@ -685,6 +782,9 @@ export function createGitfeed(options: GitfeedOptions) {
     addFeed: addFeed,
     removeFeed: removeFeed,
     runLocalFetch: runLocalFetch,
+    scaffoldCustomFeed: scaffoldCustomFeed,
+    checkCustomFeed: checkCustomFeed,
+    customFeeds: customFeeds,
     pull: function () { return gitAction('pull') },
     sync: function () { return gitAction('sync') },
     settings: settings,

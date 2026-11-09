@@ -472,7 +472,8 @@ so an override restates every key it should keep.
 | `syncMinutes` | 10 | minutes between read-state syncs; marks push after a ~20 s debounce and a quiet reader backs off to `syncMaxMinutes`; 0 disables auto-sync |
 | `syncMaxMinutes` | 60 | ceiling of the sync backoff |
 | `allowGit` | true | expose Pull and Sync, enable auto-sync, and show the git status line |
-| `tool` | true | register the `gitfeed` agent tool |
+| `tool` | true | register the `gitfeed` and `gitfeed_custom_feed` agent tools |
+| `skill` | true | register the `custom-feeds` skill |
 
 Precedence: **environment variable > `config.json` > built-in default** for
 fetch/reader values; **environment variable > plugin config > built-in default**
@@ -492,7 +493,13 @@ for `refreshMinutes`, `adaptive`, `maxIntervalMinutes`, `syncMinutes`,
 | `GITFEED_SYNC_MAX_MIN` | plugin `syncMaxMinutes` |
 | `GITFEED_ALLOW_GIT` | plugin `allowGit` (`0` disables) |
 
-## Agent tool
+## Agent tools
+
+Two tools, split by intent: `gitfeed` reads and manages the reader,
+`gitfeed_custom_feed` authors a feed for a page that has none. The
+`custom-feeds` skill walks an agent through the second.
+
+`gitfeed`:
 
 | action | parameters | result |
 | --- | --- | --- |
@@ -505,6 +512,21 @@ for `refreshMinutes`, `adaptive`, `maxIntervalMinutes`, `syncMinutes`,
 | `subscribe` | `url`, `folder` | new feed entry |
 | `unsubscribe` | `id` | removed feed id |
 | `pull` / `sync` | — | git result; a local copy reports that it is not a working tree |
+
+`gitfeed_custom_feed`:
+
+| action | parameters | result |
+| --- | --- | --- |
+| `list` | — | declared custom feeds, each with its item count and last error |
+| `scaffold` | `name` | writes `sources/<name>.mjs` from a commented skeleton |
+| `check` | `script`, `url`, `options` | runs the script and reports the item count, how many carried a date, and five sample rows; writes nothing |
+| `subscribe` | `script`, `url`, `title`, `folder`, `options` | the new feed entry, fetched immediately |
+
+The loop is `scaffold` → edit → `check` → `subscribe`. `check` runs a script the
+way the fetcher would, with the same deadline, so a script that is wrong is one
+tool call away from its own error message instead of a red row. The
+`custom-feeds` skill carries the interface, the rules, and the failure modes;
+the plugin registers it unless the row sets `skill: false`.
 
 All of these call the same Host methods the reader uses.
 
@@ -652,6 +674,12 @@ bounded like a feed, and the script is resolved against the data root and must
 stay inside it — a data repository is cloned from remotes, so the code it runs
 has to belong to it.
 
+An agent writes these with `gitfeed_custom_feed` — `scaffold` writes a commented
+skeleton, `check` runs it against the page and reports what came back, and
+`subscribe` declares the feed — guided by the plugin's `custom-feeds` skill. By
+hand, the same three steps are: write the script in `sources/`, run
+`gitfeed fetch --root ~/gitfeed --only <id>`, then commit.
+
 [`docs/custom-feeds.md`](docs/custom-feeds.md) is the reference: the interface in
 full, a conditional-GET example, and the failure modes.
 
@@ -660,7 +688,7 @@ full, a conditional-GET example, and the failure modes.
 ```
 package.json                bundle metadata: dsh.bundle patch, dsh.client module, bin, files, prepare
 cordis.patch.yml            inserts the `gitfeed` Host row
-src/index.ts                typed Host entry: route, job runner, tool
+src/index.ts                typed Host entry: route, job runner, tools, skill
 src/cli.ts                  `gitfeed fetch | import-opml | init`
 src/host/                   settings, scaffold, store, OPML, XML, custom, fetch, git, runner, jobs, service, HTTP, tool
 .github/workflows/          ci.yml (gates) and release.yml (tag to npm and a GitHub release)
@@ -670,6 +698,7 @@ docs/custom-feeds.md        custom feeds: the script interface and the rules
 docs/history/               point-in-time records: the removed Actions job, the 2026-11-09 review
 src/client/                 native reader: controller, transport, derivations, viewport, prefs, hooks, components, styles, locales
 src/shared/                 the types both halves import, and the one runtime helper they share
+src/skill/                  the custom-feeds skill: workflow, interface, failure modes
 examples/                   a custom feed script: the Google Research list the docs walk through
 build.mjs                   tsc Host + esbuild Client into the loader envelope
 tsconfig.host.json          Host compiler face (includes the CLI)

@@ -134,6 +134,8 @@ export async function resolveFeed(rawUrl: string, depth?: number): Promise<Resol
   }
 
   const discovered = discoverFeed(body, finalUrl)
-  if (!discovered) throw new Error('no RSS/Atom feed found on that page')
+  if (!discovered) {
+    throw new Error('no RSS/Atom feed found on that page — a custom feed script can read a page like this instead')
+  }
   return resolveFeed(discovered, level + 1)
 }

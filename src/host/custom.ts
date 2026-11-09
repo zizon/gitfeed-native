@@ -231,3 +231,70 @@ export async function runCustom(file: string, input: CustomInput): Promise<Custo
   const value: unknown = await (loaded.default as (input: CustomInput) => unknown)(input)
   return readCustomFeed(value, name)
 }
+
+/**
+ * The skeleton `gitfeed_custom_feed scaffold` writes: the interface as comments,
+ * and the one check a scraper must make — that its split still matched.
+ */
+export const CUSTOM_FEED_TEMPLATE = `// A gitfeed custom feed.
+//
+// The default export is called with one object and returns a pseudo feed:
+//
+//   input.id, input.url, input.title   the subscription
+//   input.options                      the entry's "options", untouched
+//   input.meta                         { etag, lastModified } from the last run
+//   input.fetch                        use this instead of the global fetch
+//   input.signal                       aborted at fetch.timeoutMs; pass it on
+//
+//   return { title?, siteUrl?, etag?, lastModified?, items }
+//   item   { id?, title?, link?, date?, author?, summary? }
+//
+// Throw when the page stops looking like it used to: that is what puts the
+// feed's row in the reader's error colour. Return no items when there is
+// genuinely nothing new.
+//
+// Then check it and subscribe it:
+//   gitfeed_custom_feed { action: 'check', script: '<this file>', url: '<the page>' }
+//   gitfeed_custom_feed { action: 'subscribe', script: '<this file>', url: '<the page>' }
+
+export default async function (input) {
+  const answer = await input.fetch(input.url, {
+    headers: { 'user-agent': 'gitfeed/3 (+https://github.com/zizon/gitfeed-native)' },
+    redirect: 'follow',
+    signal: input.signal,
+  })
+  if (!answer.ok) throw new Error('HTTP ' + answer.status)
+  const body = await answer.text()
+
+  const items = []
+  // Cut the body into one piece per item and pull the fields out of each piece,
+  // e.g.:
+  //
+  //   for (const chunk of body.split('<li class="result">').slice(1)) {
+  //     const title = /<h3[^>]*>([\\s\\S]*?)<\\/h3>/.exec(chunk)
+  //     const href = /<a[^>]*href="([^"]+)"/.exec(chunk)
+  //     if (!title || !href) continue
+  //     items.push({ title: title[1], link: new URL(href[1], input.url).href })
+  //   }
+
+  if (items.length === 0) throw new Error('no items matched on the page')
+  return { title: input.title || input.url, siteUrl: new URL(input.url).origin, items: items }
+}
+`
+
+/** A script name is a file name under `sources/`, never a path. */
+const SCAFFOLD_NAME = /^[a-z0-9][a-z0-9._-]*$/
+
+/**
+ * Where a scaffold writes, from the name an author typed.
+ * @param root the data root.
+ * @param name the script name, with or without the `.mjs` suffix.
+ * @returns the path as `feeds.json` writes it, and on disk.
+ */
+export function scaffoldPath(root: string, name: string): { script: string; file: string } {
+  const trimmed = (name || '').trim().toLowerCase().replace(/\.mjs$/, '')
+  if (!SCAFFOLD_NAME.test(trimmed)) {
+    throw new Error('custom feed: name the script in lower-case letters, digits, dot, dash, or underscore')
+  }
+  return { script: `sources/${trimmed}.mjs`, file: path.join(root, 'sources', `${trimmed}.mjs`) }
+}

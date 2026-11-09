@@ -41,5 +41,8 @@
         syncMaxMinutes: 60
         # Enable the Pull/Sync actions, auto-sync, and the git status line.
         allowGit: true
-        # Register the `gitfeed` agent tool.
+        # Register the `gitfeed` and `gitfeed_custom_feed` agent tools.
         tool: true
+        # Register the `custom-feeds` skill: the guide for authoring a feed
+        # script for a page or API that has no RSS.
+        skill: true

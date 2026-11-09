@@ -35,11 +35,29 @@ export interface Tools {
   register(definition: ToolDefinition): () => void
 }
 
+/** A skill this Host half contributes to the Harness catalog. */
+export interface SkillRegistration {
+  name: string
+  description: string
+  whenToUse?: string
+  content: string
+}
+
+export interface Skills {
+  register(skill: SkillRegistration): () => void
+}
+
+/** The services a Host half can ask for, keyed by the name `inject` takes. */
+export interface ServiceMap {
+  tools: Tools
+  skills: Skills
+}
+
 export interface PluginContext {
   logger: Logger
   webServer: WebServer
   effect(callback: () => (() => void) | void, label?: string): () => void
-  inject(services: string[], callback: (ctx: PluginContext & { tools: Tools }) => void): void
+  inject<K extends keyof ServiceMap>(services: K[], callback: (ctx: PluginContext & Pick<ServiceMap, K>) => void): void
   /**
    * The Host timer service (`ctx.timer`), forwarded by the Cordis context: the
    * disposer it returns belongs to this plugin's fiber.
@@ -57,6 +75,7 @@ export interface GitfeedConfig {
   syncMaxMinutes?: number
   allowGit?: boolean
   tool?: boolean
+  skill?: boolean
 }
 
 export interface RepoConfig {

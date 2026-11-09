@@ -5,7 +5,7 @@
 // checkout's node_modules when the package is built without installing here.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import os from "node:os";
 import path from "node:path";
@@ -46,6 +46,17 @@ run(tsc, ["-p", "tsconfig.client.json"]);
 if (typecheckOnly) {
   console.log("typecheck ok");
   process.exit(0);
+}
+
+// Markdown is not TypeScript: tsc leaves the skill guide alone, so copy it where
+// the Host half reads it from (`lib/skill/`), and it ships through `files`.
+const skillDir = path.join(ROOT, "src", "skill");
+if (existsSync(skillDir)) {
+  mkdirSync(path.join(ROOT, "lib", "skill"), { recursive: true });
+  for (const name of readdirSync(skillDir)) {
+    if (!name.endsWith(".md")) continue;
+    copyFileSync(path.join(skillDir, name), path.join(ROOT, "lib", "skill", name));
+  }
 }
 
 const bundle = path.join(ROOT, "lib", "client.bundle.cjs");
