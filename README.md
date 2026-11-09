@@ -494,6 +494,12 @@ filter, and read state itself. That is what lets the wire carry a digest of a
 row instead of its body — and what keeps a query matching text the list does not
 have.
 
+The first frame after a restart costs one read of the archive plus two git
+commands, not five: branch, divergence, and dirty state come from one
+`status --porcelain=v2 --branch`, started while the item model is being parsed
+rather than after it. On that library the first frame arrives in about 0.23 s
+instead of 0.38 s.
+
 The archive is not re-read to answer questions the Host already can. The item
 model keeps each shard's rows keyed by that shard's size and modification time,
 so a fetch that appends to one month's file re-reads one file instead of

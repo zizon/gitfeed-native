@@ -40,10 +40,48 @@ export async function runGit(root: string, args: string[]): Promise<string> {
 }
 
 /**
+ * What `git status --porcelain=v2 --branch` says, in the shape the status line
+ * wants. Branch, upstream, and divergence come from the `#` headers, and any
+ * non-header line is a changed path — which is the dirty flag.
+ * @param text - the command's stdout.
+ * @returns the parsed facts; branch is null on an empty or detached HEAD.
+ */
+export function parseStatusV2(text: string): { branch: string | null; ahead: number; behind: number; dirty: boolean } {
+  let branch: string | null = null
+  let ahead = 0
+  let behind = 0
+  let dirty = false
+  for (const line of text.split('\n')) {
+    if (line === '') continue
+    if (line.startsWith('# branch.head ')) {
+      const head = line.slice('# branch.head '.length).trim()
+      branch = head === '' || head === '(detached)' ? null : head
+      continue
+    }
+    if (line.startsWith('# branch.ab ')) {
+      const counts = /^# branch\.ab \+(\d+) -(\d+)$/.exec(line)
+      if (counts) {
+        ahead = Number(counts[1])
+        behind = Number(counts[2])
+      }
+      continue
+    }
+    if (line.startsWith('#')) continue
+    dirty = true
+  }
+  return { branch: branch, ahead: ahead, behind: behind, dirty: dirty }
+}
+
+/**
  * Branch, dirty state, remotes, and divergence for the status line.
  *
+ * Three commands, not five: `status --porcelain=v2 --branch` answers branch,
+ * divergence, and dirty state together, which removes a `rev-parse` and a
+ * `rev-list` from every read. That read is on the critical path of the first
+ * frame after a restart, so the commands are also started together.
+ *
  * The check is `rev-parse --git-dir`, not a branch lookup: a freshly
- * `git init`-ed directory has no HEAD yet but is still a working tree the
+ * `git init` -ed directory has no HEAD yet but is still a working tree the
  * reader may commit into.
  * @param {string} root checkout directory.
  * @returns {Promise<object>} repository facts.
@@ -55,27 +93,22 @@ export async function readGitInfo(root: string): Promise<GitInfo> {
     return { repo: false, error: gitMessage(err) }
   }
   try {
-    let branch = ''
-    try {
-      branch = (await runGit(root, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim()
-    } catch {
-      // An empty repository has no commit to name.
+    // `--no-optional-locks` keeps these out of the index: without it a status
+    // can take index.lock while the sync job is staging, and the loser reports
+    // the checkout as no repository at all.
+    const [status, remotes] = await Promise.all([
+      runGit(root, ['--no-optional-locks', 'status', '--porcelain=v2', '--branch', '--', 'data', 'feeds.json', 'config.json']),
+      runGit(root, ['remote']),
+    ])
+    const parsed = parseStatusV2(status)
+    return {
+      repo: true,
+      branch: parsed.branch,
+      dirty: parsed.dirty,
+      remotes: remotes.trim().split('\n').filter(Boolean),
+      ahead: parsed.ahead,
+      behind: parsed.behind,
     }
-    // `--no-optional-locks` keeps this probe out of the index: without it a
-    // status can take index.lock while the sync job is staging, and the loser
-    // reports the checkout as no repository at all.
-    const dirty = (await runGit(root, ['--no-optional-locks', 'status', '--porcelain', '--', 'data', 'feeds.json', 'config.json'])).trim().length > 0
-    const remotes = (await runGit(root, ['remote'])).trim().split('\n').filter(Boolean)
-    let ahead = 0
-    let behind = 0
-    try {
-      const counts = (await runGit(root, ['rev-list', '--left-right', '--count', 'HEAD...@{upstream}'])).trim().split(/\s+/)
-      ahead = Number(counts[0] || 0)
-      behind = Number(counts[1] || 0)
-    } catch {
-      // no upstream configured
-    }
-    return { repo: true, branch: branch || null, dirty: dirty, remotes: remotes, ahead: ahead, behind: behind }
   } catch (err) {
     return { repo: false, error: gitMessage(err) }
   }

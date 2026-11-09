@@ -152,6 +152,12 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
       const needle = ui.query.trim()
       if (needle) searchFor(needle)
     },
+    refetchBody: function (id: string) {
+      // A row that arrived as a digest under the open article: read it whole
+      // again. ensureBody is a no-op when the row is complete or already being
+      // read.
+      ensureBody(id)
+    },
     resetText: function () {
       // The digest cache is the one text cache the reader still owns: search
       // is the Host's answer now, not text this half derives.

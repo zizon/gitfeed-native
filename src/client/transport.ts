@@ -54,6 +54,12 @@ export interface TransportPorts {
    * surface's query is the Host's to answer.
    */
   refilter(): void
+  /**
+   * The open article's row arrived as a digest again: read its body once more
+   * rather than leaving the reader with the first 400 characters.
+   * @param id - the row the article is showing.
+   */
+  refetchBody(id: string): void
   /** Drop the row text a new item model invalidates. */
   resetText(): void
   t: Translate
@@ -239,6 +245,9 @@ export function createTransport(ports: TransportPorts): Transport {
     if (fresh.size) armFresh()
     // A fuller model can match a text filter the Host answered a moment ago.
     ports.refilter()
+    // The article that is open was replaced by a digest: read its body again.
+    const open = ui().current
+    if (open && data().byId.get(open)?.bodyChars) ports.refetchBody(open)
   }
 
   /**
@@ -368,9 +377,15 @@ export function createTransport(ports: TransportPorts): Transport {
       listEpoch: epoch ? ui().listEpoch + 1 : ui().listEpoch,
     })
     if (fresh.size) armFresh()
-    // The rows moved under an active text filter: the Host answers that query,
-    // and its old answer may no longer describe this model.
-    if (frame.items) ports.refilter()
+    if (frame.items) {
+      // The rows moved under an active text filter: the Host answers that query,
+      // and its old answer may no longer describe this model.
+      ports.refilter()
+      // The open article's row arrived as a digest again; read its body once
+      // more rather than leaving the reader with the first 400 characters.
+      const open = ui().current
+      if (open && data().byId.get(open)?.bodyChars) ports.refetchBody(open)
+    }
   }
 
   function closeStream(): void {

@@ -218,6 +218,18 @@ if (engine === undefined || esbuild === undefined) {
     capped.select('long')
     await sleep(10)
     ok(http.bodies === 1, 'and not another while it is open', http.bodies)
+
+    // A delta can replace the open row with a digest again (a repaired body, a
+    // refresh landing): the article reads its body once more instead of falling
+    // back to the first 400 characters.
+    cappedStream.fire('delta', delta(21, {
+      items: { added: [], updated: [
+        Object.assign(item('long', '2026-11-06T10:00:00.000Z'), { summary: LONG.full.slice(0, 400), bodyChars: LONG.full.length }),
+      ], removed: [] },
+    }))
+    await sleep(10)
+    ok(capped.get().byId.get('long').summary.length === LONG.full.length, 'the open article keeps its body across a delta', capped.get().byId.get('long').summary.length)
+    ok(http.bodies === 2, 'by reading that one row again', http.bodies)
     capped.dispose()
 
     // --- the surface going closes the stream ---
