@@ -5,6 +5,8 @@
  */
 
 import type { Feed, GitInfo, Item, ReaderPrefs, ScheduleJobInfo } from '../shared/types.js'
+import { mergeItems, PROTOCOL, STREAM_PATH } from '../shared/stream.js'
+import type { StreamDelta, StreamWelcome } from '../shared/stream.js'
 import { PREFIX } from './constants.js'
 import type { Translate } from './locales.js'
 import type { ReaderData, ReaderUi } from './types.js'
@@ -125,6 +127,14 @@ export function createTransport(ports: TransportPorts): Transport {
   let visibilityHandler: (() => void) | null = null
   let mounted = 0
   let disposed = false
+  /**
+   * The revision this surface holds, and the stream that keeps it current.
+   * `lastRev` is what a reconnecting stream asks from; it is not published,
+   * because a scroll or a mark must not republish the snapshot for it.
+   */
+  let lastRev = 0
+  let stream: EventSource | null = null
+  let streaming = false
 
   function request(route: string, body?: unknown): Promise<ApiResponse> {
     return fetch(PREFIX + route, {
@@ -145,7 +155,88 @@ export function createTransport(ports: TransportPorts): Transport {
     })
   }
 
-  function load(options?: { force?: boolean }): Promise<void> {
+  /** Stop calling a row new once the fade that introduced it is done. */
+  function armFresh(): void {
+    if (freshTimer) clearTimeout(freshTimer)
+    freshTimer = setTimeout(function () {
+      freshTimer = null
+      if (data().fresh.size) ports.setData({ fresh: new Set() })
+    }, 1600)
+  }
+
+  /**
+   * Publish one complete item model with the facts that came with it. Both the
+   * HTTP load and the stream's first frame end here, so a surface cannot tell
+   * which of them delivered its rows.
+   * @param items - the rows of the model.
+   * @param payload - the marks and facts sent beside them.
+   */
+  function commitModel(
+    items: Item[],
+    payload: {
+      read?: string[]
+      starred?: string[]
+      feeds?: Feed[]
+      reader?: ReaderPrefs
+      git?: GitInfo | null
+      schedule?: ScheduleJobInfo[]
+      version?: string | null
+      itemsVersion?: string | null
+      repo?: string
+      allowGit?: boolean
+    },
+  ): void {
+    const before = data()
+    const byId = new Map<string, Item>(items.map(function (item): [string, Item] { return [item.id, item] }))
+    const fresh = new Set<string>()
+    if (before.loadedOnce) {
+      for (const item of items) if (!before.byId.has(item.id)) fresh.add(item.id)
+    }
+    // A refresh that lands rows under the reader's eye moves the rows below
+    // them, and the fade meant to soften that reads as a blink: the count
+    // moves, the rows do not.
+    if (fresh.size && ports.scrolled()) {
+      for (const id of fresh) heldArrivals.add(id)
+    }
+    const read = new Set<string>(Array.isArray(payload.read) ? payload.read : before.read)
+    const starred = new Set<string>(Array.isArray(payload.starred) ? payload.starred : before.starred)
+    const feeds: Feed[] = Array.isArray(payload.feeds) ? payload.feeds : before.feeds
+    const feedMap = new Map<string, Feed>(feeds.map(function (feed): [string, Feed] { return [feed.id, feed] }))
+    ports.resetText()
+    const current = ui().current
+    ports.commit({
+      status: 'ready',
+      error: null,
+      loadError: null,
+      loadedOnce: true,
+      items: items,
+      byId: byId,
+      itemsVersion: payload.itemsVersion || before.itemsVersion,
+      fresh: fresh,
+      feeds: feeds,
+      feedMap: feedMap,
+      read: read,
+      starred: starred,
+      reader: payload.reader || before.reader,
+      git: payload.git === undefined ? before.git : payload.git,
+      schedule: Array.isArray(payload.schedule) ? payload.schedule : before.schedule,
+      version: payload.version || before.version,
+      repo: payload.repo || before.repo,
+      allowGit: payload.allowGit !== false,
+    }, {
+      current: current && byId.has(current) ? current : null,
+      listEpoch: ui().listEpoch + 1,
+    })
+    if (fresh.size) armFresh()
+  }
+
+  /**
+   * Ask the Host for its state over HTTP. The stream is the normal path; this
+   * is what a surface uses when it cannot stream, and what fills the gap while
+   * a stream is reconnecting.
+   * @param options - `force` ignores the versions held, asking for a full payload.
+   */
+  function loadHttp(options?: { force?: boolean }): Promise<void> {
     if (disposed) return Promise.resolve()
     if (loadPromise) return loadPromise
     const force = options?.force === true
@@ -192,40 +283,25 @@ export function createTransport(ports: TransportPorts): Transport {
       // anything else means a mid-update race, so ask again from scratch.
       const replaceItems = Array.isArray(payload.items)
       if (!replaceItems && payload.itemsVersion !== data().itemsVersion) {
-        setTimeout(function () { load({ force: true }).catch(function () { }) }, 0)
+        setTimeout(function () { loadHttp({ force: true }).catch(function () { }) }, 0)
         return
       }
-      const items = replaceItems ? (payload.items as Item[]) : data().items
-      const byId = replaceItems
-        ? new Map<string, Item>(items.map(function (item): [string, Item] { return [item.id, item] }))
-        : data().byId
-      // Rows that landed while the reader was already open: the list fades
-      // them in instead of reflowing the page under the pointer.
-      const fresh = new Set<string>()
-      if (replaceItems && data().loadedOnce) {
-        for (const item of items) if (!data().byId.has(item.id)) fresh.add(item.id)
+      if (replaceItems) {
+        commitModel(payload.items as Item[], payload)
+        return
       }
-      // A refresh that lands rows under the reader's eye moves the rows below
-      // them, and the fade meant to soften that reads as a blink: the count
-      // moves, the rows do not.
-      if (fresh.size && ports.scrolled()) {
-        for (const id of fresh) heldArrivals.add(id)
-      }
+      // The rows are the ones already held: only the marks and facts moved.
       const read = new Set<string>(Array.isArray(payload.read) ? payload.read : data().read)
       const starred = new Set<string>(Array.isArray(payload.starred) ? payload.starred : data().starred)
       const feeds: Feed[] = Array.isArray(payload.feeds) ? payload.feeds : data().feeds
       const feedMap = new Map<string, Feed>(feeds.map(function (feed): [string, Feed] { return [feed.id, feed] }))
-      if (replaceItems) ports.resetText()
-      const current = ui().current
+      const changed = !sameSet(data().read, read) || !sameSet(data().starred, starred)
       ports.commit({
         status: 'ready',
         error: null,
         loadError: null,
         loadedOnce: true,
-        items: items,
-        byId: byId,
         itemsVersion: payload.itemsVersion || data().itemsVersion,
-        fresh: fresh,
         feeds: feeds,
         feedMap: feedMap,
         read: read,
@@ -237,18 +313,8 @@ export function createTransport(ports: TransportPorts): Transport {
         repo: payload.repo || data().repo,
         allowGit: payload.allowGit !== false,
       }, {
-        current: current && byId.has(current) ? current : null,
-        listEpoch: replaceItems || !sameSet(data().read, read) || !sameSet(data().starred, starred)
-          ? ui().listEpoch + 1
-          : ui().listEpoch,
+        listEpoch: changed ? ui().listEpoch + 1 : ui().listEpoch,
       })
-      if (fresh.size) {
-        if (freshTimer) clearTimeout(freshTimer)
-        freshTimer = setTimeout(function () {
-          freshTimer = null
-          if (data().fresh.size) ports.setData({ fresh: new Set() })
-        }, 1600)
-      }
     })().catch(function (err: unknown) {
       const text = messageOf(err)
       if (data().loadedOnce) {
@@ -264,12 +330,191 @@ export function createTransport(ports: TransportPorts): Transport {
   }
 
   /**
+   * Make sure the reader is current. With a stream open there is nothing to
+   * ask: the Host announces what changed.
+   * @param options - `force` reloads the whole state over HTTP.
+   */
+  function load(options?: { force?: boolean }): Promise<void> {
+    if (options?.force) return showAll()
+    if (streaming) return Promise.resolve()
+    return loadHttp()
+  }
+
+  /**
+   * Apply the whole state the stream sends a surface that holds no revision it
+   * can extend, or whose revision the Host no longer has.
+   */
+  function applyWelcome(frame: StreamWelcome): void {
+    if (frame.protocol !== PROTOCOL) {
+      // A protocol this bundle does not speak: fall back to the HTTP path
+      // instead of guessing at frames.
+      streaming = false
+      closeStream()
+      loadHttp({ force: true }).catch(function () { })
+      return
+    }
+    lastRev = frame.rev
+    commitModel(frame.items, frame)
+  }
+
+  /** Apply what changed since the revision this surface holds. */
+  function applyDelta(frame: StreamDelta): void {
+    if (frame.rev <= lastRev) return
+    lastRev = frame.rev
+    const before = data()
+    const patch: Partial<ReaderData> = {
+      status: 'ready',
+      error: null,
+      loadError: null,
+      loadedOnce: true,
+      itemsVersion: frame.itemsVersion || before.itemsVersion,
+      version: frame.version || before.version,
+    }
+    let epoch = false
+    const fresh = new Set<string>()
+    if (frame.items) {
+      const items = mergeItems(before.items, frame.items)
+      const byId = new Map<string, Item>(before.byId)
+      for (const item of frame.items.updated) byId.set(item.id, item)
+      for (const item of frame.items.added) byId.set(item.id, item)
+      for (const id of frame.items.removed) {
+        byId.delete(id)
+        heldArrivals.delete(id)
+        stickyRead.delete(id)
+      }
+      if (before.loadedOnce) {
+        for (const item of frame.items.added) if (!before.byId.has(item.id)) fresh.add(item.id)
+      }
+      if (fresh.size && ports.scrolled()) {
+        for (const id of fresh) heldArrivals.add(id)
+      }
+      for (const id of heldArrivals) fresh.delete(id)
+      patch.items = items
+      patch.byId = byId
+      epoch = true
+    }
+    if (frame.read) {
+      const read = new Set(before.read)
+      let moved = false
+      for (const id of frame.read.add) {
+        if (read.has(id)) continue
+        read.add(id)
+        moved = true
+      }
+      for (const id of frame.read.remove) if (read.delete(id)) moved = true
+      if (moved) {
+        patch.read = read
+        epoch = true
+      }
+    }
+    if (frame.starred) {
+      const starred = new Set(before.starred)
+      let moved = false
+      for (const id of frame.starred.add) {
+        if (starred.has(id)) continue
+        starred.add(id)
+        moved = true
+      }
+      for (const id of frame.starred.remove) if (starred.delete(id)) moved = true
+      if (moved) {
+        patch.starred = starred
+        epoch = true
+      }
+    }
+    if (frame.feeds) {
+      patch.feeds = frame.feeds
+      patch.feedMap = new Map<string, Feed>(frame.feeds.map(function (feed): [string, Feed] { return [feed.id, feed] }))
+      epoch = true
+    }
+    if (frame.reader) {
+      patch.reader = frame.reader
+      epoch = true
+    }
+    if (frame.git !== undefined) patch.git = frame.git
+    if (frame.schedule) patch.schedule = frame.schedule
+    if (frame.repo) patch.repo = frame.repo
+    if (frame.allowGit !== undefined) patch.allowGit = frame.allowGit
+    if (fresh.size) {
+      const fading = new Set(before.fresh)
+      for (const id of fresh) fading.add(id)
+      patch.fresh = fading
+    }
+    const current = ui().current
+    const rows = patch.byId || before.byId
+    ports.commit(patch, {
+      current: current && rows.has(current) ? current : null,
+      listEpoch: epoch ? ui().listEpoch + 1 : ui().listEpoch,
+    })
+    if (fresh.size) armFresh()
+  }
+
+  function closeStream(): void {
+    streaming = false
+    if (!stream) return
+    const source = stream
+    stream = null
+    source.close()
+  }
+
+  /** The stream could not carry the state: say why, and let HTTP cover it. */
+  function streamFailed(message: string | null): void {
+    if (message) ports.toast(message, true)
+    streaming = false
+    // Catch up now rather than at the next poll: the Host answered, it just
+    // could not stream. The poll stays as the slow safety net.
+    loadHttp({ force: !data().loadedOnce }).catch(function () { })
+  }
+
+  /**
+   * Open the surface's stream. A Host that cannot stream, or a frame protocol
+   * this bundle does not speak, falls back to the HTTP path rather than
+   * leaving the reader blind.
+   */
+  function openStream(): void {
+    closeStream()
+    if (disposed || typeof EventSource === 'undefined') {
+      loadHttp({ force: !data().loadedOnce }).catch(function () { })
+      return
+    }
+    const source = new EventSource(`${STREAM_PATH}?rev=${lastRev}`)
+    stream = source
+    source.addEventListener('open', function () {
+      if (stream !== source) return
+      streaming = true
+    })
+    source.addEventListener('welcome', function (event: Event) {
+      if (stream !== source) return
+      applyWelcome(JSON.parse(String((event as MessageEvent).data)) as StreamWelcome)
+    })
+    source.addEventListener('delta', function (event: Event) {
+      if (stream !== source) return
+      applyDelta(JSON.parse(String((event as MessageEvent).data)) as StreamDelta)
+    })
+    source.addEventListener('error', function (event: Event) {
+      if (stream !== source) return
+      const text: unknown = (event as MessageEvent).data
+      if (typeof text === 'string' && text) {
+        streamFailed(text)
+        return
+      }
+      // A transport failure: the browser retries the stream by itself, and the
+      // HTTP path keeps the reader current until it does.
+      streaming = false
+      loadHttp({ force: !data().loadedOnce }).catch(function () { })
+    })
+  }
+
+  /**
    * Reload after an act the reader asked for. Rows a refresh was holding land
    * with it: the reader moved the list, so the rows may move now too.
    */
   function showAll(): Promise<void> {
     heldArrivals.clear()
-    return load({ force: true })
+    // With a stream open there is nothing to ask for: the Host announces what
+    // the action changed, and asking for the whole model again is exactly the
+    // transfer this transport replaced.
+    if (streaming) return Promise.resolve()
+    return loadHttp({ force: true })
   }
 
   function flushMarks(): void {
@@ -424,21 +669,27 @@ export function createTransport(ports: TransportPorts): Transport {
 
   function mount(): void {
     mounted += 1
-    if (mounted === 1) {
-      load({ force: true }).catch(function () { })
-      pollTimer = setInterval(function () {
-        if (document.visibilityState === 'visible') load().catch(function () { })
-      }, 60000)
-      visibilityHandler = function () {
-        if (document.visibilityState === 'visible') load().catch(function () { })
-      }
-      document.addEventListener('visibilitychange', visibilityHandler)
+    if (mounted > 1) return
+    openStream()
+    // The HTTP path covers whatever the stream is not doing: a surface that
+    // cannot hold one, and the window while one reconnects.
+    pollTimer = setInterval(function () {
+      if (document.visibilityState !== 'visible') return
+      if (streaming) return
+      loadHttp().catch(function () { })
+    }, 60000)
+    visibilityHandler = function () {
+      if (document.visibilityState !== 'visible') return
+      if (streaming) return
+      loadHttp().catch(function () { })
     }
+    document.addEventListener('visibilitychange', visibilityHandler)
   }
 
   function unmount(): void {
     mounted = Math.max(0, mounted - 1)
     if (mounted > 0) return
+    closeStream()
     if (pollTimer) {
       clearInterval(pollTimer)
       pollTimer = null
@@ -455,6 +706,7 @@ export function createTransport(ports: TransportPorts): Transport {
     // them here would silently unmark what the reader just read (the next load
     // would bring the old state back).
     if (flushTimer) flushMarks()
+    closeStream()
     mounted = 0
     unmount()
     if (flushTimer) clearTimeout(flushTimer)

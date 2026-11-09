@@ -12,10 +12,14 @@ import { createJobRunner } from './runner.js'
 import type { JobRunner, JobTimers } from './runner.js'
 import { pathsFor, readRepoConfig } from './settings.js'
 import { CUSTOM_FEED_TEMPLATE, declarationOf, kindOf, runCustom, scaffoldPath, scriptFile } from './custom.js'
+import { createLiveState } from './live.js'
+import type { LiveSnapshot } from './live.js'
 import { appendNdjson, listShards, readJson, readNdjson, updateNdjson } from './store.js'
 import type { FetchResult, GitActionResult, Logger, ReaderStateData, ReadyState, RepoConfig } from './types.js'
 import type { FeedDefinition } from './types.js'
 import type { GitInfo, Feed, Item, SourceKind } from '../shared/types.js'
+import type { StreamFrame } from '../shared/stream.js'
+import { PROBE_MS } from '../shared/stream.js'
 import { messageOf } from '../shared/errors.js'
 import { decodeEntities } from './xml.js'
 
@@ -123,6 +127,16 @@ export function createGitfeed(options: GitfeedOptions) {
   let writeQueue = Promise.resolve()
   let disposed = false
 
+  /**
+   * What the event stream serves: the state the last read found, and the deltas
+   * since. A surface that opens the stream is caught up from this instead of
+   * from a request, and a change made here is one frame to every surface.
+   */
+  const live = createLiveState()
+  const listeners = new Set<(frame: StreamFrame) => void>()
+  /** Cancels the stream's wake-up; null while no surface is attached. */
+  let probeWaker: (() => void) | null = null
+
   function touch() {
     runner.touch()
   }
@@ -146,6 +160,141 @@ export function createGitfeed(options: GitfeedOptions) {
     const run = writeQueue.then(task, task)
     writeQueue = run.then(function () { }, function () { })
     return run
+  }
+
+  /** Send one frame to every attached surface. */
+  function broadcast(frame: StreamFrame): void {
+    for (const listener of Array.from(listeners)) {
+      try {
+        listener(frame)
+      } catch (err) {
+        logger.warn(`gitfeed: a stream listener failed: ${messageOf(err)}`)
+      }
+    }
+  }
+
+  /** The whole state, read from disk, in the shape the stream diffs. */
+  async function readSnapshot(cfg: RepoConfig, version: string): Promise<LiveSnapshot> {
+    const model = await buildItems()
+    const data = await buildSnapshot(cfg, model.items)
+    return {
+      version: version,
+      itemsVersion: model.version,
+      items: model.items,
+      read: data.read,
+      starred: data.starred,
+      feeds: data.feeds,
+      reader: data.reader,
+      git: await gitInfo(),
+      schedule: await runner.status(),
+      repo: root,
+      allowGit: allowGit,
+    }
+  }
+
+  /**
+   * Re-read the data root and broadcast what changed.
+   *
+   * Reads and writes share one queue, so a refresh never reads a file a
+   * mutation is midway through writing. A read that finds the same version the
+   * live copy holds is dropped without a rebuild, which is what makes the
+   * stream's probe free when nothing is happening.
+   * @param options - `force` broadcasts even when only the version moved.
+   */
+  function refresh(options?: { force?: boolean }): Promise<void> {
+    return serialize(async function () {
+      if (disposed) return
+      try {
+        const version = await fileVersion()
+        const held = live.info()
+        if (!options?.force && held && held.version === version) return
+        const next = await readSnapshot(settings(), version)
+        const delta = live.apply(next)
+        if (delta) broadcast(delta)
+      } catch (err) {
+        logger.warn(`gitfeed: could not refresh the reader: ${messageOf(err)}`)
+      }
+    })
+  }
+
+  /** Arm the stream's next look at the data root, once per attached surface window. */
+  function armProbe(): void {
+    if (probeWaker || disposed || listeners.size === 0) return
+    probeWaker = options.timers.timeout(function () {
+      probeWaker = null
+      void probe().finally(armProbe)
+    }, PROBE_MS)
+  }
+
+  function disarmProbe(): void {
+    if (!probeWaker) return
+    probeWaker()
+    probeWaker = null
+  }
+
+  /**
+   * Look for writes this process did not make: a CLI fetch, the agent tool, a
+   * second Host on the same data root, a hand edit. The probe is a handful of
+   * stats, and the reader is using a surface, so it also counts as activity for
+   * the scheduler's idle gate.
+   */
+  async function probe(): Promise<void> {
+    if (disposed || listeners.size === 0) return
+    touch()
+    try {
+      const version = await fileVersion()
+      const held = live.info()
+      if (held && held.version === version) return
+      await refresh()
+    } catch (err) {
+      logger.warn(`gitfeed: could not probe ${root}: ${messageOf(err)}`)
+    }
+  }
+
+  /**
+   * Attach one surface at the revision it holds.
+   * @param rev - the revision the surface last saw; 0 when it holds none.
+   * @param send - receives the frames that bring it current, then every change.
+   * @returns detaches the surface; the stream's close runs it.
+   */
+  async function attach(rev: number, send: (frame: StreamFrame) => void): Promise<() => void> {
+    const pending: StreamFrame[] = []
+    let forwarding = false
+    const listener = function (frame: StreamFrame): void {
+      if (forwarding) send(frame)
+      else pending.push(frame)
+    }
+    listeners.add(listener)
+    armProbe()
+    try {
+      if (!live.info()) await refresh({ force: true })
+      const frames = live.framesAfter(rev)
+      for (const frame of frames) send(frame)
+      if (!live.info()) {
+        send({ t: 'error', protocol: 1, message: `gitfeed: ${root} has no readable feeds.json` })
+        return function () {
+          listeners.delete(listener)
+          if (listeners.size === 0) disarmProbe()
+        }
+      }
+      const tail = frames.length ? frames[frames.length - 1] : undefined
+      const last = tail !== undefined && tail.t !== 'error' ? tail.rev : rev
+      forwarding = true
+      for (const frame of pending) {
+        if (frame.t !== 'error' && frame.rev > last) send(frame)
+      }
+      pending.length = 0
+    } finally {
+      pending.length = 0
+      forwarding = true
+    }
+    let detached = false
+    return function () {
+      if (detached) return
+      detached = true
+      listeners.delete(listener)
+      if (listeners.size === 0) disarmProbe()
+    }
   }
 
   function settings(): RepoConfig {
@@ -333,6 +482,22 @@ export function createGitfeed(options: GitfeedOptions) {
     if (knownVersion && knownVersion === version) return Object.assign({ unchanged: true }, base)
     const model = await buildItems()
     const data = await buildSnapshot(cfg, model.items)
+    // A reader that loaded over HTTP then opens the stream must be caught up
+    // from the same copy the stream holds, so this read feeds the live state too.
+    const delta = live.apply({
+      version: version,
+      itemsVersion: model.version,
+      items: model.items,
+      read: data.read,
+      starred: data.starred,
+      feeds: data.feeds,
+      reader: data.reader,
+      git: base.git,
+      schedule: base.schedule,
+      repo: root,
+      allowGit: allowGit,
+    })
+    if (delta) broadcast(delta)
     if (knownItemsVersion && knownItemsVersion === model.version) {
       // The reader already holds this item model: send the marks and feeds that
       // moved, and a flag instead of thousands of unchanged rows.
@@ -384,8 +549,14 @@ export function createGitfeed(options: GitfeedOptions) {
    */
   async function mark(ids: unknown, read: boolean): Promise<{ ok: boolean; changed: number; version: string }> {
     touch()
-    const changed = await setState(paths.read, ids, read)
+    const clean = checkedIds(ids)
+    const changed = await setState(paths.read, clean, read)
     invalidateGit()
+    // The mark is what this surface just did, so it does not need the row text:
+    // one frame carries the ids to every other surface, and the revision keeps
+    // a reconnecting one from seeing it twice.
+    const delta = live.mark(clean, read)
+    if (delta) broadcast(delta)
     if (changed > 0) syncJob.nudge(AUTO_SYNC_DEBOUNCE_MS, AUTO_SYNC_MAX_WAIT_MS)
     return { ok: true, changed: changed, version: await fileVersion() }
   }
@@ -398,8 +569,11 @@ export function createGitfeed(options: GitfeedOptions) {
    */
   async function star(ids: unknown, starred: boolean): Promise<{ ok: boolean; changed: number; version: string }> {
     touch()
-    const changed = await setState(paths.starred, ids, starred)
+    const clean = checkedIds(ids)
+    const changed = await setState(paths.starred, clean, starred)
     invalidateGit()
+    const delta = live.star(clean, starred)
+    if (delta) broadcast(delta)
     if (changed > 0) syncJob.nudge(AUTO_SYNC_DEBOUNCE_MS, AUTO_SYNC_MAX_WAIT_MS)
     return { ok: true, changed: changed, version: await fileVersion() }
   }
@@ -520,7 +694,12 @@ export function createGitfeed(options: GitfeedOptions) {
     logger: logger,
     idleMinutes: idleMinutes,
     timers: options.timers,
-    onRun: invalidate,
+    // A run wrote something: drop the caches keyed on those files and let the
+    // stream read once and announce what the run actually changed.
+    onRun: function () {
+      invalidate()
+      void refresh({ force: true })
+    },
   })
 
   const refreshJob = runner.add(createFetchJob({
@@ -554,6 +733,9 @@ export function createGitfeed(options: GitfeedOptions) {
   async function runLocalFetch(opts?: { only?: string; feeds?: string[]; all?: boolean }): Promise<FetchResult> {
     touch()
     const run = await refreshJob.runNow(opts || { all: true })
+    // The run's own onRun already refreshed; awaiting it here makes the
+    // response the signal that the rows are on the wire, not a race with it.
+    await refresh({ force: true })
     if (run.value) return run.value as FetchResult
     throw new Error(run.outcome.summary || 'fetch failed')
   }
@@ -622,6 +804,9 @@ export function createGitfeed(options: GitfeedOptions) {
     })
     invalidate()
     syncJob.nudge(AUTO_SYNC_DEBOUNCE_MS, AUTO_SYNC_MAX_WAIT_MS)
+    // The new row is drawn from the stream, so announce it before the one-off
+    // fetch starts: the subscription existing is the news here.
+    await refresh({ force: true })
 
     // Pull this one feed into the local cache so it appears immediately. A
     // failure here still leaves the subscription in place.
@@ -661,6 +846,7 @@ export function createGitfeed(options: GitfeedOptions) {
     })
     invalidate()
     syncJob.nudge(AUTO_SYNC_DEBOUNCE_MS, AUTO_SYNC_MAX_WAIT_MS)
+    await refresh({ force: true })
     return { ok: true, removed: key }
   }
 
@@ -697,6 +883,7 @@ export function createGitfeed(options: GitfeedOptions) {
     // feeds.json is already a sync target, so the move is pushed whatever
     // pushed the last subscription change.
     syncJob.nudge(AUTO_SYNC_DEBOUNCE_MS, AUTO_SYNC_MAX_WAIT_MS)
+    await refresh({ force: true })
     return moved
   }
 
@@ -713,6 +900,7 @@ export function createGitfeed(options: GitfeedOptions) {
     }
     const run = await syncJob.runNow({ action: name })
     invalidate()
+    await refresh({ force: true })
     const value = run.value
     if (value && typeof value === 'object') return value as GitActionResult
     return { ok: false, action: name, error: run.outcome.summary || 'git action failed' }
@@ -817,6 +1005,8 @@ export function createGitfeed(options: GitfeedOptions) {
 
   function dispose(): void {
     disposed = true
+    disarmProbe()
+    listeners.clear()
     runner.dispose()
     invalidate()
   }
@@ -839,6 +1029,9 @@ export function createGitfeed(options: GitfeedOptions) {
     listForTool: listForTool,
     getForTool: getForTool,
     statusForTool: statusForTool,
+    attach: attach,
+    /** Re-read the data root and announce what changed (the stream's probe, by hand). */
+    refresh: refresh,
     dispose: dispose,
   }
 }

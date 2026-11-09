@@ -36,7 +36,7 @@ function sendEmpty(res: ServerResponse, status: number, headers: Record<string, 
   res.end()
 }
 
-function sameOrigin(req: IncomingMessage): boolean {
+export function sameOrigin(req: IncomingMessage): boolean {
   const origin = req.headers.origin
   if (!origin) return true
   try {

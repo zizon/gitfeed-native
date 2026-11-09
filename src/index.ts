@@ -19,13 +19,15 @@
  */
 
 import { registerBrief } from './host/brief.js'
-import { createHandler } from './host/http.js'
+import { createEventsHandler } from './host/events.js'
+import { createHandler, sameOrigin } from './host/http.js'
 import { scaffoldData } from './host/scaffold.js'
 import { resolveRoot } from './host/settings.js'
 import { createGitfeed } from './host/service.js'
 import { registerSkill } from './host/skill.js'
 import { registerCustomFeedTool, registerTool } from './host/tool.js'
 import type { GitfeedConfig, PluginContext } from './host/types.js'
+import { STREAM_PATH } from './shared/stream.js'
 
 export const name = 'gitfeed'
 /** The web server for the API, and the timer service the scheduler runs on. */
@@ -105,6 +107,28 @@ export function apply(ctx: PluginContext, config?: GitfeedConfig) {
       handler: createHandler(service),
     }),
     'gitfeed: web API',
+  )
+
+  /**
+   * The stream is served by the same app, so it is admitted the same way: the
+   * Connection service's browser check when it is present, and the origin
+   * fence at minimum. Reading it at request time keeps a profile that loads
+   * Connection after this plugin working.
+   */
+  const admitStream = function (req: import('node:http').IncomingMessage): 401 | 403 | undefined {
+    const connection = typeof ctx.get === 'function'
+      ? ctx.get('connection') as { requestRejection(request: import('node:http').IncomingMessage): 401 | 403 | undefined } | undefined
+      : undefined
+    if (connection) return connection.requestRejection(req)
+    return sameOrigin(req) ? undefined : 403
+  }
+  ctx.effect(
+    () => ctx.webServer.register({
+      kind: 'exact',
+      path: STREAM_PATH,
+      handler: createEventsHandler(service, admitStream),
+    }),
+    'gitfeed: event stream',
   )
 
   // The scheduler armed its jobs when they were registered, on this plugin's

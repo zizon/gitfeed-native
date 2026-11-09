@@ -8,7 +8,9 @@ import { finish, lib, ok, repoRoot } from './harness.mjs'
 
 const HOST_DIR = path.join(repoRoot, 'src', 'host')
 const RAW_TIMER = /\bset(?:Timeout|Interval)\s*\(/
-const EXEMPT = new Set(['fetch.ts'])
+// `fetch.ts` arms the per-request abort deadline; `events.ts` holds one
+// response open and pings it. Neither is a schedule.
+const EXEMPT = new Set(['fetch.ts', 'events.ts'])
 
 const hostFiles = readdirSync(HOST_DIR).filter((name) => name.endsWith('.ts'))
 const offenders = []

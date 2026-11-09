@@ -450,6 +450,31 @@ changes only marks is answered with those marks, the feeds, and
 115 KB now, and a poll that changes nothing keeps the same list array all the
 way down.
 
+The reader does not poll for its own state. Each surface opens one server-sent
+event stream at `/gitfeed/events` when it mounts, receives the whole archive
+once, and from then on only what changed: the rows a refresh added or repaired,
+and the marks that moved. The Host keeps a live copy of what it last read, diffs
+each new read against it, and sends the difference — a fetch that lands
+seventeen rows ships seventeen rows, a mark ships two ids, and a quiet minute
+ships nothing at all. A probe of the data root (twenty stats, well under a
+tenth of a millisecond) runs every few seconds while a surface is attached, so a
+fetch from the CLI, the agent tool, or a second Host reaches the reader too.
+
+Revisions are the cursor. Every delta carries the next number; a surface that
+reconnects asks from the last number it saw, and a gap the Host cannot explain
+(it restarted, or the surface fell further behind than the history kept) is
+answered with the whole state rather than a delta that would be wrong. Marks
+travel the same way in the other direction, so a row read on one device leaves
+the unread list on the other without either side asking.
+
+The stream replaces a 60-second poll with a full model behind it. On a personal
+library of 379 subscriptions and 3,860 items, an items write cost every open
+surface 26.9 MB of JSON, and the poll itself cost the Host five `git` spawns
+(190 ms) even when nothing had changed; a delta for the same write is about
+100 KB, and an idle surface costs a stat probe every few seconds. The HTTP path
+remains as the fallback: a Host that has not been restarted yet, or a proxy that
+buffers the stream, leaves the surface asking again exactly as it used to.
+
 ### Design language
 
 The reader is built from the Harness client's own components, not a private
@@ -756,15 +781,15 @@ package.json                bundle metadata: dsh.bundle patch, dsh.client module
 cordis.patch.yml            inserts the `gitfeed` Host row
 src/index.ts                typed Host entry: route, job runner, tools, skill
 src/cli.ts                  `gitfeed fetch | import-opml | init`
-src/host/                   settings, scaffold, store, OPML, XML, custom, brief, skill, fetch, git, runner, jobs, service, HTTP, tool
+src/host/                   settings, scaffold, store, OPML, XML, custom, brief, skill, fetch, git, runner, jobs, live, events, service, HTTP, tool
 .github/workflows/          ci.yml (gates) and release.yml (tag to npm and a GitHub release)
 tests/                      behaviour suites, fixtures, and the runner (`pnpm test`)
 docs/jobs.md                runner contract, primitives, and the ratchet
 docs/custom-feeds.md        custom feeds: the script interface and the rules
 docs/history/               point-in-time records: the removed Actions job, the 2026-11-09 review
 docs/screenshots/           the images this README shows (shipped with the package)
-src/client/                 native reader: controller, transport, derivations, viewport, prefs, hooks, components, styles, locales
-src/shared/                 the types both halves import, and the one runtime helper they share
+src/client/                 native reader: controller, transport (stream + fallback), derivations, viewport, prefs, hooks, components, styles, locales
+src/shared/                 the types both halves import, the stream protocol and its merge, and the one runtime helper they share
 src/skill/                  the custom-feeds skill: workflow, interface, failure modes
 examples/                   a custom feed script: the Google Research list the docs walk through
 build.mjs                   tsc Host + esbuild Client into the loader envelope

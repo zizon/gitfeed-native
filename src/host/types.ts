@@ -68,6 +68,11 @@ export interface ServiceMap {
 export interface PluginContext {
   logger: Logger
   webServer: WebServer
+  /**
+   * A service read by name at call time. Optional services that may load after
+   * this plugin are read this way instead of declared in `inject`.
+   */
+  get?(name: string): unknown
   effect(callback: () => (() => void) | void, label?: string): () => void
   inject<K extends keyof ServiceMap>(services: K[], callback: (ctx: PluginContext & Pick<ServiceMap, K>) => void): void
   /**
