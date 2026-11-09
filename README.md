@@ -649,8 +649,12 @@ Two workflows in `.github/workflows/`. `ci.yml` runs the gates on every push to
    the tarball (which is also uploaded as a build artifact and attached to a
    GitHub release), and runs `npm publish --access public`.
 
-It needs one repository secret, `NPM_TOKEN`, an npm automation token for an
-account that may publish `gitfeed-native`. A manual run with `publish` unticked
+It needs one repository secret, `NPM_TOKEN`: a granular access token on
+npmjs.com with publish rights on `gitfeed-native`. Granular tokens bypass the
+account's 2FA, which classic tokens do not in CI. No registry setting is needed
+anywhere — the install reads the public registry anonymously, and the lockfile
+records only integrity hashes (`lockfileIncludeTarballUrl: false`), so a machine
+that installs through a mirror produces the same file CI can verify. A manual run with `publish` unticked
 builds and checks the tarball without touching the registry.
 
 Publishing runs without `--provenance` on purpose: npm attestation requires the

@@ -3,6 +3,13 @@
 # so skip rather than approve it.
 strictDepBuilds: false
 
+# The lockfile must resolve the same from any registry. A machine that installs
+# through a mirror makes pnpm record that mirror's tarball URLs, and pnpm 11
+# then refuses to verify the lockfile anywhere else — which is what stopped the
+# first CI run. Integrity hashes are registry-independent, so the lockfile
+# keeps only those and CI reads the public registry.
+lockfileIncludeTarballUrl: false
+
 # minimatch < 11.0.1 has a ReDoS advisory (dev-only here: it is pulled in by
 # eslint's config-array, which the plugins carry as a peer, and the patterns it
 # matches are the static ones in .oxlintrc.json). No released eslint chain has
