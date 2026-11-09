@@ -335,11 +335,14 @@ not carry its own theme setting.
   unsubscribe (colored destructive on hover, confirmed on click), which removes
   the subscription and that feed's items from both stores. That row is the only
   unsubscribe entry.
-- **Moving a feed**: the folder control on a feed row replaces the row with a
-  field holding its current folder and the folders already in use as
-  suggestions. Clearing it means Uncategorized. Nothing is re-fetched: the entry
-  keeps its id, URL, title, and custom-feed declaration, so only the tree above
-  it changes.
+- **Moving a feed**: the folder control on a feed row opens a picker of the
+  folders already in use — the current one is marked and cannot be picked
+  again — so a move is one click and lands in a folder that exists.
+  `New folder…` is its own row and swaps the feed's row for a field to name one.
+  Nothing is re-fetched: the entry keeps its id, URL, title, and custom-feed
+  declaration, so only the tree above it changes. The same picker sits in the
+  article's action row, because the source is named in the metadata line beside
+  it: a source is moved while it is being read, not by leaving the article.
 - **List**: one line per item, grouped by folder or source on request. A
   section header sticks to the top while its section is in view and carries
   that section's actions — `Mark {n} read`, plus `Unsubscribe` when the section
@@ -357,7 +360,8 @@ not carry its own theme setting.
   keyboard is on, and a starred row shows it outright. Under the Starred filter
   the star *is* membership, so unstarring there drops the row at once.
 - **Article**: sanitized feed HTML (element allowlist, `href`/`src`/`alt`/
-  `title` only, http(s)/mailto URLs only), star, mark unread, open original.
+  `title` only, http(s)/mailto URLs only), move its source to a folder, star,
+  mark unread, open original.
   Past the opening of a piece a **Next →** control appears at the bottom of the
   pane, so moving on does not mean scrolling back up.
 - **Pull / Fetch / Sync** in the top bar, where the one that applies now is
@@ -377,7 +381,10 @@ Pane widths and open folders are remembered per browser.
 
 ### A list that does not move
 
-A refresh lands while someone is reading, so the list is built to absorb one:
+A refresh lands while someone is reading, so the list is built to absorb one.
+The Sidebar has one pane, so an open article is drawn over the list rather than
+in place of it: the list stays mounted and closing an article returns to the
+same rows at the same scroll position.
 
 - **Sections hold one order.** Grouped sections are ordered by name — the way
   the rail lists folders and sources — instead of being re-ranked by item

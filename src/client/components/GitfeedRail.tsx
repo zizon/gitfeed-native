@@ -218,8 +218,19 @@ export function GitfeedRail({ controller, t, useReader, useTabInfo }: GitfeedRai
               </div>
             )
             : (
-              <div className="gf-rail-article">
-                <Article state={state} controller={controller} t={t} compact />
+              // The list stays mounted under the article: the Sidebar has one
+              // pane, so replacing the list with the article threw its scroll
+              // position away and every close put the reader back at the top of
+              // a freshly mounted list.
+              <div className="gf-rail-body">
+                <ItemList state={state} controller={controller} t={t} wide />
+                {state.current
+                  ? (
+                    <div className="gf-rail-article">
+                      <Article state={state} controller={controller} t={t} compact />
+                    </div>
+                  )
+                  : null}
               </div>
             )
           : <ItemList state={state} controller={controller} t={t} wide />}

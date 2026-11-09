@@ -30,6 +30,24 @@ export function feedFolder(
   return (feed && feed.folder) || uncategorized
 }
 
+/**
+ * Every folder name in use, sorted.
+ *
+ * A picker offers the folders the reader already has, so a move lands in one
+ * of them instead of inventing a spelling next to it. The names are the ones
+ * `feeds.json` stores, not the label this UI groups a folderless feed under:
+ * what a picker writes is user data, and it must not change with the language.
+ * @param feeds the sources as loaded.
+ * @returns the stored names, without duplicates.
+ */
+export function folderNames(feeds: readonly Feed[]): string[] {
+  const names = new Set<string>()
+  for (const feed of feeds) {
+    if (feed.folder) names.add(feed.folder)
+  }
+  return Array.from(names).sort(function (a, b) { return a.localeCompare(b) })
+}
+
 /** The section one row belongs to under the current grouping. */
 export function groupKey(
   item: Item,

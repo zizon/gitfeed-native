@@ -196,7 +196,10 @@ export const CSS = `
 /* Row actions sit on the row the way "mark this source read" does: always
    there, tertiary until the pointer is on it, destructive color only on hover —
    the click still asks before anything is removed. */
-.gf-rail-check, .gf-rail-x, .gf-rail-move { color: var(--dsw-alias-label-tertiary); }
+.gf-rail-check, .gf-rail-x { color: var(--dsw-alias-label-tertiary); }
+/* The folder picker's anchor: one control in a row that is mostly text. */
+.gf-foldermenu { flex: none; display: inline-flex; }
+.gf-foldermenu .gf-iconbtn { color: var(--dsw-alias-label-tertiary); }
 @media (hover: hover) {
   .gf-feed:hover .gf-rail-x, .gf-folder-head:hover .gf-rail-x { color: var(--dsw-alias-state-error-primary); }
 }
@@ -573,7 +576,18 @@ export const CSS = `
   outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
   outline-offset: 0;
 }
-.gf-rail-article { flex: 1 1 auto; min-height: 0; display: flex; }
+/* The list stays mounted under an open article, so closing one puts the reader
+   back on the rows they left. Drawn above the list's floating mark bar (30) and
+   below the popovers (40); the article's own float stacks inside this box. */
+.gf-rail-body { flex: 1 1 auto; min-height: 0; display: flex; position: relative; }
+.gf-rail-body > .gf-listpane { flex: 1 1 auto; min-width: 0; }
+.gf-rail-article {
+  position: absolute;
+  inset: 0;
+  z-index: 35;
+  display: flex;
+  background: var(--dsw-alias-bg-base);
+}
 .gf-wide { flex: 1 1 auto; display: flex; min-height: 0; }
 .gf-wide .gf-listpane { flex: 0 0 var(--gf-list, 340px); border-right: 0.5px solid var(--dsw-alias-border-l1); }
 .gf-wide-article { flex: 1 1 auto; min-width: 0; display: flex; min-height: 0; }

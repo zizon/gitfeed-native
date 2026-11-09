@@ -33,6 +33,7 @@ if (esbuild === undefined) {
       exhaustedGroups,
       feedFolder,
       feedTitle,
+      folderNames,
       groupKey,
       haystackOf,
       listOf,
@@ -151,6 +152,19 @@ if (esbuild === undefined) {
       exhaustedGroups(entriesOf(items, 'none', 10, 10, titleOf, folderOf), new Set(['a1', 'a2']), 'unread').length === 0,
       'an ungrouped list has no section to finish',
     )
+
+    // The folder picker writes into feeds.json, so its rows are the stored
+    // names — never the label the list groups a folderless source under, which
+    // would put the UI's language into the user's data.
+    const names = folderNames([
+      { id: 'x', folder: 'Papers' },
+      { id: 'y', folder: 'Daily' },
+      { id: 'z', folder: 'Papers' },
+      { id: 'w', folder: null },
+    ])
+    ok(names.join(',') === 'Daily,Papers', 'the picker offers each stored folder once, sorted', names)
+    ok(!names.includes('Uncategorized'), 'and no name that only the list uses', names)
+    ok(folderNames([]).length === 0, 'an empty library has no folder to offer', folderNames([]))
 
     const hay = haystackOf(items[0], 'Alpha Notes')
     ok(hay.includes('first post') && hay.includes('alpha notes'), 'a row search text carries its title and source name', hay)

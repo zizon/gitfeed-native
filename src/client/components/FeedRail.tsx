@@ -1,6 +1,6 @@
 /** Feed folders, subscriptions, and the add/unsubscribe controls. */
 
-import { useId, useMemo, useRef, useState } from '../react.js'
+import { useEffect, useId, useMemo, useRef, useState } from '../react.js'
 import type { ReactKeyboardEvent, ReactNode } from '../react.js'
 import {
   Button,
@@ -10,7 +10,9 @@ import {
   IconWarningOutlineRegular,
   Input,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import { Chevron, IconFolder } from '../icons.js'
+import { Chevron } from '../icons.js'
+import { folderNames } from '../derive.js'
+import { FolderMenu } from './FolderMenu.js'
 import type { Feed } from '../../shared/types.js'
 import type { FeedRailProps } from '../types.js'
 import { EmptyState, IconButton } from './Controls.js'
@@ -20,8 +22,16 @@ export function FeedRail({ state, controller, t, compact, onPick }: FeedRailProp
   const [url, setUrl] = useState('')
   const [folder, setFolder] = useState('')
   const [pendingRemove, setPendingRemove] = useState<string | null>(null)
-  const [moving, setMoving] = useState<{ id: string; value: string } | null>(null)
+  const [creating, setCreating] = useState<{ id: string; value: string } | null>(null)
+  const creatingId = creating ? creating.id : null
+  const nameRef = useRef<HTMLInputElement>(null)
   const listId = useId()
+
+  // "New folder…" asks for a name, so the field it asks with holds the
+  // keyboard as soon as it appears; typing is the next thing that happens.
+  useEffect(function () {
+    if (creatingId) nameRef.current?.focus()
+  }, [creatingId])
 
   const grouped = useMemo(function () {
     const counts = new Map<string, number>()
@@ -50,9 +60,7 @@ export function FeedRail({ state, controller, t, compact, onPick }: FeedRailProp
 
   const hideEmpty = state.hideEmpty === null ? state.reader.hideEmptyFeeds : state.hideEmpty
   const hiding = hideEmpty && state.filter === 'unread'
-  const folders = state.feeds
-    .map(function (feed) { return feed.folder })
-    .filter(function (folder): folder is string { return !!folder })
+  const folders = folderNames(state.feeds)
 
   // A folder opens or closes only when it first appears or when the reader
   // toggles it. Deriving the state from the live unread count made the list
@@ -88,20 +96,16 @@ export function FeedRail({ state, controller, t, compact, onPick }: FeedRailProp
   }
 
   /**
-   * Move one feed, or leave it where it is when the name did not change. The
-   * empty name means Uncategorized, which is what an emptied input asks for.
-   * @param id feed id.
-   * @param current the folder the feed is in now.
-   * @param value the folder the reader typed.
+   * Name a folder and put the feed in it. This is the one path that needs a
+   * field: picking a folder that already exists is the menu's job.
+   * @param {string} id feed id.
+   * @param {string} value the name the reader typed.
    */
-  async function submitMove(id: string, current: string, value: string) {
+  async function createFolder(id: string, value: string) {
     const name = value.trim()
-    if (name === current) {
-      setMoving(null)
-      return
-    }
+    if (!name) return
     const ok = await controller.setFeedFolder(id, name)
-    if (ok) setMoving(null)
+    if (ok) setCreating(null)
   }
 
   async function submitAdd(event: { preventDefault: () => void }) {
@@ -217,30 +221,32 @@ export function FeedRail({ state, controller, t, compact, onPick }: FeedRailProp
         )
         continue
       }
-      if (moving !== null && moving.id === feed.id) {
+      if (creating !== null && creating.id === feed.id) {
         children.push(
           <form
             key={feed.id}
             className="gf-moveform"
-            onSubmit={function (event) { event.preventDefault(); void submitMove(feed.id, feed.folder || '', moving.value) }}
+            onSubmit={function (event) { event.preventDefault(); void createFolder(feed.id, creating.value) }}
           >
-            <span className="gf-moveform-name" title={feed.title}>{feed.title}</span>
+            <span className="gf-moveform-name" title={feed.title}>
+              {t('action.newFolderTitle', { name: feed.title })}
+            </span>
             <Input
+              ref={nameRef}
               className="gf-addinput"
               type="text"
-              value={moving.value}
+              value={creating.value}
               placeholder={t('pref.folder')}
-              aria-label={t('action.moveFolder')}
-              list={listId}
+              aria-label={t('action.newFolder')}
               autoComplete="off"
               spellCheck={false}
-              onChange={function (event) { setMoving({ id: feed.id, value: event.target.value }) }}
+              onChange={function (event) { setCreating({ id: feed.id, value: event.target.value }) }}
             />
             <div className="gf-addrow">
-              <Button type="button" variant="ghost" size="sm" onClick={function () { setMoving(null) }}>
+              <Button type="button" variant="ghost" size="sm" onClick={function () { setCreating(null) }}>
                 {t('action.cancel')}
               </Button>
-              <Button type="submit" variant="primary" size="sm" disabled={state.busy.folder}>
+              <Button type="submit" variant="primary" size="sm" disabled={state.busy.folder || !creating.value.trim()}>
                 {t('action.move')}
               </Button>
             </div>
@@ -257,6 +263,7 @@ export function FeedRail({ state, controller, t, compact, onPick }: FeedRailProp
           title={feed.error || feed.url || ''}
           onClick={function () { pick(feed.id) }}
           onKeyDown={function (event: ReactKeyboardEvent<HTMLDivElement>) {
+            if (event.target !== event.currentTarget) return
             if (event.key === 'Enter' || event.key === ' ') pick(feed.id)
           }}
         >
@@ -265,15 +272,20 @@ export function FeedRail({ state, controller, t, compact, onPick }: FeedRailProp
             ? <span className="gf-danger" title={feed.error}><IconWarningOutlineRegular size={12} /></span>
             : null}
           <span className="count">{count ? String(count) : ''}</span>
-          <IconButton
-            icon={<IconFolder size={14} />}
-            label={`${t('action.moveFolder')}: ${feed.title}`}
-            small
-            className="gf-rail-move"
-            onClick={function (event) {
-              event.stopPropagation()
+          <FolderMenu
+            folder={feed.folder}
+            folders={folders}
+            label={t('action.moveFolder')}
+            title={`${t('action.moveFolder')}: ${feed.title}`}
+            t={t}
+            allowNew
+            onMove={function (name) {
+              setCreating(null)
+              void controller.setFeedFolder(feed.id, name)
+            }}
+            onNew={function () {
               setPendingRemove(null)
-              setMoving({ id: feed.id, value: feed.folder || '' })
+              setCreating({ id: feed.id, value: '' })
             }}
           />
           {count ? (
@@ -290,7 +302,7 @@ export function FeedRail({ state, controller, t, compact, onPick }: FeedRailProp
             label={`${t('action.remove')}: ${feed.title}`}
             small
             className="gf-rail-x"
-            onClick={function (event) { event.stopPropagation(); setMoving(null); setPendingRemove(feed.id) }}
+            onClick={function (event) { event.stopPropagation(); setCreating(null); setPendingRemove(feed.id) }}
           />
         </div>,
       )
@@ -304,6 +316,7 @@ export function FeedRail({ state, controller, t, compact, onPick }: FeedRailProp
           aria-expanded={open}
           onClick={function () { controller.setFolderOpen(name, !open) }}
           onKeyDown={function (event: ReactKeyboardEvent<HTMLDivElement>) {
+            if (event.target !== event.currentTarget) return
             if (event.key === 'Enter' || event.key === ' ') controller.setFolderOpen(name, !open)
           }}
         >
