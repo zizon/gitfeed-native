@@ -552,7 +552,7 @@ tests/                      behaviour suites, fixtures, and the runner (`pnpm te
 docs/jobs.md                runner contract, primitives, and the ratchet
 docs/history/               point-in-time records: the removed Actions job, the 2026-11-09 review
 src/client/                 native reader: controller, transport, derivations, viewport, prefs, hooks, components, styles, locales
-src/shared/                 item/feed/state types shared by both halves
+src/shared/                 the types both halves import, and the one runtime helper they share
 build.mjs                   tsc Host + esbuild Client into the loader envelope
 tsconfig.host.json          Host compiler face (includes the CLI)
 tsconfig.client.json        Client compiler face
