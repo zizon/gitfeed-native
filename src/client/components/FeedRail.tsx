@@ -10,7 +10,7 @@ import {
   IconWarningOutlineRegular,
   Input,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import { Chevron } from '../icons.js'
+import { Chevron, IconFolder } from '../icons.js'
 import type { Feed } from '../../shared/types.js'
 import type { FeedRailProps } from '../types.js'
 import { EmptyState, IconButton } from './Controls.js'
@@ -20,6 +20,7 @@ export function FeedRail({ state, controller, t, compact, onPick }: FeedRailProp
   const [url, setUrl] = useState('')
   const [folder, setFolder] = useState('')
   const [pendingRemove, setPendingRemove] = useState<string | null>(null)
+  const [moving, setMoving] = useState<{ id: string; value: string } | null>(null)
   const listId = useId()
 
   const grouped = useMemo(function () {
@@ -84,6 +85,23 @@ export function FeedRail({ state, controller, t, compact, onPick }: FeedRailProp
     const ok = await controller.removeFeed(id)
     setPendingRemove(null)
     if (ok && onPick) onPick()
+  }
+
+  /**
+   * Move one feed, or leave it where it is when the name did not change. The
+   * empty name means Uncategorized, which is what an emptied input asks for.
+   * @param id feed id.
+   * @param current the folder the feed is in now.
+   * @param value the folder the reader typed.
+   */
+  async function submitMove(id: string, current: string, value: string) {
+    const name = value.trim()
+    if (name === current) {
+      setMoving(null)
+      return
+    }
+    const ok = await controller.setFeedFolder(id, name)
+    if (ok) setMoving(null)
   }
 
   async function submitAdd(event: { preventDefault: () => void }) {
@@ -154,11 +172,6 @@ export function FeedRail({ state, controller, t, compact, onPick }: FeedRailProp
           autoComplete="off"
           onChange={function (event: { target: { value: string } }) { setFolder(event.target.value) }}
         />
-        <datalist id={listId}>
-          {Array.from(new Set(folders)).map(function (name) {
-            return <option key={name} value={name} />
-          })}
-        </datalist>
         <div className="gf-addrow">
           <Button type="button" variant="ghost" size="sm" onClick={function () { setAddOpen(false) }}>
             {t('action.cancel')}
@@ -204,6 +217,37 @@ export function FeedRail({ state, controller, t, compact, onPick }: FeedRailProp
         )
         continue
       }
+      if (moving !== null && moving.id === feed.id) {
+        children.push(
+          <form
+            key={feed.id}
+            className="gf-moveform"
+            onSubmit={function (event) { event.preventDefault(); void submitMove(feed.id, feed.folder || '', moving.value) }}
+          >
+            <span className="gf-moveform-name" title={feed.title}>{feed.title}</span>
+            <Input
+              className="gf-addinput"
+              type="text"
+              value={moving.value}
+              placeholder={t('pref.folder')}
+              aria-label={t('action.moveFolder')}
+              list={listId}
+              autoComplete="off"
+              spellCheck={false}
+              onChange={function (event) { setMoving({ id: feed.id, value: event.target.value }) }}
+            />
+            <div className="gf-addrow">
+              <Button type="button" variant="ghost" size="sm" onClick={function () { setMoving(null) }}>
+                {t('action.cancel')}
+              </Button>
+              <Button type="submit" variant="primary" size="sm" disabled={state.busy.folder}>
+                {t('action.move')}
+              </Button>
+            </div>
+          </form>,
+        )
+        continue
+      }
       children.push(
         <div
           key={feed.id}
@@ -221,6 +265,17 @@ export function FeedRail({ state, controller, t, compact, onPick }: FeedRailProp
             ? <span className="gf-danger" title={feed.error}><IconWarningOutlineRegular size={12} /></span>
             : null}
           <span className="count">{count ? String(count) : ''}</span>
+          <IconButton
+            icon={<IconFolder size={14} />}
+            label={`${t('action.moveFolder')}: ${feed.title}`}
+            small
+            className="gf-rail-move"
+            onClick={function (event) {
+              event.stopPropagation()
+              setPendingRemove(null)
+              setMoving({ id: feed.id, value: feed.folder || '' })
+            }}
+          />
           {count ? (
             <IconButton
               icon={<IconCheckOutlineRegular size={14} />}
@@ -235,7 +290,7 @@ export function FeedRail({ state, controller, t, compact, onPick }: FeedRailProp
             label={`${t('action.remove')}: ${feed.title}`}
             small
             className="gf-rail-x"
-            onClick={function (event) { event.stopPropagation(); setPendingRemove(feed.id) }}
+            onClick={function (event) { event.stopPropagation(); setMoving(null); setPendingRemove(feed.id) }}
           />
         </div>,
       )
@@ -281,6 +336,11 @@ export function FeedRail({ state, controller, t, compact, onPick }: FeedRailProp
         <span className="gf-rail-title">{t('rail.guideTitle')}</span>
       </div>
       <div className="gf-feedlist">{rows}</div>
+      <datalist id={listId}>
+        {Array.from(new Set(folders)).sort().map(function (name) {
+          return <option key={name} value={name} />
+        })}
+      </datalist>
     </div>
   )
 }

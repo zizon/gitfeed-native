@@ -7,7 +7,7 @@
 import type { ReactNode, ReactMouseEvent } from '../react.js'
 import { Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 
-export function IconButton({ icon, label, onClick, disabled, active, small, spin, expanded, hasPopup, danger, className }: {
+export function IconButton({ icon, label, onClick, disabled, active, small, spin, expanded, hasPopup, danger, tabIndex, className }: {
   icon: ReactNode
   label: string
   onClick?: (event: ReactMouseEvent<HTMLButtonElement>) => void
@@ -18,6 +18,8 @@ export function IconButton({ icon, label, onClick, disabled, active, small, spin
   expanded?: boolean
   hasPopup?: 'menu' | 'dialog'
   danger?: boolean
+  /** Override the tab stop, e.g. -1 for a button inside a list of rows. */
+  tabIndex?: number
   className?: string
 }) {
   const classes = [
@@ -38,6 +40,7 @@ export function IconButton({ icon, label, onClick, disabled, active, small, spin
         aria-haspopup={hasPopup}
         aria-expanded={expanded === undefined ? undefined : expanded}
         disabled={!!disabled}
+        tabIndex={tabIndex}
         onClick={onClick}
       >
         {icon}

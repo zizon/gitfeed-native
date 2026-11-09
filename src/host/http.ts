@@ -82,7 +82,7 @@ export function createHandler(service: GitfeedService) {
       }
       const route = url.pathname.slice(PREFIX.length) || '/'
       const method = req.method || 'GET'
-      const known = new Set(['/state', '/mark', '/star', '/feeds', '/feeds/remove', '/fetch', '/pull', '/sync'])
+      const known = new Set(['/state', '/mark', '/star', '/feeds', '/feeds/remove', '/feeds/folder', '/fetch', '/pull', '/sync'])
       if (!known.has(route)) {
         sendJson(res, 404, { ok: false, error: 'no such endpoint' })
         return
@@ -128,6 +128,11 @@ export function createHandler(service: GitfeedService) {
       if (route === '/feeds/remove') {
         const result = await service.removeFeed(input.id)
         sendJson(res, 200, result)
+        return
+      }
+      if (route === '/feeds/folder') {
+        const feed = await service.setFeedFolder(input.id, input.folder)
+        sendJson(res, 200, { ok: true, feed: feed })
         return
       }
       if (route === '/fetch') {

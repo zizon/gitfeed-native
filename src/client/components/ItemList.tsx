@@ -368,13 +368,25 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
         <div className="gf-row-title">
           {unread ? <span className="gf-dot" aria-hidden="true" /> : null}
           <span className="t">{item.title || '(untitled)'}</span>
-          {starred
-            ? (
-              <span className="gf-star" title={t('action.unstar')}>
-                <IconStar filled size={12} />
-              </span>
-            )
-            : null}
+          {/* The star is an action on the row, not a way into it: it sits on
+              every row so an item can be kept without opening the article,
+              and it holds its space so the title never re-wraps on hover. */}
+          <span className={`gf-row-actions${starred ? ' on' : ''}`}>
+            <IconButton
+              icon={<IconStar filled={starred} size={13} />}
+              label={starred ? t('action.unstar') : t('action.star')}
+              small
+              active={starred}
+              // The rows are reached with j/k, not the tab key; a tab stop per
+              // row would put hundreds of them between the reader and the
+              // controls that are actually tabbed to.
+              tabIndex={-1}
+              onClick={function (event) {
+                event.stopPropagation()
+                controller.toggleStar(item.id)
+              }}
+            />
+          </span>
         </div>
         <div className="gf-row-meta">
           {/* Every row under a source section would repeat the name the sticky

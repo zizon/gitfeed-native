@@ -664,6 +664,42 @@ export function createGitfeed(options: GitfeedOptions) {
     return { ok: true, removed: key }
   }
 
+  /**
+   * Move one subscription to another folder.
+   *
+   * Only the folder changes. The entry keeps its id, url, title, and any
+   * custom-feed declaration, so a move never re-identifies a feed or makes the
+   * fetcher start over. An empty folder is written as `Uncategorized` rather
+   * than dropped: a subscription always names the folder it is in, which is
+   * what lets the reader show one list whatever feeds.json was written by.
+   * @param {string} id feed id.
+   * @param {string} [folder] folder to move it to.
+   * @returns {Promise<FeedDefinition>} the entry as written.
+   */
+  async function setFeedFolder(id: string | undefined, folder: string | undefined): Promise<FeedDefinition> {
+    touch()
+    const key = (id || '').trim()
+    if (!key) throw new Error('feed id is required')
+    const name = (folder || '').trim() || 'Uncategorized'
+    // Same queue as every other subscription write: the list is
+    // read-modify-write, so a move must not land on a list a subscribe is
+    // still replacing.
+    const moved = await serialize(async function () {
+      const feeds = await readFeeds(root)
+      const entry = feeds.find(function (f) { return f.id === key })
+      if (!entry) throw new Error('no such feed')
+      if ((entry.folder || '') === name) return entry
+      entry.folder = name
+      await writeFeeds(root, feeds)
+      return entry
+    })
+    invalidate()
+    // feeds.json is already a sync target, so the move is pushed whatever
+    // pushed the last subscription change.
+    syncJob.nudge(AUTO_SYNC_DEBOUNCE_MS, AUTO_SYNC_MAX_WAIT_MS)
+    return moved
+  }
+
   async function gitAction(name: string): Promise<GitActionResult> {
     touch()
     if (!allowGit) throw new Error('git actions are disabled by the gitfeed plugin config (allowGit)')
@@ -754,10 +790,21 @@ export function createGitfeed(options: GitfeedOptions) {
     const { data, version } = await snapshotNow()
     const readSet = new Set(data.read)
     const unread = data.items.reduce(function (n, item) { return readSet.has(item.id) ? n : n + 1 }, 0)
+    // The folder names travel with the counts: a caller that moves a feed has
+    // no datalist to pick from, so the names it could move it to are the ones
+    // already in use rather than a spelling of its own.
+    const folders = new Map<string, number>()
+    for (const feed of data.feeds) {
+      const name = feed.folder || 'Uncategorized'
+      folders.set(name, (folders.get(name) || 0) + 1)
+    }
     return {
       repo: root,
       version: version,
       feeds: data.feeds.length,
+      folders: Array.from(folders.entries())
+        .sort(function (a, b) { return a[0].localeCompare(b[0]) })
+        .map(function (entry) { return { name: entry[0], feeds: entry[1] } }),
       items: data.items.length,
       unread: unread,
       starred: data.starred.length,
@@ -781,6 +828,7 @@ export function createGitfeed(options: GitfeedOptions) {
     star: star,
     addFeed: addFeed,
     removeFeed: removeFeed,
+    setFeedFolder: setFeedFolder,
     runLocalFetch: runLocalFetch,
     scaffoldCustomFeed: scaffoldCustomFeed,
     checkCustomFeed: checkCustomFeed,

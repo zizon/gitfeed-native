@@ -196,7 +196,7 @@ export const CSS = `
 /* Row actions sit on the row the way "mark this source read" does: always
    there, tertiary until the pointer is on it, destructive color only on hover —
    the click still asks before anything is removed. */
-.gf-rail-check, .gf-rail-x { color: var(--dsw-alias-label-tertiary); }
+.gf-rail-check, .gf-rail-x, .gf-rail-move { color: var(--dsw-alias-label-tertiary); }
 @media (hover: hover) {
   .gf-feed:hover .gf-rail-x, .gf-folder-head:hover .gf-rail-x { color: var(--dsw-alias-state-error-primary); }
 }
@@ -229,6 +229,18 @@ export const CSS = `
 .gf-chevron { display: inline-flex; color: inherit; transition: transform .12s ease; }
 .gf-chevron.open { transform: rotate(90deg); }
 .gf-addform { display: grid; gap: 6px; padding: 6px 4px 8px; }
+/* Moving a feed replaces its row, the way unsubscribing asks in place: the
+   entry that is being changed stays on screen while it is changed. */
+.gf-moveform { display: grid; gap: 6px; padding: 4px 4px 8px; }
+.gf-moveform-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-tertiary);
+}
 .gf-addrow { display: flex; gap: 6px; justify-content: flex-end; }
 .gf-confirm { height: auto; min-height: 32px; flex-wrap: wrap; padding: 4px 6px; gap: 4px; }
 .gf-confirm .name { flex: 1 1 100%; font-size: 12px; line-height: 18px; }
@@ -329,7 +341,23 @@ export const CSS = `
   corner-shape: round;
   background: var(--dsw-alias-brand-primary-new-colorprimary-new-color);
 }
-.gf-star { flex: none; display: inline-flex; color: var(--dsw-alias-state-warn-primary); }
+/* The row's star: always there, holding its space, and shown on the row the
+   pointer or the keyboard is on. A starred row shows its mark outright, and a
+   device with no hover has no other way to reach the control. */
+.gf-row-actions { flex: none; display: inline-flex; visibility: hidden; }
+/* Rows have fixed heights the list computes offsets from, so the control is
+   sized to the title line rather than to the 24px small control it is. */
+.gf-row-actions .gf-iconbtn.sm { width: 20px; height: 20px; }
+.gf-row:hover .gf-row-actions,
+.gf-row.active .gf-row-actions,
+.gf-row:focus-within .gf-row-actions,
+.gf-row-actions.on { visibility: visible; }
+@media (hover: none) {
+  .gf-row-actions { visibility: visible; }
+}
+.gf-row-actions .gf-iconbtn { color: var(--dsw-alias-label-tertiary); }
+.gf-row-actions .gf-iconbtn:hover { color: var(--dsw-alias-label-primary); }
+.gf-row-actions.on .gf-iconbtn { color: var(--dsw-alias-state-warn-primary); }
 .gf-row-meta { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 11px; line-height: 15px; color: var(--dsw-alias-label-tertiary); }
 .gf-row-meta .feed-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gf-row-meta .when { flex: none; margin-left: auto; font-variant-numeric: tabular-nums; }

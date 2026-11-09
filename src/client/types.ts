@@ -80,7 +80,8 @@ export interface Controller {
   setQuery(query: string): void
   move(offset: number): void
   toggleRead(): void
-  toggleStar(): void
+  /** Star or unstar one item; the open article when no id is given. */
+  toggleStar(id?: string): void
   openCurrent(): void
   escape(): void
   markAll(): void
@@ -105,6 +106,7 @@ export interface Controller {
   setWidths(patch: { railW?: number; listW?: number }): void
   addFeed(url: string, folder: string): Promise<boolean>
   removeFeed(id: string): Promise<boolean>
+  setFeedFolder(id: string, folder: string): Promise<boolean>
   runAction(name: string): Promise<void>
   mount(): void
   unmount(): void

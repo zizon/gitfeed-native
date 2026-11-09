@@ -13,6 +13,7 @@ import { messageOf } from '../shared/errors.js'
 interface ApiFeed {
   title?: string
   url?: string
+  folder?: string
 }
 
 interface ApiResponse {
@@ -69,6 +70,7 @@ export interface Transport {
   star: (id: string, on: boolean) => Promise<void>
   addFeed: (url: string, folder: string) => Promise<boolean>
   removeFeed: (id: string) => Promise<boolean>
+  setFeedFolder: (id: string, folder: string) => Promise<boolean>
   runAction: (name: string) => Promise<void>
   mount: () => void
   unmount: () => void
@@ -330,6 +332,30 @@ export function createTransport(ports: TransportPorts): Transport {
     }
   }
 
+  /**
+   * Move one subscription to another folder and reload the list of sources.
+   * @param id feed id.
+   * @param folder folder to move it to; an empty name means Uncategorized.
+   * @returns whether the move was accepted.
+   */
+  async function setFeedFolder(id: string, folder: string): Promise<boolean> {
+    if (!id || ui().busy.folder) return false
+    ports.setBusy('folder', true)
+    try {
+      const payload = await request('/feeds/folder', { id: id, folder: folder })
+      if (payload.ok === false) throw new Error(payload.error || 'could not move feed')
+      const name = (payload.feed && payload.feed.folder) || t('feed.uncategorized')
+      ports.toast(t('toast.moved', { name: ports.titleOf(id), folder: name }))
+      await load({ force: true })
+      return true
+    } catch (err) {
+      ports.toast(t('toast.failed', { error: messageOf(err) }), true)
+      return false
+    } finally {
+      ports.setBusy('folder', false)
+    }
+  }
+
   async function runAction(name: string): Promise<void> {
     if (ui().busy[name]) return
     ports.setBusy(name, true)
@@ -401,6 +427,7 @@ export function createTransport(ports: TransportPorts): Transport {
     star: star,
     addFeed: addFeed,
     removeFeed: removeFeed,
+    setFeedFolder: setFeedFolder,
     runAction: runAction,
     mount: mount,
     unmount: unmount,

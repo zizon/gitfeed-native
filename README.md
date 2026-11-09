@@ -331,9 +331,15 @@ not carry its own theme setting.
 - **Search** over title, summary, and feed title.
 - **Feeds**: folders from the OPML import, collapsible; unread counts; error
   marks; one "Add feed" row that opens the form. Every feed row carries its
-  actions in view — mark the source read, and unsubscribe (colored destructive
-  on hover, confirmed on click), which removes the subscription and that feed's
-  items from both stores. That row is the only unsubscribe entry.
+  actions in view — move it to another folder, mark the source read, and
+  unsubscribe (colored destructive on hover, confirmed on click), which removes
+  the subscription and that feed's items from both stores. That row is the only
+  unsubscribe entry.
+- **Moving a feed**: the folder control on a feed row replaces the row with a
+  field holding its current folder and the folders already in use as
+  suggestions. Clearing it means Uncategorized. Nothing is re-fetched: the entry
+  keeps its id, URL, title, and custom-feed declaration, so only the tree above
+  it changes.
 - **List**: one line per item, grouped by folder or source on request. A
   section header sticks to the top while its section is in view and carries
   that section's actions — `Mark {n} read`, plus `Unsubscribe` when the section
@@ -346,6 +352,10 @@ not carry its own theme setting.
   the Feeds list for the same reason.
 - **Read on scroll**: a row counts as read only after the viewport top passed
   it while moving down; rows a scrollbar drag skipped over are included.
+- **Starring**: the star sits on the row itself, so an item can be kept without
+  opening it; it holds its space and appears on the row the pointer or the
+  keyboard is on, and a starred row shows it outright. Under the Starred filter
+  the star *is* membership, so unstarring there drops the row at once.
 - **Article**: sanitized feed HTML (element allowlist, `href`/`src`/`alt`/
   `title` only, http(s)/mailto URLs only), star, mark unread, open original.
   Past the opening of a piece a **Next →** control appears at the bottom of the
@@ -510,7 +520,7 @@ belong in the prompt, and the rest is loaded when a task matches a skill.
 
 | action | parameters | result |
 | --- | --- | --- |
-| `status` | — | repo, version, feed/item/unread counts, git and job state |
+| `status` | — | repo, version, feed/item/unread counts, the folder names in use, git and job state |
 | `list` | `query`, `feed`, `unreadOnly`, `starredOnly`, `limit` | compact item rows with a short excerpt |
 | `get` | `id` | one item's plain-text summary (up to 12k chars) |
 | `mark` | `ids`, `read` | changed count |
@@ -518,6 +528,7 @@ belong in the prompt, and the rest is loaded when a task matches a skill.
 | `refresh` | — | fetcher summary |
 | `subscribe` | `url`, `folder` | new feed entry |
 | `unsubscribe` | `id` | removed feed id |
+| `folder` | `id`, `folder` | the feed entry as written; an empty folder means Uncategorized |
 | `pull` / `sync` | — | git result; a local copy reports that it is not a working tree |
 
 `gitfeed_custom_feed`:

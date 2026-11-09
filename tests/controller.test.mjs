@@ -57,7 +57,9 @@ if (engine === undefined || esbuild === undefined) {
     const host = {
       items: [],
       read: [],
+      starred: [],
       marks: [],
+      stars: [],
     }
     const feed = { id: 'f1', title: 'Feed one', folder: 'News', siteUrl: null, url: null, error: null, checkedAt: null }
     function payload() {
@@ -67,7 +69,7 @@ if (engine === undefined || esbuild === undefined) {
         items: host.items,
         feeds: [feed],
         read: host.read.slice(),
-        starred: [],
+        starred: host.starred.slice(),
         reader: { hideEmptyFeeds: true, markReadOnScroll: true, groupBy: 'none' },
         repo: '/tmp/gitfeed-root',
         allowGit: false,
@@ -87,6 +89,14 @@ if (engine === undefined || esbuild === undefined) {
         if (body.read) for (const id of body.ids) if (host.read.indexOf(id) === -1) host.read.push(id)
         else host.read = host.read.filter((id) => body.ids.indexOf(id) === -1)
         return { ok: true, status: 200, json: async function () { return { ok: true, changed: body.ids.length, version: 'vm' } } }
+      }
+      if (target.indexOf('/star') !== -1) {
+        host.stars.push({ ids: body.ids, star: body.star })
+        for (const id of body.ids) {
+          if (body.star) { if (host.starred.indexOf(id) === -1) host.starred.push(id) }
+          else host.starred = host.starred.filter((kept) => kept !== id)
+        }
+        return { ok: true, status: 200, json: async function () { return { ok: true, changed: body.ids.length, version: 'vs' } } }
       }
       return { ok: true, status: 200, json: async function () { return { ok: true } } }
     }
@@ -156,6 +166,28 @@ if (engine === undefined || esbuild === undefined) {
     host.items = [item('f', 'Zeta')].concat(host.items)
     await loaded(controller)
     ok(ids(controller).includes('e'), 'marking it read again retains it across a rebuild', ids(controller))
+
+    // --- starring a row without opening it ---
+    // The list is the only surface with the archive in front of it, so its star
+    // acts on the row it sits on rather than on whatever article is open.
+    host.items = [item('s1', 'Star one'), item('s2', 'Star two')]
+    host.read = []
+    host.starred = []
+    const starring = createController(t, createPrefs())
+    await loaded(starring)
+    ok(starring.get().current === null, 'no article is open when a row is starred')
+    starring.toggleStar('s2')
+    ok(starring.get().starred.has('s2'), 'the row is starred at once', [...starring.get().starred])
+    await sleep(20)
+    ok(host.stars.length && host.stars.at(-1).ids.join() === 's2' && host.stars.at(-1).star === true,
+      'and the Host is asked for that row', host.stars)
+    ok(host.marks.filter((mark) => mark.ids.includes('s2')).length === 0, 'starring a row does not mark it read')
+    starring.setFilter('starred')
+    ok(ids(starring).join(',') === 's2', 'the Starred filter lists it', ids(starring))
+    starring.toggleStar('s2')
+    ok(!ids(starring).includes('s2'), 'unstarring it in the Starred view drops the row at once', ids(starring))
+    ok(starring.get().starred.size === 0, 'and the mark is gone', [...starring.get().starred])
+    starring.dispose()
 
     // --- a queued mark is sent before the surface goes ---
     const before = host.marks.length

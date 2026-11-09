@@ -28,6 +28,7 @@ const ACTIONS = [
   'refresh',
   'subscribe',
   'unsubscribe',
+  'folder',
   'pull',
   'sync',
 ]
@@ -36,10 +37,10 @@ const PARAMETERS = {
   type: 'object',
   properties: {
     action: { type: 'string', enum: ACTIONS, description: 'Operation to run.' },
-    id: { type: 'string', description: 'Item id for get, or feed id for unsubscribe.' },
+    id: { type: 'string', description: 'Item id for get, or feed id for unsubscribe and folder.' },
     ids: { type: 'array', items: { type: 'string' }, description: 'Item ids for mark and star.' },
     url: { type: 'string', description: 'Feed or site URL for subscribe.' },
-    folder: { type: 'string', description: 'Folder for subscribe; defaults to Uncategorized.' },
+    folder: { type: 'string', description: 'Folder for subscribe, or the folder to move a feed to; defaults to Uncategorized.' },
     query: { type: 'string', description: 'Case-insensitive text filter for list.' },
     feed: { type: 'string', description: 'Feed id filter for list.' },
     unreadOnly: { type: 'boolean', description: 'Only unread items for list.' },
@@ -53,7 +54,7 @@ const PARAMETERS = {
 }
 
 const DESCRIPTION =
-  "Read and manage the user's git-backed gitfeed RSS reader. Actions: status (counts, git and scheduler state), list (filter items by query, feed, unread, starred), get (one item's text by id), mark (read/unread), star, refresh (fetch feeds into the local cache), subscribe (URL, folder), unsubscribe (feed id), pull, sync. Use status or list before acting, and prefer get to read an article's text."
+  "Read and manage the user's git-backed gitfeed RSS reader. Actions: status (counts, folders, git and scheduler state), list (filter items by query, feed, unread, starred), get (one item's text by id), mark (read/unread), star (ids), refresh (fetch feeds into the local cache), subscribe (URL, folder), unsubscribe (feed id), folder (move feed id to folder), pull, sync. Use status or list before acting, and prefer get to read an article's text."
 
 async function run(service: GitfeedService, args: unknown) {
   const input = (args || {}) as GitfeedToolArgs
@@ -87,6 +88,9 @@ async function run(service: GitfeedService, args: unknown) {
     case 'unsubscribe':
       if (!input.id) throw new Error('id is required for unsubscribe')
       return service.removeFeed(input.id)
+    case 'folder':
+      if (!input.id) throw new Error('id is required for folder')
+      return { ok: true, feed: await service.setFeedFolder(input.id, input.folder) }
     case 'pull':
       return service.pull()
     case 'sync':

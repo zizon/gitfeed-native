@@ -332,18 +332,26 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     if (isRead) bumpList()
   }
 
-  function toggleStar(): void {
-    const id = ui.current
-    if (!id) return
-    const on = !data.starred.has(id)
+  /**
+   * Star or unstar one item.
+   * @param [id] the row whose star was clicked; the open article when omitted.
+   */
+  function toggleStar(id?: string): void {
+    const target = id || ui.current
+    if (!target) return
+    const on = !data.starred.has(target)
     const starred = new Set(data.starred)
-    if (on) starred.add(id)
-    else starred.delete(id)
+    if (on) starred.add(target)
+    else starred.delete(target)
     setData({ starred: starred })
-    transport.star(id, on).catch(function (err: unknown) {
+    // Under the Starred filter the star is what membership *is*, so that is
+    // the one view that has to rebuild its rows; in the others the glyph
+    // updates in place and the list stays where the reader left it.
+    if (ui.filter === 'starred') bumpList()
+    transport.star(target, on).catch(function (err: unknown) {
       const revert = new Set(data.starred)
-      if (on) revert.delete(id)
-      else revert.add(id)
+      if (on) revert.delete(target)
+      else revert.add(target)
       setData({ starred: revert })
       toast(t('toast.failed', { error: messageOf(err) }), true)
     })
@@ -526,6 +534,7 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     setWidths: setWidths,
     addFeed: transport.addFeed,
     removeFeed: transport.removeFeed,
+    setFeedFolder: transport.setFeedFolder,
     runAction: transport.runAction,
     mount: mount,
     unmount: unmount,

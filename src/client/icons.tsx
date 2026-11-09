@@ -64,6 +64,27 @@ export function IconUnreadDot({ filled, size }: IconProps & { filled?: boolean }
   )
 }
 
+/** Folder glyph for the move control; the atom set has no folder mark. */
+export function IconFolder({ size }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      width={size || 14}
+      height={size || 14}
+      aria-hidden="true"
+      style={{ display: 'block', flex: 'none' }}
+    >
+      <path
+        d="M2.75 4.6c0-.58.47-1.05 1.05-1.05h2.4l1.3 1.4h4.7c.58 0 1.05.47 1.05 1.05v6.35c0 .58-.47 1.05-1.05 1.05H3.8c-.58 0-1.05-.47-1.05-1.05z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={1.2}
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
 /** Folder disclosure chevron; rotates in place, the shared glyph keeps the artwork. */
 export function Chevron({ open }: { open: boolean }) {
   return (
