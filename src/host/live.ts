@@ -65,6 +65,16 @@ export interface LiveState {
    *   the deltas after it, in order.
    */
   framesAfter(rev: number): StreamFrame[]
+  /**
+   * Resolves when a frame past `rev` exists, or the signal aborts. The pull
+   * half of the stream: a surface that stops asking simply stops advancing,
+   * and the history here decides how it catches up when it asks again.
+   * @param rev - the revision the surface holds.
+   * @param signal - cancels the wait.
+   */
+  changed(rev: number, signal: AbortSignal): Promise<void>
+  /** Resolve every surface waiting for a change; the service calls it on dispose. */
+  wake(): void
 }
 
 /** Item rows the delta history may hold; past it, a reconnect gets the state. */
@@ -172,6 +182,28 @@ export function createLiveState(): LiveState {
   let rev = 0
   const log: StreamDelta[] = []
   let logRows = 0
+  /** Surfaces waiting for the next change, each resolved exactly once. */
+  const waiters = new Set<() => void>()
+
+  function wake(): void {
+    if (waiters.size === 0) return
+    const ready = Array.from(waiters)
+    waiters.clear()
+    for (const resolve of ready) resolve()
+  }
+
+  function changed(since: number, signal: AbortSignal): Promise<void> {
+    if (rev > since || signal.aborted) return Promise.resolve()
+    return new Promise<void>(function (resolve) {
+      const done = function (): void {
+        waiters.delete(done)
+        signal.removeEventListener('abort', done)
+        resolve()
+      }
+      waiters.add(done)
+      signal.addEventListener('abort', done, { once: true })
+    })
+  }
 
   function info(): LiveInfo | null {
     if (!held) return null
@@ -222,6 +254,8 @@ export function createLiveState(): LiveState {
       itemsVersion: held.itemsVersion,
     }, change)
     log.push(frame)
+    // A surface waiting for the next frame is the one thing a revision is for.
+    wake()
     if (change.items) logRows += change.items.added.length + change.items.updated.length
     // Two bounds: a surface that fell behind by more than a few hundred changes
     // asks for the whole state, and a log that would hold a whole feed's worth
@@ -352,5 +386,7 @@ export function createLiveState(): LiveState {
     mark: mark,
     star: star,
     framesAfter: framesAfter,
+    changed: changed,
+    wake: wake,
   }
 }

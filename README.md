@@ -442,6 +442,12 @@ there, the rows arrive when the reader leaves the spot they would have moved.
 - **Ties are broken by id**, on the Host (`compareItems`), so two items that
   share a timestamp cannot swap places between reloads.
 
+The stream is pulled. The route asks the Host for the next frame, writes it, and
+only then asks for another, so a surface that is slow to read stops the producer
+at the source instead of filling a queue in the request handler; what it falls
+behind in is the revision cursor, and the kept history decides whether it is
+caught up by a delta or by the whole state.
+
 The reader does not poll for its own state. Each surface opens one server-sent
 event stream at `/gitfeed/events` when it mounts, receives the whole archive
 once, and from then on only what changed: the rows a refresh added or repaired,

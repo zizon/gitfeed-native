@@ -169,4 +169,43 @@ const bulk = mergeItems(base, { added: big, updated: [], removed: [] })
 ok(bulk.length === 100, 'a bulk arrival lands whole', bulk.length)
 ok(bulk.every((row, index) => index === 0 || orderItems(bulk[index - 1], row) <= 0), 'and stays in archive order', bulk.length)
 
+// --- a surface waiting for the next frame is woken by one ---
+const waiting = createLiveState()
+waiting.apply(first)
+const gate = new AbortController()
+let woke = 0
+const next = waiting.changed(waiting.info().rev, gate.signal).then(function () { woke += 1 })
+ok(woke === 0, 'a surface at the current revision waits')
+waiting.mark(['w1'], true)
+await next
+ok(woke === 1, 'a change wakes it once', woke)
+
+// A surface already behind does not wait at all.
+let immediate = false
+await waiting.changed(0, new AbortController().signal).then(function () { immediate = true })
+ok(immediate === true, 'a surface behind the state is answered at once')
+
+// A newer state that changes nothing a surface draws does not wake anyone.
+let wokeOnSilent = 0
+const quiet = new AbortController()
+void waiting.changed(waiting.info().rev, quiet.signal).then(function () { wokeOnSilent += 1 })
+waiting.apply(Object.assign({}, first, { version: 'v-silent', read: ['b', 'w1'] }))
+await new Promise(function (resolve) { setTimeout(resolve, 5) })
+ok(wokeOnSilent === 0, 'a silent version move wakes nobody', wokeOnSilent)
+
+// Cancelling the wait resolves it without a frame.
+let cancelled = 0
+const cancelling = new AbortController()
+void waiting.changed(waiting.info().rev, cancelling.signal).then(function () { cancelled += 1 })
+cancelling.abort()
+await new Promise(function (resolve) { setTimeout(resolve, 5) })
+ok(cancelled === 1, 'a cancelled wait resolves without a change', cancelled)
+
+// Disposing the service wakes every waiter; without it a pull could outlive it.
+let woken = 0
+void waiting.changed(waiting.info().rev, new AbortController().signal).then(function () { woken += 1 })
+waiting.wake()
+await new Promise(function (resolve) { setTimeout(resolve, 5) })
+ok(woken === 1, 'wake resolves every waiting surface', woken)
+
 finish()

@@ -19,7 +19,7 @@ import type { FetchResult, GitActionResult, Logger, ReaderStateData, ReadyState,
 import type { FeedDefinition } from './types.js'
 import type { GitInfo, Feed, Item, SourceKind } from '../shared/types.js'
 import type { StreamFrame } from '../shared/stream.js'
-import { PROBE_MS } from '../shared/stream.js'
+import { PROBE_MS, PROTOCOL } from '../shared/stream.js'
 import { messageOf } from '../shared/errors.js'
 import { decodeEntities } from './xml.js'
 
@@ -156,11 +156,11 @@ export function createGitfeed(options: GitfeedOptions) {
 
   /**
    * What the event stream serves: the state the last read found, and the deltas
-   * since. A surface that opens the stream is caught up from this instead of
-   * from a request, and a change made here is one frame to every surface.
+   * since. A change made here is a revision; a surface asks for what it missed.
    */
   const live = createLiveState()
-  const listeners = new Set<(frame: StreamFrame) => void>()
+  /** Surfaces currently pulling frames; the probe only runs while one is. */
+  let attached = 0
   /** Cancels the stream's wake-up; null while no surface is attached. */
   let probeWaker: (() => void) | null = null
 
@@ -193,17 +193,6 @@ export function createGitfeed(options: GitfeedOptions) {
     const run = writeQueue.then(task, task)
     writeQueue = run.then(function () { }, function () { })
     return run
-  }
-
-  /** Send one frame to every attached surface. */
-  function broadcast(frame: StreamFrame): void {
-    for (const listener of Array.from(listeners)) {
-      try {
-        listener(frame)
-      } catch (err) {
-        logger.warn(`gitfeed: a stream listener failed: ${messageOf(err)}`)
-      }
-    }
   }
 
   /** The whole state, read from disk, in the shape the stream diffs. */
@@ -243,8 +232,7 @@ export function createGitfeed(options: GitfeedOptions) {
         const held = live.info()
         if (!options?.force && held && held.version === version) return
         const next = await readSnapshot(settings(), version, options?.git === true || held === null)
-        const delta = live.apply(next)
-        if (delta) broadcast(delta)
+        live.apply(next)
       } catch (err) {
         logger.warn(`gitfeed: could not refresh the reader: ${messageOf(err)}`)
       }
@@ -253,7 +241,7 @@ export function createGitfeed(options: GitfeedOptions) {
 
   /** Arm the stream's next look at the data root, once per attached surface window. */
   function armProbe(): void {
-    if (probeWaker || disposed || listeners.size === 0) return
+    if (probeWaker || disposed || attached === 0) return
     probeWaker = options.timers.timeout(function () {
       probeWaker = null
       void probe().finally(armProbe)
@@ -273,7 +261,7 @@ export function createGitfeed(options: GitfeedOptions) {
    * the scheduler's idle gate.
    */
   async function probe(): Promise<void> {
-    if (disposed || listeners.size === 0) return
+    if (disposed || attached === 0) return
     touch()
     try {
       const version = await fileVersion()
@@ -286,48 +274,45 @@ export function createGitfeed(options: GitfeedOptions) {
   }
 
   /**
-   * Attach one surface at the revision it holds.
-   * @param rev - the revision the surface last saw; 0 when it holds none.
-   * @param send - receives the frames that bring it current, then every change.
-   * @returns detaches the surface; the stream's close runs it.
+   * The frames that bring a surface at `rev` current, then every change after
+   * it — as a pull source.
+   *
+   * This is the stream's backpressure. The consumer awaits the next frame and
+   * writes it before asking again, so a slow surface simply stops advancing its
+   * cursor; it never fills a queue here. When it falls behind the kept history,
+   * `framesAfter` answers with the whole state, which is the resync — the same
+   * rule that makes a dropped connection safe.
+   * @param rev - the revision the surface last saw; 0 when it has none.
+   * @param signal - cancels the pull; the calling response's close aborts it.
    */
-  async function attach(rev: number, send: (frame: StreamFrame) => void): Promise<() => void> {
-    const pending: StreamFrame[] = []
-    let forwarding = false
-    const listener = function (frame: StreamFrame): void {
-      if (forwarding) send(frame)
-      else pending.push(frame)
-    }
-    listeners.add(listener)
+  async function* frames(rev: number, signal: AbortSignal): AsyncGenerator<StreamFrame> {
+    attached += 1
     armProbe()
     try {
       if (!live.info()) await refresh({ force: true, git: true })
-      const frames = live.framesAfter(rev)
-      for (const frame of frames) send(frame)
       if (!live.info()) {
-        send({ t: 'error', protocol: 1, message: `gitfeed: ${root} has no readable feeds.json` })
-        return function () {
-          listeners.delete(listener)
-          if (listeners.size === 0) disarmProbe()
+        yield { t: 'error', protocol: PROTOCOL, message: `gitfeed: ${root} has no readable feeds.json` }
+        return
+      }
+      let cursor = rev
+      // A function, not a narrowed `let`: both of these change from outside the
+      // generator, and an inlined check would be folded to its first value.
+      const stopped = function (): boolean { return disposed || signal.aborted }
+      while (!stopped()) {
+        const batch = live.framesAfter(cursor)
+        if (batch.length === 0) {
+          await live.changed(cursor, signal)
+          continue
+        }
+        for (const frame of batch) {
+          if (stopped()) return
+          if (frame.t !== 'error') cursor = frame.rev
+          yield frame
         }
       }
-      const tail = frames.length ? frames[frames.length - 1] : undefined
-      const last = tail !== undefined && tail.t !== 'error' ? tail.rev : rev
-      forwarding = true
-      for (const frame of pending) {
-        if (frame.t !== 'error' && frame.rev > last) send(frame)
-      }
-      pending.length = 0
     } finally {
-      pending.length = 0
-      forwarding = true
-    }
-    let detached = false
-    return function () {
-      if (detached) return
-      detached = true
-      listeners.delete(listener)
-      if (listeners.size === 0) disarmProbe()
+      attached -= 1
+      if (attached === 0) disarmProbe()
     }
   }
 
@@ -640,7 +625,7 @@ export function createGitfeed(options: GitfeedOptions) {
     const data = await buildSnapshot(cfg, model.items)
     // A reader that loaded over HTTP then opens the stream must be caught up
     // from the same copy the stream holds, so this read feeds the live state too.
-    const delta = live.apply({
+    live.apply({
       version: version,
       itemsVersion: model.version,
       items: model.items,
@@ -653,7 +638,6 @@ export function createGitfeed(options: GitfeedOptions) {
       repo: root,
       allowGit: allowGit,
     })
-    if (delta) broadcast(delta)
     if (knownItemsVersion && knownItemsVersion === model.version) {
       // The reader already holds this item model: send the marks and feeds that
       // moved, and a flag instead of thousands of unchanged rows.
@@ -713,8 +697,7 @@ export function createGitfeed(options: GitfeedOptions) {
     // The mark is what this surface just did, so it does not need the row text:
     // one frame carries the ids to every other surface, and the revision keeps
     // a reconnecting one from seeing it twice.
-    const delta = live.mark(clean, read)
-    if (delta) broadcast(delta)
+    live.mark(clean, read)
     if (changed > 0) syncJob.nudge(AUTO_SYNC_DEBOUNCE_MS, AUTO_SYNC_MAX_WAIT_MS)
     return { ok: true, changed: changed, version: await fileVersion() }
   }
@@ -729,8 +712,7 @@ export function createGitfeed(options: GitfeedOptions) {
     touch()
     const clean = checkedIds(ids)
     const changed = await setState(paths.starred, clean, starred)
-    const delta = live.star(clean, starred)
-    if (delta) broadcast(delta)
+    live.star(clean, starred)
     if (changed > 0) syncJob.nudge(AUTO_SYNC_DEBOUNCE_MS, AUTO_SYNC_MAX_WAIT_MS)
     return { ok: true, changed: changed, version: await fileVersion() }
   }
@@ -1177,7 +1159,8 @@ export function createGitfeed(options: GitfeedOptions) {
   function dispose(): void {
     disposed = true
     disarmProbe()
-    listeners.clear()
+    live.wake()
+    attached = 0
     runner.dispose()
     invalidate()
   }
@@ -1201,7 +1184,7 @@ export function createGitfeed(options: GitfeedOptions) {
     getForTool: getForTool,
     statusForTool: statusForTool,
     search: search,
-    attach: attach,
+    frames: frames,
     /** Re-read the data root and announce what changed (the stream's probe, by hand). */
     refresh: refresh,
     dispose: dispose,

@@ -1,7 +1,7 @@
 // The event stream route: the frames a surface receives, the admission it is
-// held to, and the detach that runs when the surface goes. The handler is
-// driven over a real HTTP listener, because the thing under test is a held-open
-// response, not a request/response shape a mock would reproduce.
+// held to, and the pause a slow surface imposes on the pull. The handler is
+// driven over a real HTTP listener where the transport matters, and over a fake
+// response where the callback is what the test wants to control.
 import { createServer } from 'node:http'
 import { finish, lib, ok } from './harness.mjs'
 
@@ -42,6 +42,51 @@ const delta = {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
+/**
+ * A frame source the test pushes into: the handler pulls whatever is queued,
+ * exactly as it pulls from the live state.
+ */
+function frameSource(initial) {
+  const queued = []
+  let waiting = null
+  let closed = false
+  let settled = 0
+  const wake = function () {
+    if (!waiting) return
+    const resolve = waiting
+    waiting = null
+    resolve()
+  }
+  return {
+    push(frame) {
+      queued.push(frame)
+      wake()
+    },
+    close() {
+      closed = true
+      wake()
+    },
+    get stopped() { return settled },
+    async *frames(rev, signal) {
+      try {
+        for (const frame of initial || []) yield frame
+        while (!closed && !signal.aborted) {
+          if (queued.length === 0) {
+            await new Promise(function (resolve) {
+              waiting = resolve
+              signal.addEventListener('abort', resolve, { once: true })
+            })
+            continue
+          }
+          yield queued.shift()
+        }
+      } finally {
+        settled += 1
+      }
+    },
+  }
+}
+
 /** One listener with one handler; answers the port and a close that cannot hang. */
 async function listen(handler) {
   const server = createServer((req, res) => { void handler(req, res) })
@@ -75,7 +120,6 @@ function streamReader(response) {
   })()
   return {
     text: function () { return text },
-    /** Wait until the accumulated text carries `needle`. */
     async until(needle, ms) {
       const deadline = Date.now() + (ms || 3000)
       while (!text.includes(needle) && Date.now() < deadline) await sleep(10)
@@ -92,90 +136,114 @@ function streamReader(response) {
   }
 }
 
-// --- the frames carry the revision the surface asked from ---
-{
-  const senders = []
-  let detached = 0
-  const source = {
-    attach: async function (rev, send) {
-      senders.push({ rev: rev, send: send })
-      send(welcome)
-      return function () { detached += 1 }
+function fakeRequest() {
+  return { method: 'GET', url: '/gitfeed/events?rev=0', headers: {}, setTimeout() {}, on() {} }
+}
+
+/**
+ * A response whose `write` callback the test releases: holding it is what a
+ * surface that is not reading looks like to the handler.
+ */
+function fakeResponse() {
+  const listeners = new Map()
+  const state = { written: [], held: null, heldWrite: null, ended: false }
+  const res = {
+    writeHead() {},
+    write(text, callback) {
+      state.written.push(text)
+      if (!state.held) {
+        if (callback) callback()
+        return true
+      }
+      state.heldWrite = callback
+      return false
+    },
+    end() { state.ended = true },
+    on(event, listener) {
+      const list = listeners.get(event) || []
+      list.push(listener)
+      listeners.set(event, list)
+      return res
+    },
+    emit(event) { for (const listener of listeners.get(event) || []) listener() },
+  }
+  return {
+    res: res,
+    state: state,
+    hold() { state.held = true },
+    release() {
+      state.held = false
+      const callback = state.heldWrite
+      state.heldWrite = null
+      if (callback) callback()
     },
   }
+}
+
+// --- frames arrive in order, from the revision the surface asked ---
+{
+  const source = frameSource([welcome])
   const handler = createEventsHandler(source, function () { return undefined })
   const listener = await listen(handler)
   const controller = new AbortController()
   const res = await fetch(`http://127.0.0.1:${listener.port}/gitfeed/events?rev=3`, { signal: controller.signal })
   ok(res.status === 200, 'the stream answers 200', res.status)
   ok(res.headers.get('content-type').startsWith('text/event-stream'), 'as an event stream', res.headers.get('content-type'))
-  ok(senders.length === 1 && senders[0].rev === 3, 'the revision in the query is the one it attaches at', senders.map((entry) => entry.rev))
 
   const stream = streamReader(res)
   const first = await stream.until('event: welcome')
   ok(first.includes('event: welcome'), 'the whole state arrives as a welcome event', first.slice(0, 60))
   ok(first.includes('"rev":4') && first.includes('"id":"a"'), 'with the rows and the revision in the payload', first.slice(0, 120))
 
-  senders[0].send(delta)
+  source.push(delta)
   const rest = await stream.until('event: delta')
   ok(rest.includes('event: delta') && rest.includes('"rev":5'), 'a later change arrives as a delta', rest.slice(0, 80))
 
   await stream.stop()
   controller.abort()
   await sleep(50)
-  ok(detached === 1, 'aborting the request detaches the surface', detached)
+  ok(source.stopped === 1, 'closing the response stops the pull', source.stopped)
   await listener.close()
 }
 
-// --- admission: a refused surface never receives frames ---
+// --- a surface that is not reading pauses the pull ---
+// The handler awaits each write, so a response that accepts a chunk but never
+// reports it complete keeps the next frame from even being asked for.
 {
-  let attached = 0
-  const source = {
-    attach: async function () {
-      attached += 1
-      return function () {}
-    },
-  }
-  const handler = createEventsHandler(source, function () { return 401 })
-  const listener = await listen(handler)
-  const res = await fetch(`http://127.0.0.1:${listener.port}/gitfeed/events`)
-  ok(res.status === 401, 'a refused request is answered with its status', res.status)
-  ok(attached === 0, 'and nothing is attached for it', attached)
-  await res.text().catch(function () {})
-  await listener.close()
+  const source = frameSource([welcome])
+  const handler = createEventsHandler(source, function () { return undefined })
+  const { res, state, hold, release } = fakeResponse()
+  const done = handler(fakeRequest(), res)
+  await sleep(10)
+  ok(state.written.length === 2, 'the retry hint and the first frame are written', state.written.length)
+
+  hold()
+  source.push(delta)
+  source.push(Object.assign({}, delta, { rev: 6, version: 'v6' }))
+  await sleep(20)
+  ok(state.written.length === 3, 'a chunk the response did not accept stops the next frame', state.written.length)
+
+  release()
+  await sleep(20)
+  ok(state.written.length === 4, 'and releasing it lets the pull continue', state.written.length)
+
+  release()
+  await sleep(20)
+  ok(state.written.length === 4, 'with nothing else queued the pull waits', state.written.length)
+
+  source.close()
+  await done
+  ok(state.ended === true, 'and the response ends when the source does', state.ended)
 }
 
 // --- the first frame is the whole archive, and a large one must arrive ---
-// A backpressure guard that fires right after writing a big frame drops the
-// connection on the very first load: the frame is queued, not stalled, and the
-// surface sees a broken stream instead of its state.
 {
   const body = 'x'.repeat(6 * 1024 * 1024)
-  const large = {
-    t: 'welcome',
-    protocol: 1,
-    rev: 1,
-    version: 'v1',
-    itemsVersion: 'm1',
+  const large = Object.assign({}, welcome, {
     items: [{ id: 'big-1', feed: 'feed-a', title: 'A long body', link: '', date: '2026-11-01T10:00:00.000Z', author: '', summary: body }],
-    read: [],
-    starred: [],
-    feeds: [],
-    reader: { hideEmptyFeeds: true, markReadOnScroll: true, groupBy: 'none' },
-    git: null,
-    schedule: [],
-    repo: '/tmp/gitfeed-root',
-    allowGit: false,
-  }
+  })
   const controller = new AbortController()
-  const source = {
-    attach: async function (rev, send) {
-      send(large)
-      return function () {}
-    },
-  }
-  const handler = createEventsHandler(source, function () { return undefined })
-  const listener = await listen(handler)
+  const listener = await listen(createEventsHandler(frameSource([large]), function () { return undefined }))
   const res = await fetch(`http://127.0.0.1:${listener.port}/gitfeed/events?rev=0`, { signal: controller.signal })
   const stream = streamReader(res)
   const text = await stream.until('"big-1"', 8000)
@@ -186,85 +254,32 @@ function streamReader(response) {
   await listener.close()
 }
 
-// --- the response's own backpressure is respected ---
-// `res.write` returning false is the contract to stop and wait for 'drain', not
-// a failure: the chunk was accepted. A handler that ignores it turns a slow
-// surface into unbounded memory in the process that serves the whole app.
-function fakeRequest() {
-  return { method: 'GET', url: '/gitfeed/events?rev=0', headers: {}, setTimeout() {}, on() {} }
-}
-function fakeResponse(options) {
-  const listeners = new Map()
-  const state = { written: [], destroyed: false, ended: false, accepts: options.accepts, writableLength: options.writableLength || 0 }
-  const res = {
-    get writableLength() { return state.writableLength },
-    writeHead() {},
-    write(chunk) {
-      state.written.push(chunk)
-      state.accepts -= 1
-      return state.accepts > 0
-    },
-    end() { state.ended = true },
-    destroy() { state.destroyed = true },
-    on(event, listener) {
-      const list = listeners.get(event) || []
-      list.push(listener)
-      listeners.set(event, list)
-      return res
-    },
-    emit(event) { for (const listener of listeners.get(event) || []) listener() },
-  }
-  return { res: res, state: state }
-}
-
+// --- admission: a refused surface never receives frames ---
 {
-  let send
-  const { res, state } = fakeResponse({ accepts: 2 })
+  let pulled = 0
   const source = {
-    attach: async function (rev, receiver) {
-      send = receiver
-      receiver(welcome)
-      return function () {}
+    frames() {
+      pulled += 1
+      return (async function* () { yield welcome })()
     },
   }
-  await createEventsHandler(source, function () { return undefined })(fakeRequest(), res)
-  ok(state.written.length === 2, 'frames are written while the response accepts them', state.written.length)
-
-  send(delta)
-  send(delta)
-  ok(state.written.length === 2, 'and held once it answers false', state.written.length)
-
-  state.accepts = 10
-  res.emit('drain')
-  ok(state.written.length === 4, 'a drained response receives what was held, in order', state.written.length)
-  ok(state.written[2].includes('event: delta') && state.written[3].includes('event: delta'), 'the held frames are the frames that were queued', state.written.slice(2).map(function (chunk) { return chunk.slice(0, 20) }))
-  res.emit('error')
-  ok(state.ended === true, 'closing the response ends the stream', state.ended)
-}
-
-{
-  let send
-  const { res, state } = fakeResponse({ accepts: 2, writableLength: 64 * 1024 * 1024 })
-  const source = {
-    attach: async function (rev, receiver) {
-      send = receiver
-      receiver(welcome)
-      return function () {}
-    },
-  }
-  await createEventsHandler(source, function () { return undefined })(fakeRequest(), res)
-  send(delta)
-  ok(state.destroyed === true, 'a surface that never drains is dropped at the bound', state.destroyed)
-  ok(state.destroyed && !state.ended, 'and nothing is appended to a connection that is gone')
+  const handler = createEventsHandler(source, function () { return 401 })
+  const listener = await listen(handler)
+  const res = await fetch(`http://127.0.0.1:${listener.port}/gitfeed/events`)
+  ok(res.status === 401, 'a refused request is answered with its status', res.status)
+  ok(pulled === 0, 'and the reader is not asked for frames', pulled)
+  await res.text().catch(function () {})
+  await listener.close()
 }
 
 // --- a reader that cannot open its data root hears why ---
 {
   const controller = new AbortController()
   const source = {
-    attach: async function (rev, send) {
-      send({ t: 'error', protocol: 1, message: 'gitfeed: no feeds.json' })
-      return function () {}
+    frames() {
+      return (async function* () {
+        yield { t: 'error', protocol: 1, message: 'gitfeed: no feeds.json' }
+      })()
     },
   }
   const handler = createEventsHandler(source, function () { return undefined })
