@@ -311,6 +311,8 @@ export const CSS = `
 }
 @media (prefers-reduced-motion: reduce) {
   .gf-row.gf-row-in { animation: none; }
+  /* The section still leaves, it just does not fade on the way out. */
+  .gf-fade { transition: none; }
 }
 @media (hover: hover) {
   .gf-row:hover { background: var(--dsw-alias-interactive-bg-hover); }
