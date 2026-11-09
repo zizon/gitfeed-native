@@ -518,7 +518,7 @@ copy of them: the Client bundle requires
 `@deepseek-ai/dsh-client-ui-primitives` from the shared module table and marks
 it external, so the page gets the same buttons, inputs, menus, switches,
 toasts, and icons the rest of the GUI renders, plus any theme change that
-reaches them. The plugin ships no CSS for those controls.
+reaches them. Its own sheet covers only the surfaces kept custom below.
 
 - **Adopted**: `Button` for the toolbar and inline actions, `Pill` for the
   filter and group-by chips, `Input` for search and the add-feed form,
@@ -528,9 +528,10 @@ reaches them. The plugin ships no CSS for those controls.
   chevrons, checks, close, refresh, plus, ellipsis, and open-original glyphs.
 - **Kept custom, deliberately**: feed and item rows, the section header (sticky
   in flow, re-rendered as a pinned bar when its own row is above the mounted
-  band), the float that follows the list's scroll edge, and the article's
-  `Next →` capsule — the atom set has no list-row, group-header, or
-  floating-bar primitive, so these are a small token-styled sheet rather than
+  band), the float that follows the list's scroll edge, the icon button (the
+  atom set has no square icon-only control), and the article's `Next →`
+  capsule — the atom set has no list-row, group-header, floating-bar, or
+  icon-only primitive, so these are a small token-styled sheet rather than
   copies of a shared control. The RSS mark, the star, and the unread dot are
   artwork the theme does not carry.
 - **Tokens**: hover and selected fills use
@@ -543,6 +544,10 @@ reaches them. The plugin ships no CSS for those controls.
 
 Toasts are the shared banner, so they appear centred at the top of the page
 and carry one action; Undo is the action rather than a link in a stack.
+
+Where the reader's chrome still departs from the app's current page bar — its
+action sizes, label collapse, and tooltips — is recorded with the reasons in
+[the UI audit](docs/ui-audit.md).
 
 ## Configuration
 
