@@ -624,6 +624,8 @@ pnpm lint        # oxlint, including the type-aware rules
 protocols, the timer-runtime check against a real Harness checkout, and the
 architecture ratchet that keeps a second clock out of the Host half. Suites are
 plain node scripts driven by `tests/run.mjs`; no test framework is installed.
+CI runs the same four gates on every push, on the two Node lines the package
+supports (22, the floor `engines` declares, and 24, the current LTS).
 
 Lint reads the single root `tsconfig.json`, so Host and Client files resolve
 from one project; `pnpm lint:fix` also applies the formatting rules.
