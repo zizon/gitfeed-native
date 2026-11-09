@@ -2,6 +2,7 @@
 
 import { parseFeed } from './xml.js'
 import { pathsFor } from './settings.js'
+import { InputError } from '../shared/errors.js'
 import { readJson, writeJson } from './store.js'
 import type { FeedDefinition } from './types.js'
 
@@ -98,22 +99,22 @@ export function sourceUrl(raw: string): string {
   try {
     url = new URL((raw || '').trim())
   } catch {
-    throw new Error('not a valid URL')
+    throw new InputError('not a valid URL')
   }
-  if (!/^https?:$/i.test(url.protocol)) throw new Error('only http(s) URLs are supported')
+  if (!/^https?:$/i.test(url.protocol)) throw new InputError('only http(s) URLs are supported')
   return url.href
 }
 
 export async function resolveFeed(rawUrl: string, depth?: number): Promise<ResolvedFeed> {
   const level = depth || 0
-  if (level > 2) throw new Error('feed discovery loop')
+  if (level > 2) throw new InputError('feed discovery loop')
   let url
   try {
     url = new URL(rawUrl.trim()).href
   } catch {
-    throw new Error('not a valid URL')
+    throw new InputError('not a valid URL')
   }
-  if (!/^https?:/i.test(url)) throw new Error('only http(s) URLs are supported')
+  if (!/^https?:/i.test(url)) throw new InputError('only http(s) URLs are supported')
 
   const res = await fetch(url, {
     headers: {
@@ -129,13 +130,13 @@ export async function resolveFeed(rawUrl: string, depth?: number): Promise<Resol
 
   if (looksLikeFeed(res.headers.get('content-type'), body)) {
     const parsed = parseFeed(body)
-    if (!parsed.items.length && !parsed.title) throw new Error('no items found in feed')
+    if (!parsed.items.length && !parsed.title) throw new InputError('no items found in feed')
     return { url: finalUrl, title: parsed.title || null, items: parsed.items.length }
   }
 
   const discovered = discoverFeed(body, finalUrl)
   if (!discovered) {
-    throw new Error('no RSS/Atom feed found on that page — a custom feed script can read a page like this instead')
+    throw new InputError('no RSS/Atom feed found on that page — a custom feed script can read a page like this instead')
   }
   return resolveFeed(discovered, level + 1)
 }

@@ -20,7 +20,7 @@ import type { FeedDefinition } from './types.js'
 import type { GitInfo, Feed, Item, SourceKind } from '../shared/types.js'
 import type { StreamFrame } from '../shared/stream.js'
 import { PROBE_MS, PROTOCOL } from '../shared/stream.js'
-import { messageOf } from '../shared/errors.js'
+import { InputError, messageOf } from '../shared/errors.js'
 import { decodeEntities } from './xml.js'
 
 /** A local mark is pushed after this much quiet, so scrolling marks coalesce. */
@@ -191,9 +191,14 @@ export function createGitfeed(options: GitfeedOptions) {
 
   function serialize<T>(task: () => Promise<T>): Promise<T> {
     const run = writeQueue.then(task, task)
-    writeQueue = run.then(function () { }, function () { })
+    // The queue only decides what runs next; a failed task is answered to the
+    // caller that asked for it, so its outcome is not the chain's to carry.
+    writeQueue = run.then(chainStep, chainStep)
     return run
   }
+
+  /** A chain step whose result is answered elsewhere. */
+  function chainStep(): void { /* the outcome is not the queue's */ }
 
   /**
    * The whole state, read from disk, in the shape the stream diffs.
@@ -774,7 +779,7 @@ export function createGitfeed(options: GitfeedOptions) {
       await writeFile(target.file, CUSTOM_FEED_TEMPLATE, { flag: 'wx' })
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
-        throw new Error(`custom feed: ${target.script} already exists; pick another name`)
+        throw new InputError(`custom feed: ${target.script} already exists; pick another name`)
       }
       throw err
     }
@@ -792,9 +797,9 @@ export function createGitfeed(options: GitfeedOptions) {
    * @returns what the script returned, with a sample of the items.
    */
   async function checkCustomFeed(input: { script?: string; url?: string; options?: unknown } | null | undefined) {
-    if (!input?.script) throw new Error('script is required')
+    if (!input?.script) throw new InputError('script is required')
     const declaration = declarationOf({ type: 'custom', script: input.script, options: input.options })
-    if (declaration === null) throw new Error('script is required')
+    if (declaration === null) throw new InputError('script is required')
     const file = await scriptFile(root, declaration.script)
     const url = sourceUrl(input.url || 'https://example.com/')
     const controller = new AbortController()
@@ -945,7 +950,7 @@ export function createGitfeed(options: GitfeedOptions) {
   ): Promise<FeedDefinition> {
     touch()
     const raw = (input?.url || '').trim()
-    if (!raw) throw new Error('a feed or site URL is required')
+    if (!raw) throw new InputError('a feed or site URL is required')
     // A custom feed is its own recipe: validating the declaration is what
     // discovery would have been, and the URL is taken as given.
     const declared = declarationOf({ type: input?.type, script: input?.script, options: input?.options })
@@ -964,7 +969,7 @@ export function createGitfeed(options: GitfeedOptions) {
       const feeds = await readFeeds(root)
       const key = normalizeUrl(resolved.url)
       for (const f of feeds) {
-        if (normalizeUrl(f.url) === key) throw new Error(`already subscribed to ${resolved.url}`)
+        if (normalizeUrl(f.url) === key) throw new InputError(`already subscribed to ${resolved.url}`)
       }
 
       let id = feedIdFor(resolved.url)
@@ -1010,13 +1015,13 @@ export function createGitfeed(options: GitfeedOptions) {
   async function removeFeed(id: string | undefined): Promise<{ ok: boolean; removed: string }> {
     touch()
     const key = id || ''
-    if (!key) throw new Error('feed id is required')
+    if (!key) throw new InputError('feed id is required')
     // One queue for every subscription mutation and every mark, so the list and
     // the shards it rewrites cannot interleave with another one.
     await serialize(async function () {
       const feeds = await readFeeds(root)
       const next = feeds.filter(function (f) { return f.id !== key })
-      if (next.length === feeds.length) throw new Error('no such feed')
+      if (next.length === feeds.length) throw new InputError('no such feed')
       await writeFeeds(root, next)
 
       for (const dir of [paths.items, paths.localItems]) {
@@ -1049,7 +1054,7 @@ export function createGitfeed(options: GitfeedOptions) {
   async function setFeedFolder(id: string | undefined, folder: string | undefined): Promise<FeedDefinition> {
     touch()
     const key = (id || '').trim()
-    if (!key) throw new Error('feed id is required')
+    if (!key) throw new InputError('feed id is required')
     const name = (folder || '').trim() || 'Uncategorized'
     // Same queue as every other subscription write: the list is
     // read-modify-write, so a move must not land on a list a subscribe is
@@ -1057,7 +1062,7 @@ export function createGitfeed(options: GitfeedOptions) {
     const moved = await serialize(async function () {
       const feeds = await readFeeds(root)
       const entry = feeds.find(function (f) { return f.id === key })
-      if (!entry) throw new Error('no such feed')
+      if (!entry) throw new InputError('no such feed')
       if ((entry.folder || '') === name) return entry
       entry.folder = name
       await writeFeeds(root, feeds)

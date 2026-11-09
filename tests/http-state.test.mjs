@@ -115,6 +115,20 @@ const added = subscribed.filter((entry) => /feed-[ab]\.xml$/.test(entry.url))
 ok(subA.status === 200 && subB.status === 200, 'two subscribes at once both answer ok', [subA.status, subB.status, subA.body, subB.body])
 ok(added.length === 2, 'two subscribes at once both land in the list', added.map((entry) => entry.id))
 
+// A request the caller got wrong is 400, not 500. The status used to be chosen
+// by matching the message against a regular expression, so a reworded sentence
+// changed the code and any new message answered 500.
+const noUrl = await post('/gitfeed/api/feeds', {})
+ok(noUrl.status === 400 && /URL is required/.test(noUrl.body.error), 'an add with no URL is the caller\'s error', [noUrl.status, noUrl.body])
+const duplicate = await post('/gitfeed/api/feeds', { url: 'http://127.0.0.1:7797/feed-a.xml' })
+ok(duplicate.status === 400 && /already subscribed/.test(duplicate.body.error), 'so is a subscription that already exists', [duplicate.status, duplicate.body])
+const broken = await fetch('http://127.0.0.1:7797/gitfeed/api/mark', {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: '{not json',
+})
+ok(broken.status === 400, 'and a body that is not JSON', broken.status)
+
 // The data root: GITFEED_REPO answers before the row's `repo`, which is what
 // lets one machine read another checkout without editing the profile.
 const { resolveRoot } = await import(lib('host', 'settings.js'))

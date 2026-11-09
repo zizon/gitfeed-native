@@ -272,6 +272,12 @@ export function createJobRunner(options: JobRunnerOptions): JobRunner {
     return stopped
   }
 
+  /**
+   * A chain step whose result is answered elsewhere: the chain only orders
+   * runs, and each run's outcome goes to the caller that asked for it.
+   */
+  function chainStep(): void { /* the outcome is not the chain's */ }
+
   function stateFor(job: Job): JobState {
     const existing = states.get(job.id)
     if (existing) return existing
@@ -379,7 +385,7 @@ export function createJobRunner(options: JobRunnerOptions): JobRunner {
       return pass(runtime)
     }
     const run = runtime.chain.then(task, task)
-    runtime.chain = run.then(function () { }, function () { })
+    runtime.chain = run.then(chainStep, chainStep)
     return run.then(settle, settle)
     function settle(): void {
       runtime.queued -= 1
@@ -524,7 +530,7 @@ export function createJobRunner(options: JobRunnerOptions): JobRunner {
       return execute(runtime, clock(), scope)
     }
     const run = runtime.chain.then(task, task)
-    runtime.chain = run.then(function () { }, function () { })
+    runtime.chain = run.then(chainStep, chainStep)
     try {
       return await run
     } finally {

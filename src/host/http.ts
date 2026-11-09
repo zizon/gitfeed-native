@@ -3,7 +3,7 @@
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { GitfeedService } from './service.js'
-import { messageOf } from '../shared/errors.js'
+import { InputError, messageOf } from '../shared/errors.js'
 
 interface ApiBody {
   ids?: string[]
@@ -54,14 +54,14 @@ async function readBody(req: IncomingMessage): Promise<ApiBody> {
   for await (const chunk of req) {
     const buffer = chunk as Buffer
     size += buffer.length
-    if (size > MAX_BODY) throw new Error('request body too large')
+    if (size > MAX_BODY) throw new InputError('request body too large')
     chunks.push(buffer)
   }
   if (!chunks.length) return {}
   try {
     return JSON.parse(Buffer.concat(chunks).toString('utf8')) as ApiBody
   } catch {
-    throw new Error('invalid JSON body')
+    throw new InputError('invalid JSON body')
   }
 }
 
@@ -196,7 +196,9 @@ export function createHandler(service: GitfeedService) {
       // A client that went away is not an error to report to it; the response
       // is already unreachable.
       if (res.destroyed) return
-      const status = /too large|invalid JSON/.test(messageOf(err)) ? 400 : 500
+      // A request the caller got wrong is 400; anything else is the Host's.
+      // Decided on the type, so a reworded message cannot change the status.
+      const status = err instanceof InputError ? 400 : 500
       if (!res.headersSent) sendJson(res, status, { ok: false, error: messageOf(err) })
       else res.end()
     }

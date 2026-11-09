@@ -146,14 +146,11 @@ export function createEventsHandler(
     }
     // The one boundary a write's rejection has: the response it would be told
     // to no longer exists, so the reason goes to the log and the pull stops.
-    const send = async function (text: string): Promise<boolean> {
-      try {
-        await writeChunk(res, text, stop.signal)
-        return true
-      } catch (error) {
+    const send = function (text: string): Promise<boolean> {
+      return writeChunk(res, text, stop.signal).then(function () { return true }, function (error: unknown) {
         report(error)
         return false
-      }
+      })
     }
     req.on('close', function () { stop.abort() })
     res.on('error', function (error: Error) {
@@ -217,7 +214,7 @@ export function createEventsHandler(
       res.end()
       // The unwind's own failure is not news: the stream is already over, and
       // the source was handed a signal that told it so.
-      void iterator?.return?.(undefined).catch(function () { })
+      void iterator?.return?.(undefined).catch(function () { /* the stream is over; nothing left to fail */ })
     }
   }
 }

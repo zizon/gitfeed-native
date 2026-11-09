@@ -32,6 +32,11 @@
         "prefer-spread": "error",
         "prefer-template": "error",
         "no-array-constructor": "error",
+        // A handler with nothing in it is how a failure used to disappear. Both
+        // rules treat a comment as content, so the silence has to be explained
+        // in the body: `catch { /* the socket is already gone */ }`.
+        "no-empty": "error",
+        "no-empty-function": "error",
         "no-unused-expressions": "error",
         "no-unused-vars": [
           "error",

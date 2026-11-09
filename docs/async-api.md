@@ -157,3 +157,18 @@ like a stalled peer, and no queue in the request handler to get wrong again. The
 same shape then applies to the other directions: a query that nobody is waiting
 for is aborted rather than completed, and a caller that goes away takes its work
 with it.
+
+## Enforcement
+
+Two oxlint rules keep this shape from drifting back: `no-empty` and
+`no-empty-function`. Both treat a comment as content, so an empty `catch` or an
+empty `.catch(function () {})` now fails the lint unless its body says why. The
+silence has to be a decision someone wrote down, which is what the stream's write
+outcome was missing when it was a bare `false`.
+
+The same idea decides what a failure *is*. `InputError` (`shared/errors.ts`)
+marks the requests the caller got wrong — a missing field, an id that names
+nothing, a URL with no feed behind it — and the HTTP route answers 400 for the
+type and 500 for the rest. That status used to be chosen by matching the message
+against a regular expression, so rewording a sentence silently changed the status
+code, and any message nobody had taught the expression answered 500.

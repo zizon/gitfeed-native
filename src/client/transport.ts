@@ -563,7 +563,7 @@ export function createTransport(ports: TransportPorts): Transport {
   function star(id: string, on: boolean): Promise<void> {
     // The load that follows is what settles the version: the answer to the
     // star names the root, not the state this reader is holding.
-    return request('/star', { ids: [id], star: on }).then(function () { })
+    return request('/star', { ids: [id], star: on }).then(function () { /* the frame settles it */ })
   }
 
   async function addFeed(url: string, folder: string): Promise<boolean> {

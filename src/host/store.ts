@@ -33,11 +33,18 @@ const queues = new Map<string, Promise<void>>()
 function serialized<T>(file: string, task: () => Promise<T>): Promise<T> {
   const previous = queues.get(file) ?? Promise.resolve()
   const run = previous.then(task, task)
-  const tail = run.then(function () { }, function () { })
+  // The queue only orders writes; a failed write is answered to the caller that
+  // asked for it, so the tail carries no outcome of its own.
+  const tail = run.then(chainStep, chainStep)
   queues.set(file, tail)
-  void tail.then(function () { if (queues.get(file) === tail) queues.delete(file) })
+  void tail.then(forget, forget)
   return run
+
+  function forget(): void { /* the queue is forgotten, not reported */ }
 }
+
+/** A chain step whose result is answered elsewhere. */
+function chainStep(): void { /* the outcome is not the queue's */ }
 
 /**
  * Replace a file's contents in one step: write a sibling, then rename over it.

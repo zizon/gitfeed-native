@@ -114,8 +114,8 @@ ok(posted.status === 200 && posted.body.ok === true, 'POST /feeds/folder answers
 ok(posted.body.feed && posted.body.feed.folder === 'Clippings', 'with the entry it wrote', posted.body.feed)
 ok(entryOf('feed-b').folder === 'Clippings', 'and the file agrees with the answer', entryOf('feed-b').folder)
 const refused = await post('/feeds/folder', { id: 'nope', folder: 'Clippings' })
-ok(refused.status === 500 && refused.body.ok === false && /no such feed/.test(refused.body.error),
-  'the route reports a missing feed as an error the page can toast', refused)
+ok(refused.status === 400 && refused.body.ok === false && /no such feed/.test(refused.body.error),
+  'the route reports a missing feed as the caller\'s error, with a message the page can toast', refused)
 
 // --- the tool the agent calls ---
 const definitions = []

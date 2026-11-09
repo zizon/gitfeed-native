@@ -18,6 +18,7 @@ import { realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type { SourceKind } from '../shared/types.js'
+import { InputError } from '../shared/errors.js'
 import { textOf } from './xml.js'
 import type { ParsedItem } from './xml.js'
 
@@ -103,7 +104,7 @@ export function kindOf(entry: { type?: unknown }): SourceKind {
   const type = entry.type
   if (type === undefined || type === null || type === 'rss') return 'rss'
   if (type === 'custom') return 'custom'
-  throw new Error(`feed.type: expected rss or custom; got ${JSON.stringify(type)}`)
+  throw new InputError(`feed.type: expected rss or custom; got ${JSON.stringify(type)}`)
 }
 
 /**
@@ -117,14 +118,14 @@ export function kindOf(entry: { type?: unknown }): SourceKind {
 export function declarationOf(entry: { type?: unknown; script?: unknown; options?: unknown }): CustomDeclaration | null {
   if (kindOf(entry) === 'rss') {
     if (entry.script !== undefined && entry.script !== null) {
-      throw new Error('feed.script: only a custom feed has a script')
+      throw new InputError('feed.script: only a custom feed has a script')
     }
     return null
   }
   const script = typeof entry.script === 'string' ? entry.script.trim() : ''
-  if (!script) throw new Error('feed.script: a custom feed names a script in the data root')
-  if (!SCRIPT_SUFFIX.test(script)) throw new Error(`feed.script: ${JSON.stringify(script)} is not a .mjs file`)
-  if (path.isAbsolute(script)) throw new Error(`feed.script: ${JSON.stringify(script)} must be relative to the data root`)
+  if (!script) throw new InputError('feed.script: a custom feed names a script in the data root')
+  if (!SCRIPT_SUFFIX.test(script)) throw new InputError(`feed.script: ${JSON.stringify(script)} is not a .mjs file`)
+  if (path.isAbsolute(script)) throw new InputError(`feed.script: ${JSON.stringify(script)} must be relative to the data root`)
   return { script: script, options: entry.options }
 }
 
@@ -144,15 +145,15 @@ export async function scriptFile(root: string, script: string): Promise<string> 
   try {
     file = await realpath(wanted)
   } catch {
-    throw new Error(`custom feed: no script at ${wanted}`)
+    throw new InputError(`custom feed: no script at ${wanted}`)
   }
   const base = await realpath(root)
   const inside = path.relative(base, file)
   if (!inside || inside.startsWith('..') || path.isAbsolute(inside)) {
-    throw new Error(`custom feed: ${script} resolves outside ${root}`)
+    throw new InputError(`custom feed: ${script} resolves outside ${root}`)
   }
   const info = await stat(file)
-  if (!info.isFile()) throw new Error(`custom feed: ${wanted} is not a file`)
+  if (!info.isFile()) throw new InputError(`custom feed: ${wanted} is not a file`)
   return file
 }
 

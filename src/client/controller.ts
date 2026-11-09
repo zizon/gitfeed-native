@@ -295,7 +295,7 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     const request = transport.mark(clean, value, shown)
     // The transport already reconnected and told the reader what failed; most
     // callers are event handlers that never look at this promise.
-    request.catch(function () { })
+    request.catch(function () { /* reported by the transport */ })
     return request
   }
 
