@@ -2,6 +2,13 @@
 
 export type GroupBy = 'none' | 'folder' | 'feed'
 
+/**
+ * How a subscription's URL becomes items: an RSS/Atom document, or a script in
+ * the data root's `sources/` that produces a pseudo feed. `rss` is the default
+ * and needs no declaration.
+ */
+export type SourceKind = 'rss' | 'custom'
+
 export interface Item {
   id: string
   feed: string
@@ -20,6 +27,8 @@ export interface Feed {
   url: string | null
   error: string | null
   checkedAt: string | null
+  /** How the entry is fetched; absent on payloads from before custom sources. */
+  kind?: SourceKind
 }
 
 export interface ReaderPrefs {
@@ -72,4 +81,10 @@ export interface FeedEntry {
   title?: string | null
   folder?: string | null
   disabled?: boolean
+  /** `custom` reads this entry through a script; absent means an RSS/Atom feed. */
+  type?: string
+  /** The script's file name under the data root's `sources/`. */
+  script?: string
+  /** Handed to the script untouched. */
+  options?: unknown
 }

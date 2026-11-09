@@ -74,6 +74,12 @@ export interface FeedDefinition {
   url: string
   title: string | null
   folder: string | null
+  /** `custom` reads the entry through a script; absent means an RSS/Atom feed. */
+  type?: string
+  /** The script's file name under the data root's `sources/`. */
+  script?: string
+  /** Handed to the script untouched. */
+  options?: unknown
 }
 
 export interface FetchFeedOutcome {

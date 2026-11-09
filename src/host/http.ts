@@ -12,6 +12,10 @@ interface ApiBody {
   url?: string
   folder?: string
   id?: string
+  title?: string
+  type?: string
+  script?: string
+  options?: unknown
 }
 
 const PREFIX = '/gitfeed/api'
@@ -114,7 +118,10 @@ export function createHandler(service: GitfeedService) {
         return
       }
       if (route === '/feeds') {
-        const feed = await service.addFeed({ url: input.url, folder: input.folder })
+        const feed = await service.addFeed({
+          url: input.url, folder: input.folder, title: input.title,
+          type: input.type, script: input.script, options: input.options,
+        })
         sendJson(res, 200, { ok: true, feed: feed })
         return
       }

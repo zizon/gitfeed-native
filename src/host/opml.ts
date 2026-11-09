@@ -5,6 +5,7 @@
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { feedIdFor, normalizeUrl, readFeeds, writeFeeds } from './feeds.js'
+import type { FeedDefinition } from './types.js'
 import { attr, decodeEntities } from './xml.js'
 
 export interface OpmlEntry {
@@ -77,7 +78,7 @@ export async function importOpml(root: string, file: string, options?: { replace
   const xml = await readFile(path.resolve(file), 'utf8')
   const parsed = parseOpml(xml)
 
-  const existing = new Map<string, { id: string; url: string; title: string | null; folder: string | null }>()
+  const existing = new Map<string, FeedDefinition>()
   if (!replace) {
     for (const entry of await readFeeds(root)) {
       if (!entry.url) continue
@@ -86,7 +87,7 @@ export async function importOpml(root: string, file: string, options?: { replace
   }
 
   const seen = new Set<string>()
-  const feeds: Array<{ id: string; url: string; title: string | null; folder: string | null }> = []
+  const feeds: FeedDefinition[] = []
   let added = 0
   let updated = 0
   let duplicates = 0
@@ -112,12 +113,18 @@ export async function importOpml(root: string, file: string, options?: { replace
     } else {
       added++
     }
-    feeds.push({
+    const merged: FeedDefinition = {
       id: previous && previous.id ? previous.id : id,
       url: entry.url,
       title: entry.title || (previous ? previous.title : null),
       folder: entry.folder || (previous && previous.folder) || 'Uncategorized',
-    })
+    }
+    // An OPML import describes feeds, never a custom feed's script, so the
+    // declaration of an entry it re-describes has to survive the rewrite.
+    if (previous && previous.type !== undefined) merged.type = previous.type
+    if (previous && previous.script !== undefined) merged.script = previous.script
+    if (previous && previous.options !== undefined) merged.options = previous.options
+    feeds.push(merged)
   }
 
   // Merge mode keeps subscriptions the export does not mention.
@@ -129,7 +136,15 @@ export async function importOpml(root: string, file: string, options?: { replace
     } catch {
       continue
     }
-    feeds.push({ id: id, url: entry.url, title: entry.title || null, folder: entry.folder || 'Uncategorized' })
+    feeds.push({
+      id: id,
+      url: entry.url,
+      title: entry.title || null,
+      folder: entry.folder || 'Uncategorized',
+      type: entry.type,
+      script: entry.script,
+      options: entry.options,
+    })
     kept++
   }
 

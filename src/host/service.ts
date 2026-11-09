@@ -3,17 +3,18 @@
 
 import crypto from 'node:crypto'
 import { copyFile, mkdir, stat } from 'node:fs/promises'
-import { feedIdFor, normalizeUrl, readFeeds, resolveFeed, writeFeeds } from './feeds.js'
+import { feedIdFor, normalizeUrl, readFeeds, resolveFeed, sourceUrl, writeFeeds } from './feeds.js'
 import { loadRuntimeFeeds, runFetch } from './fetch.js'
 import { pull as pullRemote, readGitInfo, sync as syncRemote } from './git.js'
 import { createFetchJob, createSyncJob } from './jobs.js'
 import { createJobRunner } from './runner.js'
 import type { JobRunner, JobTimers } from './runner.js'
 import { pathsFor, readRepoConfig } from './settings.js'
+import { declarationOf, kindOf, scriptFile } from './custom.js'
 import { appendNdjson, listShards, readJson, readNdjson, updateNdjson } from './store.js'
 import type { FetchResult, GitActionResult, Logger, ReaderStateData, ReadyState, RepoConfig } from './types.js'
 import type { FeedDefinition } from './types.js'
-import type { GitInfo, Item } from '../shared/types.js'
+import type { GitInfo, Feed, Item, SourceKind } from '../shared/types.js'
 import { messageOf } from '../shared/errors.js'
 import { decodeEntities } from './xml.js'
 
@@ -182,6 +183,28 @@ export function createGitfeed(options: GitfeedOptions) {
     return statVersion(files)
   }
 
+  function snapshotFeed(f: FeedDefinition, m: MetaEntry): Feed {
+    let kind: SourceKind = 'rss'
+    try {
+      kind = kindOf(f)
+    } catch {
+      // A declaration this version cannot read is that feed's error to report,
+      // not the reader's: the fetch writes the complaint into meta.lastError and
+      // the row renders with it, instead of every /state call failing.
+      kind = 'rss'
+    }
+    return {
+      id: f.id,
+      title: m.title || f.title || f.id,
+      folder: f.folder || m.folder || null,
+      siteUrl: m.siteUrl || null,
+      url: f.url || m.url || null,
+      error: m.lastError || null,
+      checkedAt: m.checkedAt || null,
+      kind: kind,
+    }
+  }
+
   /** The item model, read from disk only when its own fingerprints moved. */
   async function buildItems(): Promise<{ version: string; items: Item[] }> {
     const shards = await itemShards()
@@ -251,18 +274,7 @@ export function createGitfeed(options: GitfeedOptions) {
     }
 
     const subscribed = await readFeeds(root)
-    const feeds = subscribed.map(function (f) {
-      const m = meta[f.id] || {}
-      return {
-        id: f.id,
-        title: m.title || f.title || f.id,
-        folder: f.folder || m.folder || null,
-        siteUrl: m.siteUrl || null,
-        url: f.url || m.url || null,
-        error: m.lastError || null,
-        checkedAt: m.checkedAt || null,
-      }
-    })
+    const feeds = subscribed.map(function (f) { return snapshotFeed(f, meta[f.id] || {}) })
 
     const data: ReaderStateData = {
       items: items,
@@ -451,14 +463,35 @@ export function createGitfeed(options: GitfeedOptions) {
 
   /**
    * Subscribe to a feed URL, or to a site URL whose feed is discovered.
-   * @param {{url?: string, folder?: string}} input subscription request.
+   *
+   * With a `source` declaration the URL is taken as given: the spec is the
+   * recipe, so there is no page to look for a feed tag on, and validation here
+   * is what discovery would have been.
+   * @param {{url?: string, folder?: string, title?: string, source?: unknown}} input subscription request.
    * @returns {Promise<object>} the new feed entry.
    */
-  async function addFeed(input: { url?: string; folder?: string } | null | undefined): Promise<FeedDefinition> {
+  async function addFeed(
+    input: {
+      url?: string
+      folder?: string
+      title?: string
+      type?: string
+      script?: string
+      options?: unknown
+    } | null | undefined,
+  ): Promise<FeedDefinition> {
     touch()
     const raw = (input?.url || '').trim()
     if (!raw) throw new Error('a feed or site URL is required')
-    const resolved = await resolveFeed(raw)
+    // A custom feed is its own recipe: validating the declaration is what
+    // discovery would have been, and the URL is taken as given.
+    const declared = declarationOf({ type: input?.type, script: input?.script, options: input?.options })
+    const resolved = declared === null
+      ? await resolveFeed(raw)
+      : { url: sourceUrl(raw), title: (input?.title || '').trim() || null, items: 0 }
+    // Resolved before the subscription exists: a missing script is a rejected
+    // add, not a red row the user has to unsubscribe from.
+    if (declared !== null) await scriptFile(root, declared.script)
 
     // The subscription list is read-modify-write, so the whole step queues
     // behind every other one: two subscribes at once would otherwise both read
@@ -479,6 +512,13 @@ export function createGitfeed(options: GitfeedOptions) {
 
       const folder = (input?.folder || '').trim() || 'Uncategorized'
       const added: FeedDefinition = { id: id, url: resolved.url, title: resolved.title || id, folder: folder }
+      // Stored as written: it stays readable in feeds.json, and the script is
+      // the user's, so it is never copied into the package.
+      if (declared !== null) {
+        added.type = 'custom'
+        added.script = declared.script
+        if (declared.options !== undefined) added.options = declared.options
+      }
       feeds.push(added)
       await writeFeeds(root, feeds)
       return added

@@ -87,6 +87,23 @@ export interface ResolvedFeed {
   items: number
 }
 
+/**
+ * The URL a custom feed is handed: it is taken as given, because the script —
+ * not feed discovery — decides what to do with it.
+ * @param raw configured URL.
+ * @returns the absolute URL.
+ */
+export function sourceUrl(raw: string): string {
+  let url: URL
+  try {
+    url = new URL((raw || '').trim())
+  } catch {
+    throw new Error('not a valid URL')
+  }
+  if (!/^https?:$/i.test(url.protocol)) throw new Error('only http(s) URLs are supported')
+  return url.href
+}
+
 export async function resolveFeed(rawUrl: string, depth?: number): Promise<ResolvedFeed> {
   const level = depth || 0
   if (level > 2) throw new Error('feed discovery loop')

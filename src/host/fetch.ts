@@ -9,6 +9,9 @@ import crypto from 'node:crypto'
 import path from 'node:path'
 import { readdir, unlink } from 'node:fs/promises'
 import { parseFeed } from './xml.js'
+import { declarationOf, runCustom, scriptFile } from './custom.js'
+import type { CustomDeclaration } from './custom.js'
+import type { ParsedFeed, ParsedItem } from './xml.js'
 import { pathsFor, readRepoConfig } from './settings.js'
 import { feedIdFor, slug } from './feeds.js'
 import { appendNdjson, ensureDir, listShards, readJson, readNdjson, updateNdjson, writeJson } from './store.js'
@@ -36,7 +39,12 @@ function itemId(feedId: string, key: string): string {
 
 function parseDate(raw: string | null | undefined, now: Date): Date | null {
   if (!raw) return null
-  const d = new Date(raw.trim())
+  const text = raw.trim()
+  // An API often publishes a Unix timestamp. Nine or ten digits are seconds,
+  // eleven to thirteen are milliseconds; a feed never sends a bare number.
+  const d = /^\d{9,13}$/.test(text)
+    ? new Date(Number(text) * (text.length <= 10 ? 1000 : 1))
+    : new Date(text)
   if (Number.isNaN(d.getTime())) return null
   const t = d.getTime()
   // Clamp nonsense: future timestamps and pre-web dates are treated as
@@ -93,6 +101,9 @@ async function runtimeEntries(root: string): Promise<RuntimeFeed[]> {
       url: entry.url,
       title: entry.title || null,
       folder: entry.folder || null,
+      type: entry.type,
+      script: entry.script,
+      options: entry.options,
       disabled: entry.disabled === true,
     })
   }
@@ -106,11 +117,7 @@ async function runtimeEntries(root: string): Promise<RuntimeFeed[]> {
  * @returns {Promise<Array<{id:string,url:string,title:string|null,folder:string|null}>>} runnable feeds.
  */
 export async function loadRuntimeFeeds(root: string): Promise<FeedDefinition[]> {
-  return (await runtimeEntries(root))
-    .filter(function (feed) { return !feed.disabled })
-    .map(function (feed) {
-      return { id: feed.id, url: feed.url, title: feed.title, folder: feed.folder }
-    })
+  return (await runtimeEntries(root)).filter(function (feed) { return !feed.disabled })
 }
 
 /**
@@ -128,13 +135,61 @@ function parseXml(text: string): boolean {
   return /<(rss|feed|rdf:RDF|channel)\b/i.test(head)
 }
 
+function parseRss(body: string): ParsedFeed {
+  if (!parseXml(body)) throw new Error('response is not an XML feed')
+  const parsed = parseFeed(body)
+  if (parsed.items.length === 0) throw new Error('no items in feed')
+  return parsed
+}
+
+/**
+ * Turn a feed's rows into archive rows: the id, the cascade for undated
+ * entries, and the field caps. Both the RSS path and a custom feed's script
+ * end here, which is why a script's output behaves like a feed's.
+ * @param feed the subscription the rows belong to.
+ * @param rows the parsed (or script-produced) entries.
+ * @param now the run's clock, for undated entries.
+ * @param cap `fetch.maxSummaryChars`; 0 keeps the body whole.
+ * @returns the rows to archive, in feed order.
+ */
+function toItems(feed: FeedDefinition, rows: ParsedItem[], now: Date, cap: number): Item[] {
+  const seen = new Set<string>()
+  const items: Item[] = []
+  for (let i = 0; i < rows.length; i++) {
+    const it = rows[i]
+    const key = it.guid || it.link || (`${it.title}|${it.date}`)
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+    // Feeds without dates would otherwise all land on the same timestamp.
+    // Cascade them by feed position, newest first.
+    const date = parseDate(it.date, now) || new Date(now.getTime() - i * 60000)
+    items.push({
+      id: itemId(feed.id, key),
+      feed: feed.id,
+      title: (it.title || '(untitled)').slice(0, 300),
+      link: it.link || '',
+      date: date.toISOString(),
+      // Some feeds put a profile URL in <author>; it renders as noise.
+      author: (it.author || '').replace(/https?:\/\/\S+/gi, '').replace(/\s+/g, ' ').trim().slice(0, 120),
+      summary: cap > 0 ? (it.summary || '').slice(0, cap) : (it.summary || ''),
+    })
+  }
+  return items
+}
+
 interface FetchOneResult {
   notModified?: boolean
   items?: Item[]
   meta: FeedMeta
 }
 
-async function fetchOne(feed: FeedDefinition, prev: FeedMeta | undefined, now: Date, settings: RepoConfig): Promise<FetchOneResult> {
+/**
+ * Read an RSS/Atom subscription: the conditional GET, the parse, and the
+ * feed-level metadata the response carries.
+ */
+async function fetchRss(
+  feed: FeedDefinition, prev: FeedMeta | undefined, now: Date, settings: RepoConfig, signal: AbortSignal,
+): Promise<FetchOneResult> {
   const headers: Record<string, string> = {
     'user-agent': UA,
     accept: 'application/rss+xml, application/atom+xml, application/xml;q=0.9, text/xml;q=0.8, */*;q=0.5',
@@ -143,66 +198,85 @@ async function fetchOne(feed: FeedDefinition, prev: FeedMeta | undefined, now: D
   if (prev && prev.etag) headers['if-none-match'] = prev.etag
   if (prev && prev.lastModified) headers['if-modified-since'] = prev.lastModified
 
+  const res = await fetch(feed.url, { headers: headers, redirect: 'follow', signal: signal })
+
+  if (res.status === 304) {
+    return {
+      notModified: true,
+      // A feed that answers 304 has recovered: the previous failure no longer
+      // describes it, and leaving it would keep the row red forever.
+      meta: Object.assign({}, prev, { checkedAt: now.toISOString(), status: 304, lastError: null }),
+    }
+  }
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+
+  const body = await res.text()
+  const parsed = parseRss(body)
+  return {
+    items: toItems(feed, parsed.items, now, settings.fetch.maxSummaryChars),
+    meta: {
+      title: parsed.title || feed.title || feed.id,
+      folder: feed.folder || null,
+      siteUrl: parsed.siteUrl || null,
+      etag: res.headers.get('etag') || null,
+      lastModified: res.headers.get('last-modified') || null,
+      checkedAt: now.toISOString(),
+      status: res.status,
+    },
+  }
+}
+
+/**
+ * Read a custom subscription: resolve its script, let it produce a pseudo feed,
+ * and hand that feed's rows to the same mapping an RSS feed runs through.
+ */
+async function fetchCustom(
+  feed: FeedDefinition, declaration: CustomDeclaration, prev: FeedMeta | undefined, now: Date,
+  settings: RepoConfig, root: string, signal: AbortSignal,
+): Promise<FetchOneResult> {
+  const file = await scriptFile(root, declaration.script)
+  const pseudo = await runCustom(file, {
+    id: feed.id,
+    url: feed.url,
+    title: feed.title,
+    options: declaration.options,
+    meta: {
+      etag: prev && prev.etag ? prev.etag : null,
+      lastModified: prev && prev.lastModified ? prev.lastModified : null,
+    },
+    fetch: globalThis.fetch,
+    signal: signal,
+  })
+  return {
+    items: toItems(feed, pseudo.items, now, settings.fetch.maxSummaryChars),
+    meta: {
+      title: pseudo.title || feed.title || feed.id,
+      folder: feed.folder || null,
+      siteUrl: pseudo.siteUrl || null,
+      // A script that did not revalidate keeps the validators it was handed;
+      // one that reports them stores what it reported.
+      etag: pseudo.etag === undefined ? (prev && prev.etag ? prev.etag : null) : pseudo.etag,
+      lastModified: pseudo.lastModified === undefined ? (prev && prev.lastModified ? prev.lastModified : null) : pseudo.lastModified,
+      checkedAt: now.toISOString(),
+      status: 200,
+    },
+  }
+}
+
+async function fetchOne(
+  feed: FeedDefinition, prev: FeedMeta | undefined, now: Date, settings: RepoConfig, root: string,
+): Promise<FetchOneResult> {
+  // Validated before anything is requested: a typo in a declaration is this
+  // feed's own error on its own row, and the run carries on.
+  const declaration: CustomDeclaration | null = declarationOf(feed)
   const controller = new AbortController()
   const timer = setTimeout(function () { controller.abort() }, settings.fetch.timeoutMs)
   // The deadline spans the body as well as the headers: a server that answers
   // and then stalls must not hold this feed's slot until the socket gives up.
+  // A custom feed's script gets the same clock as `signal`.
   try {
-    const res = await fetch(feed.url, { headers: headers, redirect: 'follow', signal: controller.signal })
-
-    if (res.status === 304) {
-      return {
-        notModified: true,
-        // A feed that answers 304 has recovered: the previous failure no
-        // longer describes it, and leaving it would keep the row red forever.
-        meta: Object.assign({}, prev, { checkedAt: now.toISOString(), status: 304, lastError: null }),
-      }
-    }
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-
-    const body = await res.text()
-    if (!parseXml(body)) throw new Error('response is not an XML feed')
-
-    const parsed = parseFeed(body)
-    if (parsed.items.length === 0) throw new Error('no items in feed')
-
-    const seen = new Set<string>()
-    const items: Item[] = []
-    // Zero is the default and keeps the feed's body whole; a positive setting is
-    // a deliberate cap for archives that must stay small.
-    const cap = settings.fetch.maxSummaryChars
-    for (let i = 0; i < parsed.items.length; i++) {
-      const it = parsed.items[i]
-      const key = it.guid || it.link || (`${it.title}|${it.date}`)
-      if (!key || seen.has(key)) continue
-      seen.add(key)
-      // Feeds without dates would otherwise all land on the same timestamp.
-      // Cascade them by feed position, newest first.
-      const date = parseDate(it.date, now) || new Date(now.getTime() - i * 60000)
-      items.push({
-        id: itemId(feed.id, key),
-        feed: feed.id,
-        title: (it.title || '(untitled)').slice(0, 300),
-        link: it.link || '',
-        date: date.toISOString(),
-        // Some feeds put a profile URL in <author>; it renders as noise.
-        author: (it.author || '').replace(/https?:\/\/\S+/gi, '').replace(/\s+/g, ' ').trim().slice(0, 120),
-        summary: cap > 0 ? (it.summary || '').slice(0, cap) : (it.summary || ''),
-      })
-    }
-
-    return {
-      items: items,
-      meta: {
-        title: parsed.title || feed.title || feed.id,
-        folder: feed.folder || null,
-        siteUrl: parsed.siteUrl || null,
-        etag: res.headers.get('etag') || null,
-        lastModified: res.headers.get('last-modified') || null,
-        checkedAt: now.toISOString(),
-        status: res.status,
-      },
-    }
+    if (declaration !== null) return await fetchCustom(feed, declaration, prev, now, settings, root, controller.signal)
+    return await fetchRss(feed, prev, now, settings, controller.signal)
   } finally {
     clearTimeout(timer)
   }
@@ -228,9 +302,9 @@ async function pool<T, R>(list: T[], limit: number, worker: (item: T, index: num
 
 type FeedRun = ({ feed: FeedDefinition; error: string } | ({ feed: FeedDefinition } & FetchOneResult))
 
-async function runFeed(feed: FeedDefinition, prev: FeedMeta | undefined, now: Date, settings: RepoConfig): Promise<FeedRun> {
+async function runFeed(feed: FeedDefinition, prev: FeedMeta | undefined, now: Date, settings: RepoConfig, root: string): Promise<FeedRun> {
   try {
-    const result = await fetchOne(feed, prev, now, settings)
+    const result = await fetchOne(feed, prev, now, settings, root)
     return Object.assign({ feed: feed }, result)
   } catch (err) {
     const failure = err as { message?: unknown } | null
@@ -374,7 +448,7 @@ export async function runFetch(options: FetchOptions): Promise<FetchResult> {
   const results = await pool(feeds, settings.fetch.concurrency, function (feed) {
     // `refresh` drops the validators so every feed answers with a body; the
     // second pass over known ids is what repairs summaries a smaller cap cut.
-    return runFeed(feed, refresh ? undefined : meta[feed.id], now, settings)
+    return runFeed(feed, refresh ? undefined : meta[feed.id], now, settings, root)
   })
 
   const floor = cutoffKey(now, settings.fetch.keepMonths)
