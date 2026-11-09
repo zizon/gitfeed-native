@@ -448,41 +448,44 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
       <div
         key={entry.key}
         className={`gf-row${unread ? ' unread' : ''}${state.current === item.id ? ' active' : ''}${state.fresh.has(item.id) ? ' gf-row-in' : ''}${gone}`}
-        role="button"
-        tabIndex={-1}
-        aria-current={state.current === item.id ? 'true' : undefined}
-        onClick={function () { controller.select(item.id) }}
       >
-        <div className="gf-row-title">
-          {unread ? <span className="gf-dot" aria-hidden="true" /> : null}
-          <span className="t">{item.title || '(untitled)'}</span>
-          {/* The star is an action on the row, not a way into it: it sits on
-              every row so an item can be kept without opening the article,
-              and it holds its space so the title never re-wraps on hover. */}
-          <span className={`gf-row-actions${starred ? ' on' : ''}`}>
-            <IconButton
-              icon={<IconStar filled={starred} size={13} />}
-              label={starred ? t('action.unstar') : t('action.star')}
-              small
-              active={starred}
-              // The rows are reached with j/k, not the tab key; a tab stop per
-              // row would put hundreds of them between the reader and the
-              // controls that are actually tabbed to.
-              tabIndex={-1}
-              onClick={function (event) {
-                event.stopPropagation()
-                controller.toggleStar(item.id)
-              }}
-            />
+        {/* The row is the container; the row's own target is the button, so the
+            star beside it is never announced as part of the row's name. */}
+        <button
+          type="button"
+          className="gf-row-main"
+          tabIndex={-1}
+          aria-current={state.current === item.id ? 'true' : undefined}
+          onClick={function () { controller.select(item.id) }}
+        >
+          <span className="gf-row-title">
+            {unread ? <span className="gf-dot" aria-hidden="true" /> : null}
+            <span className="t">{item.title || '(untitled)'}</span>
           </span>
-        </div>
-        <div className="gf-row-meta">
-          {/* Every row under a source section would repeat the name the sticky
-              header already carries; only an ungrouped list needs it per row. */}
-          {groupBy === 'feed' ? null : <span className="feed-name">{controller.feedTitle(item.feed)}</span>}
-          <span className="when">{fmtTime(item.date)}</span>
-        </div>
-        {digest ? <div className="gf-row-digest">{digest}</div> : null}
+          <span className="gf-row-meta">
+            {/* Every row under a source section would repeat the name the sticky
+                header already carries; only an ungrouped list needs it per row. */}
+            {groupBy === 'feed' ? null : <span className="feed-name">{controller.feedTitle(item.feed)}</span>}
+            <span className="when">{fmtTime(item.date)}</span>
+          </span>
+          {digest ? <span className="gf-row-digest">{digest}</span> : null}
+        </button>
+        {/* The star is an action on the row, not a way into it: it sits on
+            every row so an item can be kept without opening the article, and
+            it holds its space so the title never re-wraps on hover. */}
+        <span className={`gf-row-actions${starred ? ' on' : ''}`}>
+          <IconButton
+            icon={<IconStar filled={starred} size={13} />}
+            label={starred ? t('action.unstar') : t('action.star')}
+            small
+            active={starred}
+            // The rows are reached with j/k, not the tab key; a tab stop per
+            // row would put hundreds of them between the reader and the
+            // controls that are actually tabbed to.
+            tabIndex={-1}
+            onClick={function () { controller.toggleStar(item.id) }}
+          />
+        </span>
       </div>
     )
   })

@@ -355,12 +355,29 @@ export const CSS = `
 .gf-row {
   height: 66px;
   display: flex;
+  align-items: flex-start;
+  padding: 4px 12px 4px 0;
+  cursor: pointer;
+  user-select: none;
+}
+/* The row's target: title, meta and digest, with the star beside it. The
+   content is centred in the row, and the star's 20px box starts at the same
+   4px the title line does, so the two stay on one line. */
+.gf-row-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  display: flex;
   flex-direction: column;
   justify-content: center;
   gap: 2px;
-  padding: 4px 12px;
+  padding: 0 0 0 12px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
   cursor: pointer;
-  user-select: none;
 }
 .gf-listpane.rows-plain .gf-row { height: 46px; }
 .gf-row.active { background: var(--dsw-alias-interactive-bg-active); }

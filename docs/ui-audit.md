@@ -136,13 +136,13 @@ Proposal: the row becomes a plain container; the name is its own button and the
 actions are siblings. That is the app's own list-row shape, and it changes what
 a screen reader announces, so it is its own commit.
 
-**Landed for the rail.** Feed rows, folder headers, `All items` and `Add feed`
-are containers whose name is a button of their own, with the row's actions as
-siblings. The live tree now reads `button "V2EX"`, `button "Move to folder:
+**Landed.** Feed rows, folder headers, `All items` and `Add feed` are
+containers whose name is a button of their own, with the row's actions as
+siblings; the live tree then read `button "V2EX"`, `button "Move to folder:
 V2EX"`, `button "Mark source read: V2EX"`, `button "Unsubscribe: V2EX"` instead
-of one row named after all four. Still open: the item row's star sits inside the
-row's button, so the same shape lands there when that row's title line is
-re-laid-out.
+of one row named after all four. The item row is the same shape now: the title,
+meta and digest are the row's button, and the star sits beside it, so the row's
+name is what it says and the star is announced on its own.
 
 ### F9. Two toast hosts for one banner *(low, inspected, kept)*
 
