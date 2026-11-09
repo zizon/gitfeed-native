@@ -15,6 +15,7 @@ import type { FetchResult, GitActionResult, Logger, ReaderStateData, ReadyState,
 import type { FeedDefinition } from './types.js'
 import type { GitInfo, Item } from '../shared/types.js'
 import { messageOf } from '../shared/errors.js'
+import { decodeEntities } from './xml.js'
 
 /** A local mark is pushed after this much quiet, so scrolling marks coalesce. */
 const AUTO_SYNC_DEBOUNCE_MS = 20000
@@ -57,17 +58,11 @@ interface ListToolInput {
   limit?: unknown
 }
 
+/** A feed body as plain text, stripped first and decoded with the parser's own
+ * table: the agent's search then finds the same `&mdash;` and numeric
+ * references the reader's search does. */
 function plainText(html: string | null | undefined): string {
-  return (html || '')
-    .replace(/<[^>]*>/g, ' ')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'")
-    .replace(/\s+/g, ' ')
-    .trim()
+  return decodeEntities((html || '').replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim()
 }
 
 function checkedIds(ids: unknown): string[] {

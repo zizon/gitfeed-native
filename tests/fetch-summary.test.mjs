@@ -179,4 +179,37 @@ function root(extra = {}) {
   removeRoot(dir)
 }
 
+// 7. A title that carries escaped markup keeps it. Decoding before stripping
+// turned `&lt;div&gt;` into a tag and then deleted it with its text.
+{
+  const dir = root()
+  stubFetch(rss('<p>body</p>').replace('<title>One post</title>', '<title>Using &lt;div&gt; as a box</title>'))
+  await runFetch({ root: dir })
+  const row = readRows(shardFile(dir).file).find((candidate) => candidate.id !== undefined)
+  ok(row && row.title === 'Using <div> as a box', 'a title keeps escaped markup as text', row && row.title)
+  removeRoot(dir)
+}
+
+// 8. A body that mixes CDATA with escaped text: the CDATA is literal markup and
+// the text around it is still decoded.
+{
+  const dir = root()
+  const mixed = `<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0"><channel>
+  <title>Mixed</title>
+  <item>
+    <title>Mixed body</title>
+    <guid>mixed-1</guid>
+    <pubDate>${new Date().toUTCString()}</pubDate>
+    <description><![CDATA[<p>literal &amp; kept</p>]]> between &amp; after</description>
+  </item>
+</channel></rss>`
+  stubFetch(mixed)
+  await runFetch({ root: dir })
+  const row = readRows(shardFile(dir).file).find((candidate) => candidate.id !== undefined)
+  ok(row && row.summary.includes('<p>literal &amp; kept</p>'), 'CDATA keeps its markup untouched', row && row.summary)
+  ok(row && row.summary.includes('between & after'), 'and the escaped text around it is decoded', row && row.summary)
+  removeRoot(dir)
+}
+
 finish()

@@ -37,19 +37,29 @@ export function stripCdata(input: string): string {
 }
 
 // Raw element body -> display string. CDATA is literal (already HTML), plain
-// text is entity-decoded.
+// text is entity-decoded; in a body that mixes the two, only the text outside
+// the CDATA sections is decoded.
 export function unwrap(raw: string | null | undefined): string {
   if (raw == null) return ''
   const s = raw.trim()
-  if (s.indexOf('<![CDATA[') !== -1) return stripCdata(s).trim()
-  return decodeEntities(s).trim()
+  if (s.indexOf('<![CDATA[') === -1) return decodeEntities(s).trim()
+  return s
+    .split(/(<!\[CDATA\[[\s\S]*?\]\]>)/)
+    .map(function (part) {
+      if (part.startsWith('<![CDATA[')) return part.slice(9, -3)
+      return decodeEntities(part)
+    })
+    .join('')
+    .trim()
 }
 
-// Raw element body -> plain text with markup removed.
+// Raw element body -> plain text with markup removed. The strip comes first:
+// decoding first would turn escaped markup such as `&lt;b&gt;` into a tag, and
+// the strip would then delete it together with the text it wrapped.
 export function textOf(raw: string | null | undefined): string {
   if (raw == null) return ''
-  const s = decodeEntities(stripCdata(raw))
-  return s.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
+  const s = stripCdata(raw).replace(/<[^>]*>/g, ' ')
+  return decodeEntities(s).replace(/\s+/g, ' ').trim()
 }
 
 export interface Tag {

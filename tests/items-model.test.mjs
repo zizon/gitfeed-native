@@ -134,6 +134,37 @@ ok(listed.items.length === 3, 'the agent tool still lists rows')
   removeRoot(bulkRoot)
 }
 
+// The agent's search decodes with the parser's own table, so a body is findable
+// by the character it renders as rather than only by its source bytes.
+{
+  const entityRoot = makeDataRoot({
+    feeds: [{ id: 'feed-entity', url: 'https://example.com/e.xml', title: 'Entity' }],
+    items: [{
+      id: 'entity-1',
+      feed: 'feed-entity',
+      title: 'Dash',
+      link: 'https://example.com/e/1',
+      date: '2026-11-01T00:00:00.000Z',
+      author: '',
+      summary: '<p>a &mdash; b &amp; c</p>',
+    }],
+  })
+  const entityService = createGitfeed({
+    root: entityRoot,
+    logger: log,
+    timers: nodeTimers(),
+    allowGit: false,
+    refreshMinutes: 0,
+    syncMinutes: 0,
+  })
+  const hits = await entityService.listForTool({ query: 'a \u2014 b' })
+  ok(hits.items.length === 1, 'the agent search finds a body by the character it renders as', hits.items.length)
+  const one = await entityService.getForTool('entity-1')
+  ok(one.summary === 'a \u2014 b & c', 'and the excerpt is the text, decoded', one.summary)
+  entityService.dispose()
+  removeRoot(entityRoot)
+}
+
 service.dispose()
 removeRoot(root)
 finish()
