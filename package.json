@@ -79,6 +79,6 @@
     "typescript": "6.0.3"
   },
   "bin": {
-    "gitfeed": "./bin/gitfeed.mjs"
+    "gitfeed": "bin/gitfeed.mjs"
   }
 }

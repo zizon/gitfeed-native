@@ -42,6 +42,15 @@ const copies = sources.filter((name) => {
 })
 ok(copies.length === 0, 'no module keeps its own error-message helper', copies)
 
+// A bin path npm accepts: it normalizes `bin/*` and silently drops anything
+// else at publish time, which is how a released package lost its CLI while the
+// repository still advertised one.
+const pkg = JSON.parse(readFileSync(path.join(repoRoot, 'package.json'), 'utf8'))
+for (const [name, target] of Object.entries(pkg.bin || {})) {
+  ok(target === pkg.bin[name].replace(/^\.\//, '') && !target.startsWith('/'),
+    `${name} is a package-relative bin path`, target)
+}
+
 const { messageOf } = await import(lib('shared', 'errors.js'))
 ok(messageOf(new Error('  boom ')) === 'boom', 'an Error contributes its trimmed message')
 ok(messageOf(' plain ') === 'plain', 'a thrown string contributes itself')
