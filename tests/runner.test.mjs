@@ -238,4 +238,26 @@ ok(archiveRun.ok === true, 'the sync with a rewritten shard settles')
 ok(git('-C', work, 'status', '--porcelain').trim() === '', 'sync stages the item shards and leaves no dirt')
 ok(!git('-C', work, 'show', 'HEAD:data/items/2026-11.ndjson').includes('i2'), 'the removed row is committed')
 
+// ---------- a first commit needs an ignore file ----------
+// `add -A` on a root with no .gitignore would commit `.local/`, the whole
+// machine-local refresh cache, into the data repository.
+const rootG = mkdtempSync(path.join(tmpdir(), 'gitfeed-baseline-'))
+const originG = path.join(rootG, 'origin.git')
+const workG = path.join(rootG, 'work')
+git('init', '--bare', '-b', 'main', originG)
+git('init', '-b', 'main', workG)
+for (const [k, v] of [['user.name', 'Test'], ['user.email', 'test@example.com']]) {
+  git('-C', workG, 'config', k, v)
+}
+writeFileSync(path.join(workG, 'feeds.json'), JSON.stringify({ feeds: [] }))
+git('-C', workG, 'remote', 'add', 'origin', originG)
+const blocked = await sync(workG)
+ok(blocked.ok === false && /\.gitignore/.test(blocked.error || ''), 'a first commit refuses to sweep the cache in', blocked.error)
+writeFileSync(path.join(workG, '.gitignore'), '.local/\n*.tmp\n')
+const allowed = await sync(workG)
+ok(allowed.ok === true, 'with an ignore file the baseline commit goes ahead', allowed.error)
+// This root has no data/read.ndjson: staging it anyway would fail the pathspec.
+const minimal = await sync(workG)
+ok(minimal.ok === true, 'a root without the state files still syncs', minimal.error)
+
 finish()

@@ -61,7 +61,10 @@ export async function readGitInfo(root: string): Promise<GitInfo> {
     } catch {
       // An empty repository has no commit to name.
     }
-    const dirty = (await runGit(root, ['status', '--porcelain', '--', 'data', 'feeds.json', 'config.json'])).trim().length > 0
+    // `--no-optional-locks` keeps this probe out of the index: without it a
+    // status can take index.lock while the sync job is staging, and the loser
+    // reports the checkout as no repository at all.
+    const dirty = (await runGit(root, ['--no-optional-locks', 'status', '--porcelain', '--', 'data', 'feeds.json', 'config.json'])).trim().length > 0
     const remotes = (await runGit(root, ['remote'])).trim().split('\n').filter(Boolean)
     let ahead = 0
     let behind = 0
@@ -124,15 +127,23 @@ export async function sync(root: string): Promise<GitActionResult> {
     if (hasHead) {
       // Item shards are staged because unsubscribing rewrites them: an
       // unstated deletion leaves the worktree dirty forever and every later
-      // sync run rebases for a change it will never commit. Only staged when
-      // the archive exists, because a pathspec that matches nothing is fatal.
+      // sync run rebases for a change it will never commit. Each path is staged
+      // only when it exists, because a pathspec that matches nothing is fatal
+      // and a hand-made root need not carry every file.
       const targets = ['data/read.ndjson', 'data/starred.ndjson', 'feeds.json', 'config.json']
+        .filter(function (rel) { return existsSync(path.join(root, rel)) })
       if (hasShards(path.join(root, 'data', 'items'))) targets.unshift('data/items')
-      await runGit(root, ['add', '--'].concat(targets))
+      if (targets.length) await runGit(root, ['add', '--'].concat(targets))
       for (const extra of ['.gitattributes', '.gitignore']) {
         if (existsSync(path.join(root, extra))) await runGit(root, ['add', '--', extra])
       }
     } else {
+      // The first commit takes the whole tree, and `add -A` would sweep
+      // `.local/` — the machine-local cache — into the data repository when
+      // there is no ignore file to stop it.
+      if (!existsSync(path.join(root, '.gitignore'))) {
+        throw new Error(`gitfeed: ${root} has no .gitignore, so a first commit would include .local/ (the refresh cache) — add one, then Sync again`)
+      }
       await runGit(root, ['add', '-A'])
     }
     let staged = ''
