@@ -16,7 +16,6 @@ import {
   feedFolder,
   feedTitle,
   groupKey,
-  haystackOf,
   listOf,
   markCountsOf,
 } from './derive.js'
@@ -36,8 +35,6 @@ import type {
   ReaderUi,
 } from './types.js'
 import { clamp, digestText } from './util.js'
-
-const plainCache = new Map<string, string>()
 
 export function createController(t: Translate, prefs: PrefsStore): Controller {
   const saved = prefs.getSnapshot()
@@ -69,6 +66,7 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
   let ui: ReaderUi = {
     filter: 'unread',
     query: '',
+    searchIds: null,
     feedId: null,
     current: null,
     groupBy: savedGroupBy,
@@ -92,6 +90,11 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
   let toastTimer: ReturnType<typeof setTimeout> | null = null
   /** The last explicit scope mark, so a too-wide action can be taken back. */
   let lastScopeMark: string[] | null = null
+  /**
+   * Which query the Host is answering. Only the newest answer may be applied:
+   * a slower earlier one would list rows for text the reader already changed.
+   */
+  let searchSeq = 0
   /**
    * Whether the list is scrolled into the archive. The transport asks before it
    * lets a refresh put rows where the reader is looking; it is not published,
@@ -139,10 +142,15 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     toast: toast,
     titleOf: function (id: string) { return feedTitle(data.feedMap, id) },
     scrolled: function () { return scrolled },
+    refilter: function () {
+      // The model moved under a query: ask again for the text the reader left
+      // in the box, so a row a refresh brought in is searchable at once.
+      const needle = ui.query.trim()
+      if (needle) searchFor(needle)
+    },
     resetText: function () {
-      // A new item model can change a summary without changing its length, so
-      // both caches go together.
-      plainCache.clear()
+      // The digest cache is the one text cache the reader still owns: search
+      // is the Host's answer now, not text this half derives.
       digestCache.clear()
     },
     t: t,
@@ -183,6 +191,7 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
       feeds: data.feedMap,
       filter: ui.filter,
       query: ui.query,
+      searchIds: ui.searchIds,
       feedId: ui.feedId,
       stickyRead: transport.sticky,
       heldArrivals: transport.held,
@@ -195,26 +204,37 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     // changed read/star set. The state version is not part of the key, because
     // it also moves for git and schedule polling, and rebuilding the rows for
     // those would hand the list a fresh array on every quiet refresh.
+    // The epoch covers every rebuild the rows can see: a new item model, a
+    // changed read/star set, or a fresh answer from the Host's search. The
+    // state version is not part of the key, because it also moves for git and
+    // schedule polling, and rebuilding the rows for those would hand the list
+    // a fresh array on every quiet refresh.
     const key = [ui.filter, ui.query, ui.feedId || '', ui.listEpoch].join('\u0000')
     if (listCache.key !== key) {
-      listCache = { key: key, items: listOf(view(), searchHay) }
+      listCache = { key: key, items: listOf(view()) }
     }
     return listCache.items
   }
 
-  function searchHay(item: Item): string {
-    // The source's name is part of the text being searched, so it is part of
-    // the key: a feed that renamed itself upstream would otherwise keep
-    // matching the name it used to have.
-    const source = feedTitle(data.feedMap, item.feed)
-    const key = `${item.id}:${item.summary ? item.summary.length : 0}:${source}`
-    let text = plainCache.get(key)
-    if (text === undefined) {
-      text = haystackOf(item, source)
-      if (plainCache.size > 4000) plainCache.clear()
-      plainCache.set(key, text)
-    }
-    return text
+  /**
+   * Ask the Host for the rows the query matches. The bodies are the Host's:
+   * the reader carries what the list draws, not what it searches.
+   * @param needle - the trimmed query.
+   */
+  function searchFor(needle: string): void {
+    const seq = ++searchSeq
+    transport.search(needle).then(function (ids) {
+      // A newer query was typed while this one was answered.
+      if (seq !== searchSeq) return
+      if (ui.query.trim() !== needle) return
+      setUi({ searchIds: new Set(ids) })
+      bumpList()
+    }).catch(function (err: unknown) {
+      if (seq !== searchSeq) return
+      toast(t('toast.failed', { error: messageOf(err) }), true)
+      setUi({ searchIds: new Set() })
+      bumpList()
+    })
   }
 
   function digestOf(item: Item): string {
@@ -289,13 +309,13 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
    * list, so a row a refresh is holding still counts as something to read.
    */
   function countInView(): number {
-    const query = ui.query.trim().toLowerCase()
+    const query = ui.query.trim()
     let n = 0
     for (const item of data.items) {
       if (ui.feedId && item.feed !== ui.feedId) continue
       if (ui.filter === 'unread' && data.read.has(item.id)) continue
       if (ui.filter === 'starred' && !data.starred.has(item.id)) continue
-      if (query && searchHay(item).indexOf(query) === -1) continue
+      if (query && !(ui.searchIds && ui.searchIds.has(item.id))) continue
       n++
     }
     return n
@@ -353,6 +373,14 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     const next = query || ''
     if (next !== ui.query) clearSticky()
     setUi({ query: next })
+    const needle = next.trim()
+    if (needle) {
+      searchFor(needle)
+      return
+    }
+    // An empty box is the whole view again, and no answer is pending for it.
+    searchSeq += 1
+    if (ui.searchIds) setUi({ searchIds: null })
   }
 
   function move(offset: number): void {
@@ -416,7 +444,8 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     // Clearing the scope is a scope change like any other: the rows the old
     // scope kept reachable go with it.
     if (ui.query || ui.feedId) clearSticky()
-    setUi({ query: '', feedId: null })
+    searchSeq += 1
+    setUi({ query: '', feedId: null, searchIds: null })
   }
 
   /**

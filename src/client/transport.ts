@@ -24,29 +24,8 @@ interface ApiResponse {
   output?: string
   version?: string
   feed?: ApiFeed
-}
-
-interface StateResponse {
-  unchanged?: boolean
-  error?: string
-  version?: string
-  itemsVersion?: string
-  itemsUnchanged?: boolean
-  items?: Item[]
-  feeds?: Feed[]
-  read?: string[]
-  starred?: string[]
-  reader?: ReaderPrefs
-  git?: GitInfo | null
-  schedule?: ScheduleJobInfo[]
-  repo?: string
-  allowGit?: boolean
-}
-
-function sameSet(current: Set<string>, next: Set<string>): boolean {
-  if (current.size !== next.size) return false
-  for (const id of next) if (!current.has(id)) return false
-  return true
+  /** Ids one query matched, in archive order. */
+  ids?: string[]
 }
 
 /** Failed stream attempts before the HTTP path takes over for a while. */
@@ -68,6 +47,11 @@ export interface TransportPorts {
   titleOf(feedId: string): string
   /** Whether the list is scrolled into the archive rather than sitting at its top. */
   scrolled(): boolean
+  /**
+   * The item model moved: a text filter the Host answered may be stale, and the
+   * surface's query is the Host's to answer.
+   */
+  refilter(): void
   /** Drop the row text a new item model invalidates. */
   resetText(): void
   t: Translate
@@ -81,6 +65,8 @@ export interface Transport {
   removeFeed: (id: string) => Promise<boolean>
   setFeedFolder: (id: string, folder: string) => Promise<boolean>
   runAction: (name: string) => Promise<void>
+  /** Ask the Host which rows match a query; empty when the query is blank. */
+  search: (query: string) => Promise<string[]>
   mount: () => void
   unmount: () => void
   dispose: () => void
@@ -125,8 +111,6 @@ export function createTransport(ports: TransportPorts): Transport {
    */
   const heldArrivals = new Set<string>()
 
-  let loadPromise: Promise<void> | null = null
-  let pollTimer: ReturnType<typeof setInterval> | null = null
   let flushTimer: ReturnType<typeof setTimeout> | null = null
   let freshTimer: ReturnType<typeof setTimeout> | null = null
   let visibilityHandler: (() => void) | null = null
@@ -236,116 +220,32 @@ export function createTransport(ports: TransportPorts): Transport {
       listEpoch: ui().listEpoch + 1,
     })
     if (fresh.size) armFresh()
+    // A fuller model can match a text filter the Host answered a moment ago.
+    ports.refilter()
   }
 
   /**
-   * Ask the Host for its state over HTTP. The stream is the normal path; this
-   * is what a surface uses when it cannot stream, and what fills the gap while
-   * a stream is reconnecting.
-   * @param options - `force` ignores the versions held, asking for a full payload.
-   */
-  function loadHttp(options?: { force?: boolean }): Promise<void> {
-    if (disposed) return Promise.resolve()
-    if (loadPromise) return loadPromise
-    const force = options?.force === true
-    loadPromise = (async function () {
-      const before = data()
-      if (!before.loadedOnce) ports.setData({ status: 'loading' })
-      const params: string[] = []
-      if (!force && before.version) params.push(`version=${encodeURIComponent(before.version)}`)
-      if (before.itemsVersion) params.push(`itemsVersion=${encodeURIComponent(before.itemsVersion)}`)
-      const url = `${PREFIX}/state${params.length ? `?${params.join('&')}` : ''}`
-      const res = await fetch(url, { cache: 'no-store', credentials: 'same-origin' })
-      let payload: StateResponse
-      try {
-        payload = (await res.json()) as StateResponse
-      } catch {
-        throw new Error(`HTTP ${res.status}`)
-      }
-      if (!res.ok) throw new Error(payload.error || `HTTP ${res.status}`)
-      if (payload.unchanged) {
-        ports.setData({
-          status: 'ready',
-          error: null,
-          loadedOnce: true,
-          git: payload.git || data().git,
-          schedule: Array.isArray(payload.schedule) ? payload.schedule : data().schedule,
-          repo: payload.repo || data().repo,
-          allowGit: payload.allowGit !== false,
-        })
-        return
-      }
-      if (payload.error) {
-        ports.setData({
-          status: 'error',
-          error: payload.error,
-          loadedOnce: true,
-          version: payload.version || null,
-          git: payload.git || null,
-          schedule: Array.isArray(payload.schedule) ? payload.schedule : [],
-        })
-        return
-      }
-      // Rows travel only with the item model they belong to. A payload without
-      // them is usable just when it names the model this reader already holds;
-      // anything else means a mid-update race, so ask again from scratch.
-      const replaceItems = Array.isArray(payload.items)
-      if (!replaceItems && payload.itemsVersion !== data().itemsVersion) {
-        setTimeout(function () { loadHttp({ force: true }).catch(function () { }) }, 0)
-        return
-      }
-      if (replaceItems) {
-        commitModel(payload.items as Item[], payload)
-        return
-      }
-      // The rows are the ones already held: only the marks and facts moved.
-      const read = new Set<string>(Array.isArray(payload.read) ? payload.read : data().read)
-      const starred = new Set<string>(Array.isArray(payload.starred) ? payload.starred : data().starred)
-      const feeds: Feed[] = Array.isArray(payload.feeds) ? payload.feeds : data().feeds
-      const feedMap = new Map<string, Feed>(feeds.map(function (feed): [string, Feed] { return [feed.id, feed] }))
-      const changed = !sameSet(data().read, read) || !sameSet(data().starred, starred)
-      ports.commit({
-        status: 'ready',
-        error: null,
-        loadError: null,
-        loadedOnce: true,
-        itemsVersion: payload.itemsVersion || data().itemsVersion,
-        feeds: feeds,
-        feedMap: feedMap,
-        read: read,
-        starred: starred,
-        reader: payload.reader || data().reader,
-        git: payload.git || null,
-        schedule: Array.isArray(payload.schedule) ? payload.schedule : [],
-        version: payload.version || null,
-        repo: payload.repo || data().repo,
-        allowGit: payload.allowGit !== false,
-      }, {
-        listEpoch: changed ? ui().listEpoch + 1 : ui().listEpoch,
-      })
-    })().catch(function (err: unknown) {
-      const text = messageOf(err)
-      if (data().loadedOnce) {
-        ports.setData({ loadError: text })
-        ports.toast(t('toast.failed', { error: text }), true)
-      } else {
-        ports.setData({ status: 'error', error: text, loadError: text, loadedOnce: true })
-      }
-    }).finally(function () {
-      loadPromise = null
-    })
-    return loadPromise
-  }
-
-  /**
-   * Make sure the reader is current. With a stream open there is nothing to
-   * ask: the Host announces what changed.
-   * @param options - `force` reloads the whole state over HTTP.
+   * Make sure the reader is current. There is no state request to make: the
+   * Host announces its state over the stream, so this only makes sure the
+   * stream is up.
+   * @param options - `force` replaces a live stream instead of leaving it alone.
    */
   function load(options?: { force?: boolean }): Promise<void> {
-    if (options?.force) return showAll()
-    if (streaming) return Promise.resolve()
-    return loadHttp()
+    if (!streaming || options?.force === true) openStream()
+    return Promise.resolve()
+  }
+
+  /**
+   * Ask the Host which rows match a query. The body text is the Host's to
+   * search: it holds it whole, and the reader holds the list's half of it.
+   * @param query - what the reader typed.
+   * @returns the matching ids, in archive order.
+   */
+  function search(query: string): Promise<string[]> {
+    if (!query.trim()) return Promise.resolve([])
+    return request('/search', { query: query }).then(function (payload) {
+      return Array.isArray(payload.ids) ? payload.ids : []
+    })
   }
 
   /**
@@ -354,11 +254,13 @@ export function createTransport(ports: TransportPorts): Transport {
    */
   function applyWelcome(frame: StreamWelcome): void {
     if (frame.protocol !== PROTOCOL) {
-      // A protocol this bundle does not speak: fall back to the HTTP path
-      // instead of guessing at frames.
+      // A protocol this bundle does not speak: this Host is another build.
+      // Stop guessing at its frames and let the retry loop find one that
+      // matches, rather than rendering a frame shape that may have changed.
       streaming = false
       closeStream()
-      loadHttp({ force: true }).catch(function () { })
+      streamFailed(t('status.offline'))
+      retryStream(STREAM_RETRY_MS)
       return
     }
     lastRev = frame.rev
@@ -454,6 +356,9 @@ export function createTransport(ports: TransportPorts): Transport {
       listEpoch: epoch ? ui().listEpoch + 1 : ui().listEpoch,
     })
     if (fresh.size) armFresh()
+    // The rows moved under an active text filter: the Host answers that query,
+    // and its old answer may no longer describe this model.
+    if (frame.items) ports.refilter()
   }
 
   function closeStream(): void {
@@ -471,7 +376,7 @@ export function createTransport(ports: TransportPorts): Transport {
   /**
    * Try the stream again later, after it could not be opened. A Host that was
    * restarted mid-session starts serving it again; a Host that never will costs
-   * one attempt a minute and stays on the HTTP path meanwhile.
+   * one attempt a minute.
    */
   function retryStream(delayMs: number): void {
     if (disposed || streamRetry) return
@@ -481,25 +386,31 @@ export function createTransport(ports: TransportPorts): Transport {
     }, delayMs)
   }
 
-  /** The stream could not carry the state: say why, and let HTTP cover it. */
-  function streamFailed(message: string | null): void {
-    if (message) ports.toast(message, true)
+  /**
+   * The stream could not carry the state. With no second path, the reader says
+   * what is wrong where it can be seen: on the empty pane before the first
+   * frame, as a banner after it.
+   * @param message - why; the generic "not connected" text when empty.
+   */
+  function streamFailed(message: string): void {
     streaming = false
-    // Catch up now rather than at the next poll: the Host answered, it just
-    // could not stream. The poll stays as the slow safety net.
-    loadHttp({ force: !data().loadedOnce }).catch(function () { })
+    const text = message || t('status.offline')
+    if (data().loadedOnce) ports.toast(text, true)
+    else ports.setData({ status: 'error', error: text })
   }
 
   /**
-   * Open the surface's stream. A Host that cannot stream, or a frame protocol
-   * this bundle does not speak, falls back to the HTTP path rather than
-   * leaving the reader blind.
+   * Open the surface's stream. This is the only path: the Host sends the whole
+   * state once and then only what changed, and a page whose client bundle is
+   * newer than the running Host says so instead of showing an empty list.
    */
   function openStream(): void {
     closeStream()
     streamAttempts = 0
-    if (disposed || typeof EventSource === 'undefined') {
-      loadHttp({ force: !data().loadedOnce }).catch(function () { })
+    if (!data().loadedOnce && data().status !== 'error') ports.setData({ status: 'loading' })
+    if (disposed) return
+    if (typeof EventSource === 'undefined') {
+      streamFailed(t('status.offline'))
       return
     }
     const source = new EventSource(`${STREAM_PATH}?rev=${lastRev}`)
@@ -524,17 +435,15 @@ export function createTransport(ports: TransportPorts): Transport {
         streamFailed(text)
         return
       }
-      // A transport failure. The HTTP path takes over at once, and the browser's
-      // own retry gets a few chances before the stream is given up for a while:
-      // a Host that has not been restarted has no such route, and hammering it
-      // every few seconds helps nobody.
+      // A transport failure. The browser's own retry gets a few chances, then
+      // the stream is given up for a while: a Host that has not been restarted
+      // has no such route, and hammering it every few seconds helps nobody.
       streaming = false
       streamAttempts += 1
-      loadHttp({ force: !data().loadedOnce }).catch(function () { })
       if (streamAttempts >= STREAM_ATTEMPTS) {
         streamAttempts = 0
         closeStream()
-        console.warn('gitfeed: the event stream is unavailable; the reader is polling instead (restart the Host after an update)')
+        streamFailed(t('status.offline'))
         retryStream(STREAM_RETRY_MS)
       }
     })
@@ -546,11 +455,8 @@ export function createTransport(ports: TransportPorts): Transport {
    */
   function showAll(): Promise<void> {
     heldArrivals.clear()
-    // With a stream open there is nothing to ask for: the Host announces what
-    // the action changed, and asking for the whole model again is exactly the
-    // transfer this transport replaced.
-    if (streaming) return Promise.resolve()
-    return loadHttp({ force: true })
+    // The Host announces what the action changed; there is nothing to ask for.
+    return Promise.resolve()
   }
 
   function flushMarks(): void {
@@ -707,17 +613,11 @@ export function createTransport(ports: TransportPorts): Transport {
     mounted += 1
     if (mounted > 1) return
     openStream()
-    // The HTTP path covers whatever the stream is not doing: a surface that
-    // cannot hold one, and the window while one reconnects.
-    pollTimer = setInterval(function () {
-      if (document.visibilityState !== 'visible') return
-      if (streaming) return
-      loadHttp().catch(function () { })
-    }, 60000)
+    // A tab that was away may come back to a stream the browser dropped.
     visibilityHandler = function () {
       if (document.visibilityState !== 'visible') return
       if (streaming) return
-      loadHttp().catch(function () { })
+      openStream()
     }
     document.addEventListener('visibilitychange', visibilityHandler)
   }
@@ -726,10 +626,6 @@ export function createTransport(ports: TransportPorts): Transport {
     mounted = Math.max(0, mounted - 1)
     if (mounted > 0) return
     closeStream()
-    if (pollTimer) {
-      clearInterval(pollTimer)
-      pollTimer = null
-    }
     if (visibilityHandler) {
       document.removeEventListener('visibilitychange', visibilityHandler)
       visibilityHandler = null
@@ -755,6 +651,7 @@ export function createTransport(ports: TransportPorts): Transport {
 
   return {
     load: load,
+    search: search,
     mark: mark,
     star: star,
     addFeed: addFeed,

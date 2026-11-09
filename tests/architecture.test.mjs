@@ -29,6 +29,14 @@ ok(!!surface, 'the runner declares its timer surface')
 const methods = surface ? [...surface[1].matchAll(/(\w+)\s*\(/g)].map((match) => match[1]).filter((name) => name !== 'callback' && name !== 'delayMs') : []
 ok(JSON.stringify(methods) === JSON.stringify(['timeout']), 'the timer surface is exactly one timeout', methods)
 
+// One state path: a surface holds what the stream sent. A client module that
+// builds a /state request is the removed fallback growing back.
+const clientDir = path.join(repoRoot, 'src', 'client')
+const stateRequests = readdirSync(clientDir, { recursive: true })
+  .filter((name) => typeof name === 'string' && /\.tsx?$/.test(name))
+  .filter((name) => readFileSync(path.join(clientDir, name), 'utf8').includes("'/state'"))
+ok(stateRequests.length === 0, 'no client module asks the Host for its state', stateRequests)
+
 const entry = readFileSync(path.join(repoRoot, 'src', 'index.ts'), 'utf8')
 ok(/export const inject = \[[^\]]*'timer'[^\]]*\]/.test(entry), 'the plugin injects the timer service')
 ok(/ctx\.timeout\(/.test(entry), 'the plugin arms each job through ctx.timeout')

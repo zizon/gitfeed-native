@@ -7,12 +7,6 @@
 
 import type { Feed, Item } from '../shared/types.js'
 import type { Filter, MarkCounts } from './types.js'
-import { plainFromHtml } from './util.js'
-
-/** One row's searchable text: its title, its body, and the source's name. */
-export function haystackOf(item: Item, sourceName: string): string {
-  return `${item.title} ${plainFromHtml(item.summary)} ${sourceName}`.toLowerCase()
-}
 
 /** The name a source is shown by; an unknown id stays itself. */
 export function feedTitle(feeds: ReadonlyMap<string, Feed>, id: string): string {
@@ -66,6 +60,8 @@ export interface ReaderView {
   feeds: ReadonlyMap<string, Feed>
   filter: Filter
   query: string
+  /** Ids the Host matched for `query`; null until it answers. */
+  searchIds: ReadonlySet<string> | null
   feedId: string | null
   /** Rows an implicit mark keeps on screen until the scope changes. */
   stickyRead: ReadonlySet<string>
@@ -75,17 +71,17 @@ export interface ReaderView {
   uncategorized: string
 }
 
-/** One row's searchable text; the caller owns any cache over it. */
-export type Haystack = (item: Item) => string
-
 /**
  * The rows the list shows, in the order the archive delivered them.
+ *
+ * The text filter is answered by the Host, which holds every body whole: the
+ * row bodies a surface carries are the list's half, and a query has to match
+ * text the list does not have. A query with no answer yet matches nothing.
  * @param view - the reader's current filter, query, and scope.
- * @param haystack - one row's searchable text.
  * @returns the visible rows.
  */
-export function listOf(view: ReaderView, haystack: Haystack): Item[] {
-  const query = view.query.trim().toLowerCase()
+export function listOf(view: ReaderView): Item[] {
+  const query = view.query.trim()
   return view.items.filter(function (item) {
     // A row that arrived under the reader is listed once they leave the spot
     // it would have moved. Hiding it keeps the rows they are reading still;
@@ -94,7 +90,7 @@ export function listOf(view: ReaderView, haystack: Haystack): Item[] {
     if (view.filter === 'unread' && view.read.has(item.id) && !view.stickyRead.has(item.id)) return false
     if (view.filter === 'starred' && !view.starred.has(item.id)) return false
     if (view.feedId && item.feed !== view.feedId) return false
-    if (query && haystack(item).indexOf(query) === -1) return false
+    if (query && !(view.searchIds && view.searchIds.has(item.id))) return false
     return true
   })
 }

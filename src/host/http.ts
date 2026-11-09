@@ -7,6 +7,8 @@ import { messageOf } from '../shared/errors.js'
 
 interface ApiBody {
   ids?: string[]
+  /** Text one search asks about. */
+  query?: string
   read?: boolean
   star?: boolean
   url?: string
@@ -82,7 +84,7 @@ export function createHandler(service: GitfeedService) {
       }
       const route = url.pathname.slice(PREFIX.length) || '/'
       const method = req.method || 'GET'
-      const known = new Set(['/state', '/mark', '/star', '/feeds', '/feeds/remove', '/feeds/folder', '/fetch', '/pull', '/sync'])
+      const known = new Set(['/state', '/search', '/mark', '/star', '/feeds', '/feeds/remove', '/feeds/folder', '/fetch', '/pull', '/sync'])
       if (!known.has(route)) {
         sendJson(res, 404, { ok: false, error: 'no such endpoint' })
         return
@@ -107,6 +109,11 @@ export function createHandler(service: GitfeedService) {
 
       const input = await readBody(req)
 
+      if (route === '/search') {
+        const result = await service.search(input.query)
+        sendJson(res, 200, { ok: true, ids: result.ids })
+        return
+      }
       if (route === '/mark') {
         const result = await service.mark(input.ids, input.read !== false)
         sendJson(res, 200, result)

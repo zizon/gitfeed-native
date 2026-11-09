@@ -45,6 +45,12 @@ export interface ReaderData {
 export interface ReaderUi {
   filter: Filter
   query: string
+  /**
+   * The ids the Host matched for the current query, or null while none has
+   * answered yet. The body text is the Host's to search; the reader filters by
+   * these ids.
+   */
+  searchIds: Set<string> | null
   feedId: string | null
   current: string | null
   groupBy: GroupBy | null

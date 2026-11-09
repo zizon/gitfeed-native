@@ -53,18 +53,95 @@ if (engine === undefined || esbuild === undefined) {
       removeEventListener() {},
     }
 
-    // One Host, answering /state and recording the marks it receives.
+    // The stream the reader opens, driven by the test: the only path its state
+    // arrives on now.
+    class FakeEventSource {
+      constructor(url) {
+        this.url = url
+        this.closed = false
+        this.listeners = new Map()
+      }
+      addEventListener(name, listener) {
+        const list = this.listeners.get(name) || []
+        list.push(listener)
+        this.listeners.set(name, list)
+      }
+      close() { this.closed = true }
+      fire(name, data) {
+        const event = { data: data === undefined ? undefined : (typeof data === 'string' ? data : JSON.stringify(data)) }
+        for (const listener of this.listeners.get(name) || []) listener(event)
+      }
+    }
+    let lastSource = null
+    globalThis.EventSource = class extends FakeEventSource {
+      constructor(url) {
+        super(url)
+        lastSource = this
+      }
+    }
+
+    // One Host: it records the commands it receives, and the test tells its
+    // surfaces what changed.
     const host = {
       items: [],
       read: [],
       starred: [],
       marks: [],
       stars: [],
-      states: 0,
+      queries: [],
     }
     const feed = { id: 'f1', title: 'Feed one', folder: 'News', siteUrl: null, url: null, error: null, checkedAt: null }
-    function payload() {
+    globalThis.fetch = async function (url, init) {
+      const target = String(url)
+      const body = init && init.body ? JSON.parse(init.body) : {}
+      if (target.indexOf('/search') !== -1) {
+        host.queries.push(body.query)
+        const needle = String(body.query || '').trim().toLowerCase()
+        const ids = host.items
+          .filter((row) => `${row.title} ${String(row.summary).replace(/<[^>]*>/g, ' ')}`.toLowerCase().includes(needle))
+          .map((row) => row.id)
+        return { ok: true, status: 200, json: async function () { return { ok: true, ids } } }
+      }
+      if (target.indexOf('/mark') !== -1) {
+        host.marks.push({ ids: body.ids, read: body.read })
+        if (body.read) for (const id of body.ids) if (host.read.indexOf(id) === -1) host.read.push(id)
+        else host.read = host.read.filter((id) => body.ids.indexOf(id) === -1)
+        return { ok: true, status: 200, json: async function () { return { ok: true, changed: body.ids.length } } }
+      }
+      if (target.indexOf('/star') !== -1) {
+        host.stars.push({ ids: body.ids, star: body.star })
+        for (const id of body.ids) {
+          if (body.star) { if (host.starred.indexOf(id) === -1) host.starred.push(id) }
+          else host.starred = host.starred.filter((kept) => kept !== id)
+        }
+        return { ok: true, status: 200, json: async function () { return { ok: true, changed: body.ids.length } } }
+      }
+      return { ok: true, status: 200, json: async function () { return { ok: true } } }
+    }
+
+    const { createController: createReader, createPrefs } = await import(pathToFileURL(bundle).href)
+    const t = function (key, params) { return params ? `${key}:${JSON.stringify(params)}` : key }
+    const item = (id, title) => ({
+      id: id, feed: 'f1', title: title, link: `https://example.com/${id}`,
+      date: new Date().toISOString(), author: '', summary: `<p>${title} body</p>`,
+    })
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+    const ids = (controller) => controller.getList().map((row) => row.id)
+    /** Every surface the test opened, and the stream it opened it on. */
+    const streams = new Map()
+    function createController(t, prefs) {
+      const controller = createReader(t, prefs)
+      controller.mount()
+      streams.set(controller, lastSource)
+      return controller
+    }
+    // The whole state, as the Host would announce it to a surface that holds
+    // no revision it can extend.
+    function welcome() {
       return {
+        t: 'welcome',
+        protocol: 1,
+        rev: Date.now(),
         version: `v${host.items.length}-${host.read.length}`,
         itemsVersion: `m${host.items.length}`,
         items: host.items,
@@ -76,50 +153,12 @@ if (engine === undefined || esbuild === undefined) {
         allowGit: false,
         git: null,
         schedule: [],
-        generatedAt: new Date().toISOString(),
       }
     }
-    globalThis.fetch = async function (url, init) {
-      const target = String(url)
-      const body = init && init.body ? JSON.parse(init.body) : {}
-      if (target.indexOf('/state') !== -1) {
-        host.states += 1
-        // The Host answers a caller that already holds this version with the
-        // volatile facts alone, so a client that claims a version it does not
-        // hold stops receiving rows.
-        const known = new URL(target, 'http://gitfeed.local').searchParams.get('version')
-        if (known === payload().version) {
-          return { ok: true, status: 200, json: async function () { return { unchanged: true, version: known, git: null, schedule: [], repo: '/tmp/gitfeed-root' } } }
-        }
-        return { ok: true, status: 200, json: async function () { return payload() } }
-      }
-      if (target.indexOf('/mark') !== -1) {
-        host.marks.push({ ids: body.ids, read: body.read })
-        if (body.read) for (const id of body.ids) if (host.read.indexOf(id) === -1) host.read.push(id)
-        else host.read = host.read.filter((id) => body.ids.indexOf(id) === -1)
-        return { ok: true, status: 200, json: async function () { return { ok: true, changed: body.ids.length, version: payload().version } } }
-      }
-      if (target.indexOf('/star') !== -1) {
-        host.stars.push({ ids: body.ids, star: body.star })
-        for (const id of body.ids) {
-          if (body.star) { if (host.starred.indexOf(id) === -1) host.starred.push(id) }
-          else host.starred = host.starred.filter((kept) => kept !== id)
-        }
-        return { ok: true, status: 200, json: async function () { return { ok: true, changed: body.ids.length, version: payload().version } } }
-      }
-      return { ok: true, status: 200, json: async function () { return { ok: true } } }
-    }
-
-    const { createController, createPrefs } = await import(pathToFileURL(bundle).href)
-    const t = function (key, params) { return params ? `${key}:${JSON.stringify(params)}` : key }
-    const item = (id, title) => ({
-      id: id, feed: 'f1', title: title, link: `https://example.com/${id}`,
-      date: new Date().toISOString(), author: '', summary: `<p>${title} body</p>`,
-    })
-    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-    const ids = (controller) => controller.getList().map((row) => row.id)
     const loaded = async function (controller) {
-      await controller.load()
+      const source = streams.get(controller)
+      source.fire('open')
+      source.fire('welcome', welcome())
       await sleep(0)
       return controller
     }
@@ -156,6 +195,7 @@ if (engine === undefined || esbuild === undefined) {
 
     // Escape is a scope change: it clears what the old scope was holding.
     controller.setQuery('beta')
+    await sleep(0)
     ok(ids(controller).join(',') === 'b', 'a search narrows the list', ids(controller))
     controller.mark(['b'], true, true)
     host.read = ['a', 'b']
@@ -198,26 +238,6 @@ if (engine === undefined || esbuild === undefined) {
     ok(starring.get().starred.size === 0, 'and the mark is gone', [...starring.get().starred])
     starring.dispose()
 
-    // --- a mark does not make the reader claim rows it never received ---
-    // The mark's answer names the version of the root, not of the state this
-    // reader is holding; adopting it made the next poll answer "unchanged" and
-    // the rows a fetch had just written were never delivered.
-    host.items = [item('v1', 'Version one')]
-    host.read = []
-    host.starred = []
-    const versions = createController(t, createPrefs())
-    await loaded(versions)
-    const held = versions.get().version
-    // A fetch writes a row and a mark lands before the next poll.
-    host.items = [item('v2', 'Version two')].concat(host.items)
-    versions.mark(['v1'], true, true)
-    await sleep(450)
-    ok(versions.get().version === held, 'the mark does not hand the reader a version it cannot vouch for', versions.get().version)
-    await versions.load()
-    await sleep(0)
-    ok(ids(versions).includes('v2'), 'so the next poll still delivers the row the fetch wrote', ids(versions))
-    versions.dispose()
-
     // --- a refresh that lands under the reader moves no rows ---
     // A fetch brings rows older than the newest ones on screen, so they land
     // inside the band being read: inserting them there pushed every row below
@@ -250,6 +270,7 @@ if (engine === undefined || esbuild === undefined) {
     await loaded(still)
     ok(!ids(still).includes('r5'), 'another arrival is held while reading', ids(still))
     still.setQuery('row')
+    await sleep(0)
     ok(ids(still).includes('r5'), 'a search lets the held row go with the old scope', ids(still))
     still.escape()
 
@@ -273,14 +294,12 @@ if (engine === undefined || esbuild === undefined) {
     host.starred = []
     const marker = createController(t, createPrefs())
     await loaded(marker)
-    const statesBefore = host.states
     const rowsBefore = marker.getList().length
     ok(rowsBefore === 2, 'the list starts with both rows', rowsBefore)
     marker.mark(['m1'], true, true)
     await sleep(500)
     ok(host.marks.some((mark) => mark.ids.includes('m1')), 'the mark reaches the Host', host.marks)
-    ok(host.states === statesBefore, 'and nothing reloads the state behind it', host.states - statesBefore)
-    ok(marker.getList().length === rowsBefore, 'the rows the reader was on stay as they were', marker.getList().length)
+    ok(marker.getList().length === rowsBefore, 'and the rows the reader was on stay as they were', marker.getList().length)
     marker.dispose()
 
     // --- a queued mark is sent before the surface goes ---

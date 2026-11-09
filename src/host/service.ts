@@ -27,6 +27,8 @@ import { decodeEntities } from './xml.js'
 const AUTO_SYNC_DEBOUNCE_MS = 20000
 /** Longest a continuously marking reader waits before a sync. */
 const AUTO_SYNC_MAX_WAIT_MS = 5 * 60000
+/** Rows whose searchable text is built between yields to the event loop. */
+const SEARCH_CHUNK = 64
 /**
  * How long the git facts behind the status line stay usable before they are
  * read again. A fetch run changes nothing git tracks — the cache it writes is
@@ -140,6 +142,15 @@ export function createGitfeed(options: GitfeedOptions) {
   let gitCache: { at: number; value: GitInfo | null } = { at: 0, value: null }
   /** The git facts the last snapshot carried, so a probe does not re-run git. */
   let gitFacts: { at: number; value: GitInfo | null } | null = null
+  /**
+   * Every row's searchable text. Bodies are the Host's to search: the wire
+   * carries the list's half of a row, and a query has to match text the list
+   * does not have. The map is added to, not rebuilt, so a fetch costs the rows
+   * it landed rather than the whole archive.
+   */
+  let searchTexts: Map<string, string> | null = null
+  /** Signature of the source names the texts were built with. */
+  let searchTitles = ''
   let writeQueue = Promise.resolve()
   let disposed = false
 
@@ -470,6 +481,69 @@ export function createGitfeed(options: GitfeedOptions) {
     const value = await gitInfo()
     gitFacts = { at: Date.now(), value: value }
     return value
+  }
+
+  /** A fingerprint of the names the searchable text carries. */
+  function titlesSignature(titles: Map<string, string>): string {
+    const hash = crypto.createHash('sha1')
+    for (const id of Array.from(titles.keys()).sort()) hash.update(`${id}\u0000${titles.get(id) || ''}\n`)
+    return hash.digest('hex')
+  }
+
+  /** Yield to the Host's event loop, so a long index build does not stall it. */
+  function yieldToLoop(): Promise<void> {
+    return new Promise(function (resolve) {
+      options.timers.timeout(function () { resolve() }, 0)
+    })
+  }
+
+  /**
+   * The searchable text of every row that needs one, built in chunks: the
+   * first query on a cold process reads every body, and the Host serves the
+   * whole application, so it must not block on that.
+   */
+  async function searchableTexts(items: readonly Item[], titles: Map<string, string>): Promise<Map<string, string>> {
+    const signature = titlesSignature(titles)
+    const rebuildAll = searchTexts === null || signature !== searchTitles
+    if (rebuildAll) {
+      searchTexts = new Map()
+      searchTitles = signature
+    }
+    const texts = searchTexts as Map<string, string>
+    const todo: Item[] = []
+    const live = new Set<string>()
+    for (const item of items) {
+      live.add(item.id)
+      if (rebuildAll || !texts.has(item.id)) todo.push(item)
+    }
+    if (!rebuildAll) for (const id of texts.keys()) if (!live.has(id)) texts.delete(id)
+    for (let i = 0; i < todo.length; i++) {
+      const item = todo[i]
+      texts.set(item.id, `${item.title} ${plainText(item.summary)} ${titles.get(item.feed) || item.feed}`.toLowerCase())
+      if (i % SEARCH_CHUNK === SEARCH_CHUNK - 1) await yieldToLoop()
+    }
+    return texts
+  }
+
+  /**
+   * Ask the archive which rows match a query.
+   * @param query - the reader's text; matched case-insensitively.
+   * @returns the matching ids in archive order.
+   */
+  async function search(query: unknown): Promise<{ ids: string[] }> {
+    touch()
+    const needle = typeof query === 'string' ? query.trim().toLowerCase() : ''
+    if (!needle) return { ids: [] }
+    const model = await buildItems()
+    const data = await buildSnapshot(settings(), model.items)
+    const titles = new Map<string, string>(data.feeds.map(function (feed): [string, string] { return [feed.id, feed.title] }))
+    const texts = await searchableTexts(model.items, titles)
+    const ids: string[] = []
+    for (const item of model.items) {
+      const text = texts.get(item.id)
+      if (text !== undefined && text.indexOf(needle) !== -1) ids.push(item.id)
+    }
+    return { ids: ids }
   }
 
   async function buildSnapshot(cfg: RepoConfig, items: Item[]): Promise<ReaderStateData> {
@@ -1126,6 +1200,7 @@ export function createGitfeed(options: GitfeedOptions) {
     listForTool: listForTool,
     getForTool: getForTool,
     statusForTool: statusForTool,
+    search: search,
     attach: attach,
     /** Re-read the data root and announce what changed (the stream's probe, by hand). */
     refresh: refresh,

@@ -208,23 +208,34 @@ if (engine === undefined || esbuild === undefined) {
     ok(!!toast && toast.error === true && toast.text.includes('no feeds.json'), 'a stream error reaches the reader', toast && toast.text)
     ok(controller.get().toast !== originalToast, 'and is not the banner that was there', originalToast)
 
-    // A broken transport falls back to asking the Host over HTTP.
+    // A transport failure is not hidden behind a second path any more: the
+    // reader keeps what it holds, and says the Host cannot be reached.
+    const heldRows = ids(controller).length
     stream.fire('error', undefined)
     await sleep(0)
-    ok(http.states >= 1, 'a broken stream is covered by the HTTP path', http.states)
+    ok(http.states === 0, 'a failed stream does not fall back to an HTTP state request', http.states)
+    ok(ids(controller).length === heldRows, 'and the rows it already holds stay', ids(controller).length)
 
-    // A Host that has no stream at all is not hammered: after a few failures the
-    // stream is given up and a retry is scheduled, rather than one attempt every
-    // few seconds for the life of the page.
-    const warnings = []
-    const originalWarn = console.warn
-    console.warn = (...args) => warnings.push(args.join(' '))
+    // A Host with no stream at all is not hammered: after a few failures the
+    // stream is given up for a while and the reader says why.
     stream.fire('error', undefined)
     stream.fire('error', undefined)
     await sleep(0)
     ok(stream.closed === true, 'the stream is given up after a few failures', stream.closed)
-    ok(warnings.some((text) => text.includes('unavailable')), 'and the console says which path it is on', warnings)
-    console.warn = originalWarn
+    ok(controller.get().toast !== null && controller.get().toast.error === true,
+      'and the reader is told, rather than left with a stale list', controller.get().toast)
+
+    // A surface that never received a frame says so on the empty pane.
+    const blank = createController(t, createPrefs())
+    blank.mount()
+    const blankStream = FakeEventSource.instances[FakeEventSource.instances.length - 1]
+    blankStream.fire('error', undefined)
+    blankStream.fire('error', undefined)
+    blankStream.fire('error', undefined)
+    await sleep(0)
+    ok(blank.get().status === 'error' && String(blank.get().error).includes('offline'),
+      'a surface with no state reports the Host is unreachable', blank.get().status)
+    blank.dispose()
 
     controller.dispose()
     still.dispose()

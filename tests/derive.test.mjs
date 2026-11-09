@@ -35,7 +35,6 @@ if (esbuild === undefined) {
       feedTitle,
       folderNames,
       groupKey,
-      haystackOf,
       listOf,
       markCountsOf,
     } = await import(pathToFileURL(bundle).href)
@@ -54,7 +53,6 @@ if (esbuild === undefined) {
       row('b2', 'feed-b', 'Fourth post', 'closing note'),
     ]
     const none = new Set()
-    const haystack = (item) => `${item.title} ${item.summary} ${item.feed}`.toLowerCase()
     function view(patch) {
       return Object.assign({
         items: items,
@@ -63,6 +61,7 @@ if (esbuild === undefined) {
         feeds: feeds,
         filter: 'unread',
         query: '',
+        searchIds: null,
         feedId: null,
         stickyRead: none,
         heldArrivals: none,
@@ -71,50 +70,50 @@ if (esbuild === undefined) {
     }
     const ids = (rows) => rows.map((item) => item.id).join(',')
 
-    ok(ids(listOf(view({}), haystack)) === 'a1,a2,b1,b2', 'unread with nothing marked shows everything in archive order')
-    ok(ids(listOf(view({ read: new Set(['a1', 'b1']) }), haystack)) === 'a2,b2', 'a read row leaves the unread list')
+    ok(ids(listOf(view({}))) === 'a1,a2,b1,b2', 'unread with nothing marked shows everything in archive order')
+    ok(ids(listOf(view({ read: new Set(['a1', 'b1']) }))) === 'a2,b2', 'a read row leaves the unread list')
     ok(
-      ids(listOf(view({ read: new Set(['a1']), stickyRead: new Set(['a1']) }), haystack)) === 'a1,a2,b1,b2',
+      ids(listOf(view({ read: new Set(['a1']), stickyRead: new Set(['a1']) }))) === 'a1,a2,b1,b2',
       'a row an implicit mark keeps stays put',
     )
     ok(
-      ids(listOf(view({ heldArrivals: new Set(['a2']) }), haystack)) === 'a1,b1,b2',
+      ids(listOf(view({ heldArrivals: new Set(['a2']) }))) === 'a1,b1,b2',
       'a row a refresh is holding back stays out of the list',
     )
     ok(
-      ids(listOf(view({ filter: 'starred', starred: new Set(['b2']) }), haystack)) === 'b2',
+      ids(listOf(view({ filter: 'starred', starred: new Set(['b2']) }))) === 'b2',
       'the starred filter shows only starred rows',
     )
-    ok(ids(listOf(view({ feedId: 'feed-a' }), haystack)) === 'a1,a2', 'a selected source scopes the list')
+    ok(ids(listOf(view({ feedId: 'feed-a' }))) === 'a1,a2', 'a selected source scopes the list')
     ok(
-      ids(listOf(view({ query: '  TIDES  ' }), haystack)) === 'a1,b1',
+      ids(listOf(view({ query: '  TIDES  ', searchIds: new Set(['a1', 'b1']) }))) === 'a1,b1',
       'search trims, lowercases, and matches the row text',
     )
-    ok(ids(listOf(view({ query: 'nosuchword' }), haystack)).length === 0, 'a query with no match lists nothing')
+    ok(ids(listOf(view({ query: 'nosuchword', searchIds: new Set() }))).length === 0, 'a query with no match lists nothing')
     ok(
-      ids(listOf(view({ query: 'beta', feedId: 'feed-a' }), haystack)) === '',
+      ids(listOf(view({ query: 'beta', feedId: 'feed-a', searchIds: new Set(['b1', 'b2']) }))) === '',
       'search and scope narrow together',
     )
     ok(
-      ids(listOf(view({ filter: 'all', read: new Set(['a1', 'a2', 'b1', 'b2']) }), haystack)) === 'a1,a2,b1,b2',
+      ids(listOf(view({ filter: 'all', read: new Set(['a1', 'a2', 'b1', 'b2']) }))) === 'a1,a2,b1,b2',
       'the all filter ignores read state',
     )
 
-    const starTop = markCountsOf(view({ read: new Set(['a1', 'b2']), feedId: 'feed-a' }), listOf(view({ read: new Set(['a1', 'b2']), feedId: 'feed-a' }), haystack))
+    const starTop = markCountsOf(view({ read: new Set(['a1', 'b2']), feedId: 'feed-a' }), listOf(view({ read: new Set(['a1', 'b2']), feedId: 'feed-a' })))
     ok(
       starTop.results === 1 && starTop.source === 1 && starTop.folder === 1 && starTop.all === 2,
       'each marking scope counts what it would touch',
       starTop,
     )
     ok(starTop.folderName === 'Daily', 'the folder scope names its folder', starTop.folderName)
-    const unscoped = markCountsOf(view({}), listOf(view({}), haystack))
+    const unscoped = markCountsOf(view({}), listOf(view({})))
     ok(unscoped.folderName === null && unscoped.source === 0, 'an unscoped view offers no source or folder scope', unscoped)
     ok(
-      markCountsOf(view({ query: 'tides' }), listOf(view({ query: 'tides' }), haystack)).results === 2,
+      markCountsOf(view({ query: 'tides' }), listOf(view({ query: 'tides', searchIds: new Set(['a1', 'b1']) }))).results === 2,
       'the results scope counts the searched rows only',
     )
     const keptView = view({ read: new Set(['a1']), stickyRead: new Set(['a1']) })
-    const keptCounts = markCountsOf(keptView, listOf(keptView, haystack))
+    const keptCounts = markCountsOf(keptView, listOf(keptView))
     ok(
       keptCounts.results === 3,
       'a read row kept on screen is not counted as something to mark',
@@ -170,9 +169,6 @@ if (esbuild === undefined) {
     ok(names.join(',') === 'Daily,Papers', 'the picker offers each stored folder once, sorted', names)
     ok(!names.includes('Uncategorized'), 'and no name that only the list uses', names)
     ok(folderNames([]).length === 0, 'an empty library has no folder to offer', folderNames([]))
-
-    const hay = haystackOf(items[0], 'Alpha Notes')
-    ok(hay.includes('first post') && hay.includes('alpha notes'), 'a row search text carries its title and source name', hay)
   } finally {
     rmSync(out, { recursive: true, force: true })
   }

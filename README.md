@@ -350,7 +350,7 @@ The native page follows the Harness theme, including light/dark/auto. It does
 not carry its own theme setting.
 
 - **Filters**: Unread / All / Starred.
-- **Search** over title, summary, and feed title.
+- **Search** over title, summary, and feed title, answered by the Host.
 - **Feeds**: folders from the OPML import, collapsible; unread counts; error
   marks; one "Add feed" row that opens the form. Every feed row carries its
   actions in view — move it to another folder, mark the source read, and
@@ -442,14 +442,6 @@ there, the rows arrive when the reader leaves the spot they would have moved.
 - **Ties are broken by id**, on the Host (`compareItems`), so two items that
   share a timestamp cannot swap places between reloads.
 
-For the client, the item rows and the read/star state travel separately: the
-Host reports an `itemsVersion` next to the state `version`, and a poll that
-changes only marks is answered with those marks, the feeds, and
-`itemsUnchanged: true` — the reader keeps its row array untouched. On a
-3,200-item root a poll that carried a mark was 4.8 MB before and is about
-115 KB now, and a poll that changes nothing keeps the same list array all the
-way down.
-
 The reader does not poll for its own state. Each surface opens one server-sent
 event stream at `/gitfeed/events` when it mounts, receives the whole archive
 once, and from then on only what changed: the rows a refresh added or repaired,
@@ -471,10 +463,21 @@ The stream replaces a 60-second poll with a full model behind it. On a personal
 library of 379 subscriptions and 3,860 items, an items write cost every open
 surface 26.9 MB of JSON, and the poll itself cost the Host five `git` spawns
 (190 ms) even when nothing had changed; a delta for the same write is about
-100 KB, and an idle surface costs a stat probe every few seconds. The HTTP path
-remains as the fallback: a Host that has not been restarted yet, or a proxy that
-buffers the stream, leaves the surface asking again exactly as it used to — it
-is given up after a few failed attempts rather than retried forever.
+100 KB, and an idle surface costs a stat probe every few seconds.
+
+There is no second path. A surface that cannot open its stream — a page whose
+client bundle is newer than the running Host, a proxy that buffers event
+streams — says the Host cannot be reached and keeps trying, and the reader is
+empty until it can. Restart the Host after updating the plugin, then reload the
+page; that is the same restart a Host-side change needs anyway. The old `/state`
+route stays on the Host because an older page may still be polling it, but this
+client does not.
+
+The text filter is answered by the Host, which holds every body whole: a query
+travels as text and comes back as ids, and the surface keeps filtering by feed,
+filter, and read state itself. That is what lets the wire carry a digest of a
+row instead of its body — and what keeps a query matching text the list does not
+have.
 
 The archive is not re-read to answer questions the Host already can. The item
 model keeps each shard's rows keyed by that shard's size and modification time,
@@ -799,7 +802,7 @@ docs/jobs.md                runner contract, primitives, and the ratchet
 docs/custom-feeds.md        custom feeds: the script interface and the rules
 docs/history/               point-in-time records: the removed Actions job, the 2026-11-09 review
 docs/screenshots/           the images this README shows (shipped with the package)
-src/client/                 native reader: controller, transport (stream + fallback), derivations, viewport, prefs, hooks, components, styles, locales
+src/client/                 native reader: controller, transport (the event stream), derivations, viewport, prefs, hooks, components, styles, locales
 src/shared/                 the types both halves import, the stream protocol and its merge, and the one runtime helper they share
 src/skill/                  the custom-feeds skill: workflow, interface, failure modes
 examples/                   a custom feed script: the Google Research list the docs walk through
@@ -934,6 +937,9 @@ not in this tree. `.gitignore` covers the local files that carry them.
   items wait.
 - **Loopback only.** The API is served by the Harness web server and refuses
   cross-origin requests; it is not designed to be exposed publicly.
+- **The reader needs its Host's event stream.** There is no polling fallback: a
+  page refreshed before a Host restart cannot load, and a proxy that buffers
+  `text/event-stream` breaks it. Update and restart together.
 - **The right Sidebar needs a session.** The main-panel page works without one.
 - **Item history is pruned** to `fetch.keepMonths` (6) to keep the data repo
   small.
