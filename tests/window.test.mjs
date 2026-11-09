@@ -70,14 +70,12 @@ if (esbuild === undefined) {
       const offsets = offsetIndex(entries)
       const index = new Map()
       entries.forEach((entry, i) => { if (entry.kind === 'row') index.set(entry.item.id, i) })
-      const total = offsets[entries.length]
       return scrollReads(Object.assign({
         entries: entries,
         offsets: offsets,
         index: index,
         top: 0,
         height: 100,
-        maxTop: Math.max(0, total - 100),
         seen: new Map(),
         read: new Set(),
         now: 1000,
@@ -105,21 +103,19 @@ if (esbuild === undefined) {
       dwell(flat, { top: 0, read: new Set(['r0']) }).entering.every(function (row) { return row[0] !== 'r0' }),
       'a row that is already read is not timed',
     )
-    // The rows the scroll stops on never leave the viewport, so the time the
-    // reader stays with them is the only evidence there is.
-    const resting = dwell(flat, { top: 900 })
-    ok(resting.restMs === 1000, 'the rows held at the end wait out the dwell', resting.restMs)
-    const rested = dwell(flat, {
-      top: 900,
-      seen: new Map([['r95', 0], ['r99', 500]]),
-      now: 1000,
-    })
-    ok(rested.readIds.includes('r95'), 'the end reads the rows the reader stayed with', rested.readIds)
-    ok(!rested.readIds.includes('r99'), 'and leaves the ones that just arrived')
-    ok(rested.restMs === 500, 'and says how long the rest still needs', rested.restMs)
+    // The list scrolls one viewport past its last row, so the rows it ends on
+    // leave the viewport like any other row once the reader scrolls into it.
     ok(
-      dwell(flat, { top: 0, maxTop: 0, seen: new Map([['r0', 0]]), now: 5000 }).readIds.length === 0,
-      'a list with nowhere to scroll reads nothing by resting',
+      dwell(flat, { top: 1000, seen: new Map([['r99', 0]]) }).readIds.includes('r99'),
+      'the last row is read once the end screen scrolls past it',
+    )
+    ok(
+      dwell(flat, { top: 995, seen: new Map([['r99', 0]]) }).readIds.length === 0,
+      'a row still showing under the edge is not read',
+    )
+    ok(
+      dwell(flat, { top: 1000, seen: new Map([['r99', 999]]) }).readIds.length === 0,
+      'and the last row still has to have been seen for the dwell',
     )
 
     // The sticky section header stays mounted under the edge.

@@ -152,8 +152,6 @@ export interface ScrollReadInput {
   top: number
   /** Viewport height. */
   height: number
-  /** Where the scroll stops. The rows resting there never leave the viewport. */
-  maxTop: number
   /** When each row first came on screen, by id. */
   seen: ReadonlyMap<string, number>
   /** The rows already read; they are neither timed nor marked. */
@@ -162,20 +160,14 @@ export interface ScrollReadInput {
   now: number
 }
 
-/** What one read-on-scroll pass decides, and how long until it can decide more. */
+/** What one read-on-scroll pass decides. */
 export interface ScrollRead {
   /** Rows that came on screen this pass, and when. */
   entering: Array<[string, number]>
   /** Rows that are no longer on screen, read or not: stop timing them. */
   leaving: string[]
-  /** Rows the reader stayed with long enough to count as read. */
+  /** Rows that were on screen long enough, and are now behind the viewport. */
   readIds: string[]
-  /**
-   * Milliseconds until a row could next count as read, for the rows held at
-   * the end of the list; 0 when nothing is waiting on the clock. A row read
-   * anywhere else is read on the pass that moves the viewport past it.
-   */
-  restMs: number
 }
 
 /**
@@ -184,8 +176,8 @@ export interface ScrollRead {
  * A row counts as read once it has been on screen for {@link READ_DWELL_MS}
  * and the viewport has moved off it. Rows that only flashed past — a flicked
  * scroll, a scrollbar drag — were never on screen long enough and stay unread.
- * The rows the scroll stops on have nowhere left to go, so staying with them
- * is the same evidence.
+ * The list scrolls one viewport past its last row, so the rows it ends on can
+ * leave the viewport too, instead of resting there unread.
  *
  * @param input - the mounted entries, the scroll facts, and the dwell clock.
  * @returns the rows coming on screen, leaving, and read, plus the next wait.
@@ -193,12 +185,10 @@ export interface ScrollRead {
 export function scrollReads(input: ScrollReadInput): ScrollRead {
   const first = lowerBound(input.offsets, input.top)
   const last = Math.min(input.entries.length, lowerBound(input.offsets, input.top + input.height) + 1)
-  const restingAtEnd = input.maxTop > 0 && input.top >= input.maxTop - 1
   const now = input.now
   const entering: Array<[string, number]> = []
   const leaving: string[] = []
   const readIds: string[] = []
-  let restMs = 0
   const visible = new Set<string>()
   for (let i = first; i < last; i++) {
     const entry = input.entries[i]
@@ -206,24 +196,12 @@ export function scrollReads(input: ScrollReadInput): ScrollRead {
     const id = entry.item.id
     if (input.read.has(id)) continue
     visible.add(id)
-    const at = input.seen.get(id)
-    let wait = READ_DWELL_MS
-    if (at === undefined) {
-      entering.push([id, now])
-    } else {
-      wait = READ_DWELL_MS - (now - at)
-      // A row resting at the end of the list never leaves the viewport, so the
-      // time the reader stays with it is the only chance it has to be read.
-      if (restingAtEnd) {
-        if (wait <= 0) readIds.push(id)
-      }
-    }
-    if (restingAtEnd && wait > 0) restMs = restMs === 0 ? wait : Math.min(restMs, wait)
+    if (!input.seen.has(id)) entering.push([id, now])
   }
   for (const [id, at] of input.seen) {
     if (visible.has(id) || input.read.has(id) || !input.index.has(id)) continue
     if (now - at >= READ_DWELL_MS) readIds.push(id)
     leaving.push(id)
   }
-  return { entering: entering, leaving: leaving, readIds: readIds, restMs: restMs }
+  return { entering: entering, leaving: leaving, readIds: readIds }
 }

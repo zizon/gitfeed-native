@@ -261,6 +261,17 @@ export const CSS = `
 .gf-scrollwrap { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; position: relative; }
 .gf-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; position: relative; }
 .gf-listpane .gf-scroll { padding-bottom: 52px; }
+/* One viewport of scroll past the last row: the rows the list ends on have to
+   be able to leave the viewport to be read, and this is where the reader
+   learns the list is over. */
+.gf-endnote {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+}
 
 .gf-group {
   position: sticky;

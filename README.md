@@ -380,8 +380,9 @@ not carry its own theme setting.
   the Feeds list for the same reason.
 - **Read on scroll**: a row counts as read once it has been on screen for a
   moment and the viewport has moved off it, so a fling or a scrollbar drag
-  leaves everything it skipped unread. The rows the scroll ends on are read
-  once the reader has stayed with them for the same moment.
+  leaves everything it skipped unread. The list scrolls one screen past its
+  last row — an end screen that says so — so the rows it closes with leave the
+  viewport and are read like the rest.
 - **Starring**: the star sits on the row itself, so an item can be kept without
   opening it; it holds its space and appears on the row the pointer or the
   keyboard is on, and a starred row shows it outright. Under the Starred filter

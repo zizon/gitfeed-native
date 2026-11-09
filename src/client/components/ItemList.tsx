@@ -45,6 +45,8 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
   const rowH = showDigest ? ROW_H : ROW_H_PLAIN
   const viewportRef = useRef<HTMLDivElement>(null)
   const [range, setRange] = useState<{ start: number; end: number; headerIndex: number | null }>({ start: 0, end: 24, headerIndex: null })
+  /** The viewport's own height: the end screen is exactly one of them. */
+  const [viewportH, setViewportH] = useState(0)
   const rangeRef = useRef(range)
   rangeRef.current = range
   const raf = useRef(0)
@@ -52,10 +54,6 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
   const lastSelected = useRef<string | null>(null)
   /** The rows that have been on screen, and since when. */
   const seen = useRef<Map<string, number>>(new Map())
-  /** Pending pass for the rows held at the end of the list, or 0. */
-  const restTimer = useRef(0)
-  /** The latest pass, for the dwell timer to call without a stale closure. */
-  const computeRef = useRef<() => void>(function () { /* no pass to run yet */ })
   /**
    * The entry at the viewport top and how far into it the viewport sits. When a
    * refresh inserts rows above, the list is put back on this entry, so the
@@ -124,7 +122,9 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
     const el = viewportRef.current
     if (!el) return
     const top = el.scrollTop
-    const height = el.clientHeight || 600
+    const viewportHeight = el.clientHeight
+    const height = viewportHeight || 600
+    setViewportH(function (current) { return current === viewportHeight ? current : viewportHeight })
     const next = windowOf({
       entries: entries,
       offsets: offsets,
@@ -151,8 +151,6 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
       const settled = settledAbove(entries, next.start, state.read)
       if (settled.length >= TRIM_AT) controller.trimSticky(settled)
     }
-    window.clearTimeout(restTimer.current)
-    restTimer.current = 0
     // A row counts as read once it has been on screen long enough to be seen
     // and the viewport has moved off it; with the preference off, nothing is
     // timed and nothing is marked.
@@ -169,7 +167,6 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
       index: itemIndex,
       top: top,
       height: height,
-      maxTop: Math.max(0, el.scrollHeight - el.clientHeight),
       seen: seen.current,
       read: state.read,
       now: window.performance.now(),
@@ -179,13 +176,7 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
     // Implicit marks keep their rows: a row must not vanish from under the
     // pointer. The section releases them once it has nothing unread left.
     if (reads.readIds.length) void controller.mark(reads.readIds, true, true)
-    // The rows the scroll stopped on are the only ones that can become read
-    // without a scroll, so the pass that can see them schedules the next one.
-    if (reads.restMs > 0) {
-      restTimer.current = window.setTimeout(function () { computeRef.current() }, reads.restMs)
-    }
   }, [offsets, entries, groupFloor, groupBy, markOnScroll, state.read, state.filter, controller, itemIndex])
-  computeRef.current = compute
 
   const onScroll = useCallback(function () {
     if (raf.current) return
@@ -221,10 +212,6 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
     }
     compute()
   }, [compute, groupBy, state.query, state.feedId, state.version])
-
-  useEffect(function () {
-    return function () { window.clearTimeout(restTimer.current); restTimer.current = 0 }
-  }, [])
 
   useEffect(function () {
     const el = viewportRef.current
@@ -601,6 +588,10 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
           <div style={{ height: top }} />
           {listRows}
           <div style={{ height: bottom }} />
+          {/* One viewport of scroll past the last row. The rows the list ends
+              on could otherwise never leave the viewport, so they stayed
+              unread; this is also where the reader learns the list is over. */}
+          <div className="gf-endnote" style={{ height: viewportH ? viewportH + 1 : undefined }}>{t('list.end')}</div>
         </div>
         {pinned && pinned.kind === 'group'
           ? (
