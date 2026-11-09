@@ -1,6 +1,6 @@
 // The split item model: a stable itemsVersion, a payload that omits unchanged
 // rows, deterministic ordering, and no reshuffle when a mark lands.
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { appendItem, makeDataRoot, removeRoot, sampleLibrary } from './fixtures.mjs'
 import { finish, nodeTimers, ok } from './harness.mjs'
@@ -93,6 +93,12 @@ ok(
   'a repaired copy in the cache wins over the committed one',
   mergedRow && mergedRow.summary.length,
 )
+
+// A shard that disappears is not a shard any more. Retention prunes months, and
+// the parsed copy the model keeps must not resurrect rows the archive deleted.
+rmSync(path.join(root, 'data', 'items', '2026-02.ndjson'), { force: true })
+const pruned = await service.getState(null, null)
+ok(!pruned.items.some((item) => item.id === 'zz-later'), 'a deleted shard takes its rows with it', pruned.items.length)
 
 // The two meta stores describe the same feeds. The one whose check ran last
 // wins, because the plugin fetches into the cache: preferring the committed

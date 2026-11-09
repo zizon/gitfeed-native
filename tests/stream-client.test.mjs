@@ -213,6 +213,19 @@ if (engine === undefined || esbuild === undefined) {
     await sleep(0)
     ok(http.states >= 1, 'a broken stream is covered by the HTTP path', http.states)
 
+    // A Host that has no stream at all is not hammered: after a few failures the
+    // stream is given up and a retry is scheduled, rather than one attempt every
+    // few seconds for the life of the page.
+    const warnings = []
+    const originalWarn = console.warn
+    console.warn = (...args) => warnings.push(args.join(' '))
+    stream.fire('error', undefined)
+    stream.fire('error', undefined)
+    await sleep(0)
+    ok(stream.closed === true, 'the stream is given up after a few failures', stream.closed)
+    ok(warnings.some((text) => text.includes('unavailable')), 'and the console says which path it is on', warnings)
+    console.warn = originalWarn
+
     controller.dispose()
     still.dispose()
     await sleep(0)

@@ -473,7 +473,18 @@ surface 26.9 MB of JSON, and the poll itself cost the Host five `git` spawns
 (190 ms) even when nothing had changed; a delta for the same write is about
 100 KB, and an idle surface costs a stat probe every few seconds. The HTTP path
 remains as the fallback: a Host that has not been restarted yet, or a proxy that
-buffers the stream, leaves the surface asking again exactly as it used to.
+buffers the stream, leaves the surface asking again exactly as it used to — it
+is given up after a few failed attempts rather than retried forever.
+
+The archive is not re-read to answer questions the Host already can. The item
+model keeps each shard's rows keyed by that shard's size and modification time,
+so a fetch that appends to one month's file re-reads one file instead of
+twenty-six megabytes; a fetch run takes the ids it already holds from that
+model instead of scanning the stores, and leaves the orphan sweep to the
+unsubscribe that already removed them. On the same library, one fetch run plus
+the reader catching up went from about 0.9 s of Host CPU to about 0.08 s. The
+git facts behind the status line are read on a change or every five minutes,
+not on every run, because a refresh writes only the ignored local cache.
 
 ### Design language
 

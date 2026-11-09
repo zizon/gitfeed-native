@@ -370,6 +370,19 @@ export interface FetchOptions {
   dryRun?: boolean
   /** Ignore the stored validator and re-read every feed body. */
   refresh?: boolean
+  /**
+   * What the archive already holds: id to the length of the body kept. A caller
+   * that keeps the merged model in memory passes it, so a run does not read
+   * every shard to answer a question it already knows. Omit it and the run
+   * reads the stores, which is what the CLI and a standalone caller do.
+   */
+  known?: ReadonlyMap<string, number>
+  /**
+   * Sweep rows whose feed is no longer subscribed. On by default; a caller that
+   * removes a subscription's rows itself (the reader does) turns it off, so an
+   * ordinary run does not read the whole archive to find nothing.
+   */
+  pruneOrphans?: boolean
   onLog?: (line: string) => void
 }
 
@@ -423,16 +436,18 @@ export async function runFetch(options: FetchOptions): Promise<FetchResult> {
   // that writes the cache still counts the committed archive as archived:
   // otherwise every row the reader already holds from `data/` is fetched again
   // as new, and the cache fills with a second copy of the whole library.
-  const known = new Map<string, number>()
-  const archivedDirs = itemsDir === paths.items ? [itemsDir] : [paths.items, itemsDir]
-  for (const dir of archivedDirs) {
-    for (const file of await listShards(dir)) {
-      const rows = await readNdjson<{ id: string; summary?: string } | null>(file)
-      for (const row of rows) {
-        if (!row || !row.id) continue
-        const length = typeof row.summary === 'string' ? row.summary.length : 0
-        const previous = known.get(row.id)
-        if (previous === undefined || length > previous) known.set(row.id, length)
+  const known = opts.known ? new Map(opts.known) : new Map<string, number>()
+  if (!opts.known) {
+    const archivedDirs = itemsDir === paths.items ? [itemsDir] : [paths.items, itemsDir]
+    for (const dir of archivedDirs) {
+      for (const file of await listShards(dir)) {
+        const rows = await readNdjson<{ id: string; summary?: string } | null>(file)
+        for (const row of rows) {
+          if (!row || !row.id) continue
+          const length = typeof row.summary === 'string' ? row.summary.length : 0
+          const previous = known.get(row.id)
+          if (previous === undefined || length > previous) known.set(row.id, length)
+        }
       }
     }
   }
@@ -440,7 +455,7 @@ export async function runFetch(options: FetchOptions): Promise<FetchResult> {
   const now = new Date()
   log(`gitfeed ${now.toISOString()}  ${feeds.length} feeds`)
   if (staleFeeds) log(`  drop ${staleFeeds} stale feed(s) from meta.json`)
-  if (!dryRun && !restricted) {
+  if (!dryRun && !restricted && opts.pruneOrphans !== false) {
     const dropped = await dropOrphans(itemsDir, live)
     if (dropped) log(`  drop ${dropped} item(s) from removed feeds`)
   }

@@ -49,6 +49,11 @@ function sameSet(current: Set<string>, next: Set<string>): boolean {
   return true
 }
 
+/** Failed stream attempts before the HTTP path takes over for a while. */
+const STREAM_ATTEMPTS = 3
+/** How long a given-up stream waits before trying the Host again. */
+const STREAM_RETRY_MS = 60000
+
 /** What the transport needs from the controller that owns the published state. */
 export interface TransportPorts {
   /** The two halves as published right now. */
@@ -135,6 +140,9 @@ export function createTransport(ports: TransportPorts): Transport {
   let lastRev = 0
   let stream: EventSource | null = null
   let streaming = false
+  /** Failed attempts to open the stream; a Host that has none falls back for good. */
+  let streamAttempts = 0
+  let streamRetry: ReturnType<typeof setTimeout> | null = null
 
   function request(route: string, body?: unknown): Promise<ApiResponse> {
     return fetch(PREFIX + route, {
@@ -450,10 +458,27 @@ export function createTransport(ports: TransportPorts): Transport {
 
   function closeStream(): void {
     streaming = false
+    if (streamRetry) {
+      clearTimeout(streamRetry)
+      streamRetry = null
+    }
     if (!stream) return
     const source = stream
     stream = null
     source.close()
+  }
+
+  /**
+   * Try the stream again later, after it could not be opened. A Host that was
+   * restarted mid-session starts serving it again; a Host that never will costs
+   * one attempt a minute and stays on the HTTP path meanwhile.
+   */
+  function retryStream(delayMs: number): void {
+    if (disposed || streamRetry) return
+    streamRetry = setTimeout(function () {
+      streamRetry = null
+      if (!disposed && mounted > 0) openStream()
+    }, delayMs)
   }
 
   /** The stream could not carry the state: say why, and let HTTP cover it. */
@@ -472,6 +497,7 @@ export function createTransport(ports: TransportPorts): Transport {
    */
   function openStream(): void {
     closeStream()
+    streamAttempts = 0
     if (disposed || typeof EventSource === 'undefined') {
       loadHttp({ force: !data().loadedOnce }).catch(function () { })
       return
@@ -480,6 +506,7 @@ export function createTransport(ports: TransportPorts): Transport {
     stream = source
     source.addEventListener('open', function () {
       if (stream !== source) return
+      streamAttempts = 0
       streaming = true
     })
     source.addEventListener('welcome', function (event: Event) {
@@ -497,10 +524,19 @@ export function createTransport(ports: TransportPorts): Transport {
         streamFailed(text)
         return
       }
-      // A transport failure: the browser retries the stream by itself, and the
-      // HTTP path keeps the reader current until it does.
+      // A transport failure. The HTTP path takes over at once, and the browser's
+      // own retry gets a few chances before the stream is given up for a while:
+      // a Host that has not been restarted has no such route, and hammering it
+      // every few seconds helps nobody.
       streaming = false
+      streamAttempts += 1
       loadHttp({ force: !data().loadedOnce }).catch(function () { })
+      if (streamAttempts >= STREAM_ATTEMPTS) {
+        streamAttempts = 0
+        closeStream()
+        console.warn('gitfeed: the event stream is unavailable; the reader is polling instead (restart the Host after an update)')
+        retryStream(STREAM_RETRY_MS)
+      }
     })
   }
 
@@ -711,8 +747,10 @@ export function createTransport(ports: TransportPorts): Transport {
     unmount()
     if (flushTimer) clearTimeout(flushTimer)
     if (freshTimer) clearTimeout(freshTimer)
+    if (streamRetry) clearTimeout(streamRetry)
     flushTimer = null
     freshTimer = null
+    streamRetry = null
   }
 
   return {

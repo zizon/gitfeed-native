@@ -27,6 +27,13 @@ import { decodeEntities } from './xml.js'
 const AUTO_SYNC_DEBOUNCE_MS = 20000
 /** Longest a continuously marking reader waits before a sync. */
 const AUTO_SYNC_MAX_WAIT_MS = 5 * 60000
+/**
+ * How long the git facts behind the status line stay usable before they are
+ * read again. A fetch run changes nothing git tracks — the cache it writes is
+ * ignored — so it must not pay for `git status`; a pull, a commit, or a
+ * subscription change invalidates the facts explicitly.
+ */
+const GIT_FACTS_MS = 5 * 60000
 
 export type StateResponse = Omit<ReadyState, keyof ReaderStateData> & Partial<ReaderStateData>
 
@@ -123,7 +130,16 @@ export function createGitfeed(options: GitfeedOptions) {
    * flag instead of a payload.
    */
   let itemsCache: { version: string | null; items: Item[] | null } = { version: null, items: null }
+  /**
+   * Parsed rows per shard, keyed on that shard's size and modification time.
+   * An NDJSON shard is append-only in the ordinary case, so a run that adds a
+   * few rows changes one file: without this, every such write paid a parse of
+   * the whole archive to find them.
+   */
+  const shardRows = new Map<string, { stamp: string; rows: Item[] }>()
   let gitCache: { at: number; value: GitInfo | null } = { at: 0, value: null }
+  /** The git facts the last snapshot carried, so a probe does not re-run git. */
+  let gitFacts: { at: number; value: GitInfo | null } | null = null
   let writeQueue = Promise.resolve()
   let disposed = false
 
@@ -141,10 +157,15 @@ export function createGitfeed(options: GitfeedOptions) {
     runner.touch()
   }
 
+  /** Drop the derived item model. The parsed shards stay: each is keyed on its own stamp. */
+  function invalidateItems() {
+    itemsCache = { version: null, items: null }
+  }
+
   /** Drop what a fetch, a subscription change, or a git action invalidates. */
   function invalidate() {
-    itemsCache = { version: null, items: null }
-    gitCache = { at: 0, value: null }
+    invalidateItems()
+    invalidateGit()
   }
 
   /**
@@ -154,6 +175,7 @@ export function createGitfeed(options: GitfeedOptions) {
    */
   function invalidateGit() {
     gitCache = { at: 0, value: null }
+    gitFacts = null
   }
 
   function serialize<T>(task: () => Promise<T>): Promise<T> {
@@ -174,7 +196,7 @@ export function createGitfeed(options: GitfeedOptions) {
   }
 
   /** The whole state, read from disk, in the shape the stream diffs. */
-  async function readSnapshot(cfg: RepoConfig, version: string): Promise<LiveSnapshot> {
+  async function readSnapshot(cfg: RepoConfig, version: string, recomputeGit: boolean): Promise<LiveSnapshot> {
     const model = await buildItems()
     const data = await buildSnapshot(cfg, model.items)
     return {
@@ -185,7 +207,7 @@ export function createGitfeed(options: GitfeedOptions) {
       starred: data.starred,
       feeds: data.feeds,
       reader: data.reader,
-      git: await gitInfo(),
+      git: await currentGit(recomputeGit),
       schedule: await runner.status(),
       repo: root,
       allowGit: allowGit,
@@ -199,16 +221,17 @@ export function createGitfeed(options: GitfeedOptions) {
    * mutation is midway through writing. A read that finds the same version the
    * live copy holds is dropped without a rebuild, which is what makes the
    * stream's probe free when nothing is happening.
-   * @param options - `force` broadcasts even when only the version moved.
+   * @param options - `force` broadcasts even when only the version moved; `git`
+   * re-reads the git facts that the version fingerprint does not cover.
    */
-  function refresh(options?: { force?: boolean }): Promise<void> {
+  function refresh(options?: { force?: boolean; git?: boolean }): Promise<void> {
     return serialize(async function () {
       if (disposed) return
       try {
         const version = await fileVersion()
         const held = live.info()
         if (!options?.force && held && held.version === version) return
-        const next = await readSnapshot(settings(), version)
+        const next = await readSnapshot(settings(), version, options?.git === true || held === null)
         const delta = live.apply(next)
         if (delta) broadcast(delta)
       } catch (err) {
@@ -267,7 +290,7 @@ export function createGitfeed(options: GitfeedOptions) {
     listeners.add(listener)
     armProbe()
     try {
-      if (!live.info()) await refresh({ force: true })
+      if (!live.info()) await refresh({ force: true, git: true })
       const frames = live.framesAfter(rev)
       for (const frame of frames) send(frame)
       if (!live.info()) {
@@ -355,19 +378,58 @@ export function createGitfeed(options: GitfeedOptions) {
     }
   }
 
+  /** One shard's content stamp: what changes when the file is written. */
+  async function shardStamp(file: string): Promise<string> {
+    try {
+      const info = await stat(file)
+      return `${info.size}:${info.mtimeMs}`
+    } catch {
+      return 'missing'
+    }
+  }
+
+  /**
+   * The archive as the fetcher needs it: every id already held, with the length
+   * of the body kept. Taken from the model the reader already has.
+   */
+  async function archivedLengths(): Promise<Map<string, number>> {
+    const { items } = await buildItems()
+    const known = new Map<string, number>()
+    for (const item of items) known.set(item.id, (item.summary || '').length)
+    return known
+  }
+
   /** The item model, read from disk only when its own fingerprints moved. */
   async function buildItems(): Promise<{ version: string; items: Item[] }> {
     const shards = await itemShards()
-    const version = await statVersion(shards)
+    // The same fingerprint the state version uses, computed in the one pass that
+    // also decides which shards still need parsing.
+    const hash = crypto.createHash('sha1')
+    const stamps = new Map<string, string>()
+    for (const file of shards) {
+      const stamp = await shardStamp(file)
+      stamps.set(file, stamp)
+      hash.update(`${file}:${stamp}\n`)
+    }
+    const version = hash.digest('hex')
     if (itemsCache.version === version && itemsCache.items) return { version: version, items: itemsCache.items }
 
     const items: Item[] = []
     /** id -> index in `items`, so a later copy can replace an earlier one. */
     const at = new Map<string, number>()
     for (const file of shards) {
-      const rows = await readNdjson<Item | null>(file)
-      for (const row of rows) {
-        if (!row || !row.id || !row.date) continue
+      const stamp = stamps.get(file) || 'missing'
+      let parsed = shardRows.get(file)
+      if (!parsed || parsed.stamp !== stamp) {
+        const rows: Item[] = []
+        for (const row of await readNdjson<Item | null>(file)) {
+          if (!row || !row.id || !row.date) continue
+          rows.push(row)
+        }
+        parsed = { stamp: stamp, rows: rows }
+        shardRows.set(file, parsed)
+      }
+      for (const row of parsed.rows) {
         const index = at.get(row.id)
         if (index === undefined) {
           at.set(row.id, items.length)
@@ -380,15 +442,33 @@ export function createGitfeed(options: GitfeedOptions) {
         if ((row.summary || '').length > (items[index].summary || '').length) items[index] = row
       }
     }
+    // A shard that is gone — pruned by retention, or a cache file removed — is
+    // not a shard any more; keeping its rows would resurrect deleted items.
+    const live = new Set(shards)
+    for (const file of Array.from(shardRows.keys())) if (!live.has(file)) shardRows.delete(file)
     items.sort(compareItems)
     itemsCache = { version: version, items: items }
     return { version: version, items: items }
   }
 
   async function gitInfo(): Promise<GitInfo> {
-    if (gitCache.value && Date.now() - gitCache.at < 3000) return gitCache.value
+    if (gitCache.value && Date.now() - gitCache.at < 30000) return gitCache.value
     const value = await readGitInfo(root)
     gitCache = { at: Date.now(), value: value }
+    return value
+  }
+
+  /**
+   * The git facts a snapshot carries.
+   * @param recompute - read them again; otherwise the last read is reused while
+   * it is recent, because a status line five minutes old is not wrong, and
+   * spawning git on every probe is.
+   */
+  async function currentGit(recompute: boolean): Promise<GitInfo | null> {
+    const recent = gitFacts !== null && Date.now() - gitFacts.at < GIT_FACTS_MS
+    if (!recompute && recent && gitFacts) return gitFacts.value
+    const value = await gitInfo()
+    gitFacts = { at: Date.now(), value: value }
     return value
   }
 
@@ -467,7 +547,9 @@ export function createGitfeed(options: GitfeedOptions) {
     }
     const base = {
       version: version,
-      git: await gitInfo(),
+      // A poll that finds nothing new reuses the facts of the last read; the
+      // git subprocesses are not worth running for a status line.
+      git: await currentGit(false),
       schedule: await runner.status(),
       repo: root,
       allowGit: allowGit,
@@ -551,7 +633,9 @@ export function createGitfeed(options: GitfeedOptions) {
     touch()
     const clean = checkedIds(ids)
     const changed = await setState(paths.read, clean, read)
-    invalidateGit()
+    // The git facts are left alone on purpose: a mark dirties the worktree, but
+    // the sync job that the nudge below arms commits it and re-reads them, and
+    // re-running `git status` on every scroll mark is a worse trade.
     // The mark is what this surface just did, so it does not need the row text:
     // one frame carries the ids to every other surface, and the revision keeps
     // a reconnecting one from seeing it twice.
@@ -571,7 +655,6 @@ export function createGitfeed(options: GitfeedOptions) {
     touch()
     const clean = checkedIds(ids)
     const changed = await setState(paths.starred, clean, starred)
-    invalidateGit()
     const delta = live.star(clean, starred)
     if (delta) broadcast(delta)
     if (changed > 0) syncJob.nudge(AUTO_SYNC_DEBOUNCE_MS, AUTO_SYNC_MAX_WAIT_MS)
@@ -695,10 +778,13 @@ export function createGitfeed(options: GitfeedOptions) {
     idleMinutes: idleMinutes,
     timers: options.timers,
     // A run wrote something: drop the caches keyed on those files and let the
-    // stream read once and announce what the run actually changed.
-    onRun: function () {
-      invalidate()
-      void refresh({ force: true })
+    // stream read once and announce what the run actually changed. A refresh
+    // run only writes the ignored local cache, so it does not invalidate what
+    // git reports.
+    onRun: function (id) {
+      invalidateItems()
+      if (id !== 'fetch') invalidateGit()
+      void refresh({ force: true, git: id !== 'fetch' })
     },
   })
 
@@ -711,7 +797,18 @@ export function createGitfeed(options: GitfeedOptions) {
     fetch: async function (scope) {
       if (disposed) throw new Error('gitfeed is unloading')
       await ensureLocalMeta()
-      return runFetch({ root: root, dataDir: '.local', only: scope.only, feeds: scope.feeds })
+      return runFetch({
+        root: root,
+        dataDir: '.local',
+        only: scope.only,
+        feeds: scope.feeds,
+        // The merged model is already in memory; the run does not read the
+        // archive again to learn which ids it holds.
+        known: await archivedLengths(),
+        // Unsubscribing removes that feed's rows itself, so there is nothing
+        // for a run to sweep — and sweeping reads every shard to find that out.
+        pruneOrphans: false,
+      })
     },
   }))
 
@@ -806,7 +903,7 @@ export function createGitfeed(options: GitfeedOptions) {
     syncJob.nudge(AUTO_SYNC_DEBOUNCE_MS, AUTO_SYNC_MAX_WAIT_MS)
     // The new row is drawn from the stream, so announce it before the one-off
     // fetch starts: the subscription existing is the news here.
-    await refresh({ force: true })
+    await refresh({ force: true, git: true })
 
     // Pull this one feed into the local cache so it appears immediately. A
     // failure here still leaves the subscription in place.
@@ -846,7 +943,7 @@ export function createGitfeed(options: GitfeedOptions) {
     })
     invalidate()
     syncJob.nudge(AUTO_SYNC_DEBOUNCE_MS, AUTO_SYNC_MAX_WAIT_MS)
-    await refresh({ force: true })
+    await refresh({ force: true, git: true })
     return { ok: true, removed: key }
   }
 
@@ -883,7 +980,7 @@ export function createGitfeed(options: GitfeedOptions) {
     // feeds.json is already a sync target, so the move is pushed whatever
     // pushed the last subscription change.
     syncJob.nudge(AUTO_SYNC_DEBOUNCE_MS, AUTO_SYNC_MAX_WAIT_MS)
-    await refresh({ force: true })
+    await refresh({ force: true, git: true })
     return moved
   }
 
@@ -900,7 +997,7 @@ export function createGitfeed(options: GitfeedOptions) {
     }
     const run = await syncJob.runNow({ action: name })
     invalidate()
-    await refresh({ force: true })
+    await refresh({ force: true, git: true })
     const value = run.value
     if (value && typeof value === 'object') return value as GitActionResult
     return { ok: false, action: name, error: run.outcome.summary || 'git action failed' }
@@ -997,7 +1094,7 @@ export function createGitfeed(options: GitfeedOptions) {
       unread: unread,
       starred: data.starred.length,
       failingFeeds: data.feeds.filter(function (f) { return !!f.error }).length,
-      git: await gitInfo(),
+      git: await currentGit(true),
       schedule: await runner.status(),
       allowGit: allowGit,
     }
