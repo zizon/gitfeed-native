@@ -18,6 +18,7 @@
  * shows no settings form and unknown keys pass through untouched.
  */
 
+import { registerBrief } from './host/brief.js'
 import { createHandler } from './host/http.js'
 import { scaffoldData } from './host/scaffold.js'
 import { resolveRoot } from './host/settings.js'
@@ -122,9 +123,19 @@ export function apply(ctx: PluginContext, config?: GitfeedConfig) {
 
   // The skill is the guide the authoring tool's description points at. Default
   // on: a profile patch written before this key existed must not lose it.
-  if (settings.skill !== false) {
+  const skill = settings.skill !== false
+  if (skill) {
     ctx.inject(['skills'], (scope) => {
       scope.effect(() => registerSkill(scope), 'gitfeed: custom feed skill')
+    })
+  }
+
+  // Installing a plugin does not show anyone its README, so the invariants an
+  // agent needs before it asks go in the prompt itself: the data root, what is
+  // committed, what needs a restart, and where the guide is.
+  if (settings.brief !== false) {
+    ctx.inject(['systemPrompt'], (scope) => {
+      scope.effect(() => registerBrief(scope, { root: root, skill: skill }), 'gitfeed: prompt brief')
     })
   }
 

@@ -47,10 +47,22 @@ export interface Skills {
   register(skill: SkillRegistration): () => void
 }
 
+/** One ordered section of the assembled system prompt. */
+export interface PromptSection {
+  name: string
+  order: number
+  text: string
+}
+
+export interface SystemPrompt {
+  section(section: PromptSection): () => void
+}
+
 /** The services a Host half can ask for, keyed by the name `inject` takes. */
 export interface ServiceMap {
   tools: Tools
   skills: Skills
+  systemPrompt: SystemPrompt
 }
 
 export interface PluginContext {
@@ -76,6 +88,7 @@ export interface GitfeedConfig {
   allowGit?: boolean
   tool?: boolean
   skill?: boolean
+  brief?: boolean
 }
 
 export interface RepoConfig {

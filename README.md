@@ -474,6 +474,7 @@ so an override restates every key it should keep.
 | `allowGit` | true | expose Pull and Sync, enable auto-sync, and show the git status line |
 | `tool` | true | register the `gitfeed` and `gitfeed_custom_feed` agent tools |
 | `skill` | true | register the `custom-feeds` skill |
+| `brief` | true | put the five-line brief in every session's system prompt |
 
 Precedence: **environment variable > `config.json` > built-in default** for
 fetch/reader values; **environment variable > plugin config > built-in default**
@@ -498,6 +499,12 @@ for `refreshMinutes`, `adaptive`, `maxIntervalMinutes`, `syncMinutes`,
 Two tools, split by intent: `gitfeed` reads and manages the reader,
 `gitfeed_custom_feed` authors a feed for a page that has none. The
 `custom-feeds` skill walks an agent through the second.
+
+Every session in the profile also carries a five-line **brief** the plugin puts
+in its system prompt: the data root, `data/` versus `.local/`, what needs a
+restart, and a path to this file. A README is a file — installing a package
+never shows it to an agent — so the invariants an agent needs before it asks
+belong in the prompt, and the rest is loaded when a task matches a skill.
 
 `gitfeed`:
 
@@ -690,7 +697,7 @@ package.json                bundle metadata: dsh.bundle patch, dsh.client module
 cordis.patch.yml            inserts the `gitfeed` Host row
 src/index.ts                typed Host entry: route, job runner, tools, skill
 src/cli.ts                  `gitfeed fetch | import-opml | init`
-src/host/                   settings, scaffold, store, OPML, XML, custom, fetch, git, runner, jobs, service, HTTP, tool
+src/host/                   settings, scaffold, store, OPML, XML, custom, brief, skill, fetch, git, runner, jobs, service, HTTP, tool
 .github/workflows/          ci.yml (gates) and release.yml (tag to npm and a GitHub release)
 tests/                      behaviour suites, fixtures, and the runner (`pnpm test`)
 docs/jobs.md                runner contract, primitives, and the ratchet

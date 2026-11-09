@@ -46,3 +46,6 @@
         # Register the `custom-feeds` skill: the guide for authoring a feed
         # script for a page or API that has no RSS.
         skill: true
+        # Put a five-line brief in every session's system prompt: the data
+        # root, what is committed, the restart boundary, where the guide is.
+        brief: true
