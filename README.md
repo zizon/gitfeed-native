@@ -558,6 +558,103 @@ A fetch only ever appends item shards, and the reader only ever appends read/sta
 state; unsubscribing is the one operation that rewrites a shard in place, which
 is why `Sync` stages `data/items/`.
 
+### Custom feeds
+
+Not everything worth reading publishes a feed. An entry may declare
+`"type": "custom"` and name a **script** in the data repository; the script
+returns a pseudo feed, and everything after that is the feed path — the same
+ids, de-duplication, retention, archive, rail, and agent tool. The reader cannot
+tell a custom feed from an RSS one, which is what makes a new source a new
+script rather than a change to the plugin.
+
+The script is the user's own part, so it lives in the data repository:
+
+```
+~/gitfeed/
+  feeds.json
+  sources/google-research.mjs       a custom feed
+  data/                             the archive
+```
+
+```json
+{
+  "id": "research-google-pubs",
+  "url": "https://research.google/pubs/",
+  "title": "Google Research — Publications",
+  "folder": "Papers",
+  "type": "custom",
+  "script": "sources/google-research.mjs"
+}
+```
+
+`sources/google-research.mjs` is the whole script — the same file as
+[`examples/google-research.mjs`](examples/google-research.mjs):
+
+```js
+export default async function (input) {
+  const answer = await input.fetch(input.url, {
+    headers: { 'user-agent': 'gitfeed/3 (+https://github.com/zizon/gitfeed-native)' },
+    redirect: 'follow',
+    signal: input.signal,
+  })
+  if (!answer.ok) throw new Error(`HTTP ${answer.status}`)
+  const html = await answer.text()
+
+  const cards = html
+    .split('<div class="row-card">')
+    .slice(1)
+    .map(function (chunk) {
+      const title = /<a class="row-card__heading[^>]*>([\s\S]*?)<\/a>/.exec(chunk)
+      const href = /<a class="row-card__heading[^>]*href=("[^"]*"|[^\s>]+)/.exec(chunk)
+      const author = /<div class="row-card__subheading__item small-text">([\s\S]*?)<\/div>/.exec(chunk)
+      if (!title || !href) return null
+      return {
+        title: text(title[1]),
+        link: new URL(href[1].replace(/^"|"$/g, ''), input.url).href,
+        author: author ? text(author[1]) : '',
+      }
+    })
+    .filter(Boolean)
+
+  // An empty list is a redesign far more often than it is an empty year, and a
+  // thrown error is what puts the feed's row in the reader's error colour.
+  if (cards.length === 0) throw new Error('no publication cards on the page')
+
+  // The cards carry no date, so the fetcher stamps each with the moment it was
+  // first seen, in page order: the first card is the newest and stays so.
+  return {
+    title: 'Google Research — Publications',
+    siteUrl: 'https://research.google/pubs/',
+    items: cards,
+  }
+}
+
+function text(html) {
+  return html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
+}
+```
+
+Paste it into `~/gitfeed/sources/`, add the entry, Refresh: fifteen papers
+arrive as items, each linked to its page and carrying its first author. The
+interface is one call:
+
+| | |
+| --- | --- |
+| input | `id`, `url`, `title`, `options`, `meta` (`etag`, `lastModified`), `fetch`, `signal` |
+| return | `{ title?, siteUrl?, etag?, lastModified?, items }` |
+| failure | throw it: the row goes red with the message. No items is a quiet run |
+
+A custom feed is held to the feed rules: identity is `sha1(feedId|id-or-link)`,
+an undated item is stamped the moment it was first sighted, `fetch.keepMonths`
+and `fetch.maxSummaryChars` apply, and the ETag a script reports is stored and
+handed back next run. `signal` is aborted at `fetch.timeoutMs`, so a script is
+bounded like a feed, and the script is resolved against the data root and must
+stay inside it — a data repository is cloned from remotes, so the code it runs
+has to belong to it.
+
+[`docs/custom-feeds.md`](docs/custom-feeds.md) is the reference: the interface in
+full, a conditional-GET example, and the failure modes.
+
 ## Layout
 
 ```
@@ -565,13 +662,15 @@ package.json                bundle metadata: dsh.bundle patch, dsh.client module
 cordis.patch.yml            inserts the `gitfeed` Host row
 src/index.ts                typed Host entry: route, job runner, tool
 src/cli.ts                  `gitfeed fetch | import-opml | init`
-src/host/                   settings, scaffold, store, OPML, XML, fetch, git, runner, jobs, service, HTTP, tool
+src/host/                   settings, scaffold, store, OPML, XML, custom, fetch, git, runner, jobs, service, HTTP, tool
 .github/workflows/          ci.yml (gates) and release.yml (tag to npm and a GitHub release)
 tests/                      behaviour suites, fixtures, and the runner (`pnpm test`)
 docs/jobs.md                runner contract, primitives, and the ratchet
+docs/custom-feeds.md        custom feeds: the script interface and the rules
 docs/history/               point-in-time records: the removed Actions job, the 2026-11-09 review
 src/client/                 native reader: controller, transport, derivations, viewport, prefs, hooks, components, styles, locales
 src/shared/                 the types both halves import, and the one runtime helper they share
+examples/                   a custom feed script: the Google Research list the docs walk through
 build.mjs                   tsc Host + esbuild Client into the loader envelope
 tsconfig.host.json          Host compiler face (includes the CLI)
 tsconfig.client.json        Client compiler face
