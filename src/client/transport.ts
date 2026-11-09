@@ -165,7 +165,13 @@ export function createTransport(ports: TransportPorts): Transport {
       } catch {
         payload = {}
       }
-      if (!res.ok) throw new Error(payload.error || `HTTP ${res.status}`)
+      // The one place an answer becomes a failure: a status the Host could not
+      // serve, or a 200 that says `ok: false` (a fetch that ran and failed is an
+      // answer, not a status). Every command above throws from here, which is
+      // why none of them checks the field itself.
+      if (!res.ok || payload.ok === false) {
+        throw new Error(payload.error || payload.output || (res.ok ? 'the Host refused the action' : `HTTP ${res.status}`))
+      }
       return payload
     })
   }
@@ -571,7 +577,6 @@ export function createTransport(ports: TransportPorts): Transport {
     ports.setBusy('add', true)
     try {
       const payload = await request('/feeds', { url: url, folder: folder })
-      if (payload.ok === false) throw new Error(payload.error || 'could not add feed')
       ports.toast(t('toast.subscribed', { name: (payload.feed && (payload.feed.title || payload.feed.url)) || url }))
       await showAll()
       return true
@@ -587,8 +592,7 @@ export function createTransport(ports: TransportPorts): Transport {
     if (!id || ui().busy.remove) return false
     ports.setBusy('remove', true)
     try {
-      const payload = await request('/feeds/remove', { id: id })
-      if (payload.ok === false) throw new Error(payload.error || 'could not remove feed')
+      await request('/feeds/remove', { id: id })
       if (ui().feedId === id) ports.setUi({ feedId: null })
       ports.toast(t('toast.unsubscribed', { name: ports.titleOf(id) }))
       await showAll()
@@ -612,7 +616,6 @@ export function createTransport(ports: TransportPorts): Transport {
     ports.setBusy('folder', true)
     try {
       const payload = await request('/feeds/folder', { id: id, folder: folder })
-      if (payload.ok === false) throw new Error(payload.error || 'could not move feed')
       const name = (payload.feed && payload.feed.folder) || t('feed.uncategorized')
       ports.toast(t('toast.moved', { name: ports.titleOf(id), folder: name }))
       await showAll()
@@ -630,9 +633,7 @@ export function createTransport(ports: TransportPorts): Transport {
     ports.setBusy(name, true)
     try {
       const payload = await request(`/${name}`, {})
-      if (payload.ok === false) {
-        ports.toast(t('toast.failed', { error: payload.error || payload.output || name }), true)
-      } else if (name === 'fetch') {
+      if (name === 'fetch') {
         ports.toast(t('toast.fetch', { summary: payload.output || 'ok' }))
       } else if (name === 'pull') {
         ports.toast(t('toast.pull'))

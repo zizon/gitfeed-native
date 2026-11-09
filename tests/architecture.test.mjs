@@ -37,6 +37,19 @@ const stateRequests = readdirSync(clientDir, { recursive: true })
   .filter((name) => readFileSync(path.join(clientDir, name), 'utf8').includes("'/state'"))
 ok(stateRequests.length === 0, 'no client module asks the Host for its state', stateRequests)
 
+// One place decides that an answer is a failure. A command that inspects `ok`
+// itself is the per-call handling growing back — and it duplicated a catch once.
+const okSites = readdirSync(clientDir, { recursive: true })
+  .filter((name) => typeof name === 'string' && /\.tsx?$/.test(name))
+  .filter((name) => readFileSync(path.join(clientDir, name), 'utf8').match(/\.ok === false|\.ok !== true/))
+  .sort()
+ok(JSON.stringify(okSites) === JSON.stringify(['transport.ts']), 'the transport is the one place a non-ok answer becomes a failure', okSites)
+
+// A status is chosen by the error's type, never by its words: matching the
+// message was how every untaught failure became a 500.
+const proseStatus = hostFiles.filter((name) => /\.test\(messageOf\(/.test(readFileSync(path.join(HOST_DIR, name), 'utf8')))
+ok(proseStatus.length === 0, 'no Host module decides a status from an error message', proseStatus)
+
 const entry = readFileSync(path.join(repoRoot, 'src', 'index.ts'), 'utf8')
 ok(/export const inject = \[[^\]]*'timer'[^\]]*\]/.test(entry), 'the plugin injects the timer service')
 ok(/ctx\.timeout\(/.test(entry), 'the plugin arms each job through ctx.timeout')

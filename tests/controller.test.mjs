@@ -330,6 +330,33 @@ if (engine === undefined || esbuild === undefined) {
     ok(host.marks.some((mark) => mark.ids.includes('k1')), 'a settled mark promise means the Host has it', host.marks.length)
     marking.dispose()
 
+    // --- a 200 that says ok:false is a failure, decided in one place ---
+    // A fetch that ran and failed answers `ok: false` under a 200: an answer,
+    // not a status. The transport is where that becomes a rejection; three
+    // commands used to re-check the field, and the fourth check sat two lines
+    // above the catch that already handled the same failure.
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = async function (url) {
+      const target = String(url)
+      if (target.indexOf('/feeds') !== -1) {
+        return { ok: true, status: 200, json: async function () { return { ok: false, error: 'no feed at that URL' } } }
+      }
+      return { ok: true, status: 200, json: async function () { return { ok: false, output: 'two feeds failed' } } }
+    }
+    const refusing = createController(t, createPrefs())
+    host.items = []
+    host.read = []
+    await loaded(refusing)
+    const refusedAdd = await refusing.addFeed('https://example.com/none', 'News')
+    ok(refusedAdd === false, 'a refused add answers false for the form', refusedAdd)
+    ok(!!refusing.get().toast && refusing.get().toast.error === true && refusing.get().toast.text.includes('no feed at that URL'),
+      'and the reason the Host gave is the one shown', refusing.get().toast)
+    await refusing.runAction('fetch')
+    ok(!!refusing.get().toast && refusing.get().toast.error === true && refusing.get().toast.text.includes('two feeds failed'),
+      'a failed fetch is reported once, through the same path', refusing.get().toast)
+    refusing.dispose()
+    globalThis.fetch = originalFetch
+
     // --- a queued mark is sent before the surface goes ---
     const before = host.marks.length
     controller.mark(['d'], true, true)

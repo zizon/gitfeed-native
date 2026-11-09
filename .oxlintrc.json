@@ -37,6 +37,7 @@
         // in the body: `catch { /* the socket is already gone */ }`.
         "no-empty": "error",
         "no-empty-function": "error",
+        "no-useless-catch": "error",
         "no-unused-expressions": "error",
         "no-unused-vars": [
           "error",
