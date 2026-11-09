@@ -94,6 +94,12 @@ export interface Controller {
   releaseSticky(ids: string[]): void
   /** Let go of rows a scroll left behind, rebuilding only if it held any. */
   trimSticky(ids: string[]): void
+  /** Tell the reader whether the list is scrolled into the archive. */
+  setScrolled(value: boolean): void
+  /** Let the arrivals a refresh held back land, rebuilding if it added rows. */
+  releaseHeld(): void
+  /** How many rows the current view has, counted from the archive. */
+  countInView(): number
   markGroup(key: string): void
   markFeed(feedId: string): void
   markFolder(folder: string): void

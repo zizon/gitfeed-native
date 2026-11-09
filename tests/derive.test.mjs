@@ -65,6 +65,7 @@ if (esbuild === undefined) {
         query: '',
         feedId: null,
         stickyRead: none,
+        heldArrivals: none,
         uncategorized: 'Uncategorized',
       }, patch)
     }
@@ -75,6 +76,10 @@ if (esbuild === undefined) {
     ok(
       ids(listOf(view({ read: new Set(['a1']), stickyRead: new Set(['a1']) }), haystack)) === 'a1,a2,b1,b2',
       'a row an implicit mark keeps stays put',
+    )
+    ok(
+      ids(listOf(view({ heldArrivals: new Set(['a2']) }), haystack)) === 'a1,b1,b2',
+      'a row a refresh is holding back stays out of the list',
     )
     ok(
       ids(listOf(view({ filter: 'starred', starred: new Set(['b2']) }), haystack)) === 'b2',

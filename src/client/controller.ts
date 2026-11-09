@@ -92,6 +92,12 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
   let toastTimer: ReturnType<typeof setTimeout> | null = null
   /** The last explicit scope mark, so a too-wide action can be taken back. */
   let lastScopeMark: string[] | null = null
+  /**
+   * Whether the list is scrolled into the archive. The transport asks before it
+   * lets a refresh put rows where the reader is looking; it is not published,
+   * because a scroll must not republish the snapshot.
+   */
+  let scrolled = false
 
   function get(): ClientState {
     return reader.getSnapshot()
@@ -132,6 +138,7 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     setBusy: setBusy,
     toast: toast,
     titleOf: function (id: string) { return feedTitle(data.feedMap, id) },
+    scrolled: function () { return scrolled },
     resetText: function () {
       // A new item model can change a summary without changing its length, so
       // both caches go together.
@@ -178,6 +185,7 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
       query: ui.query,
       feedId: ui.feedId,
       stickyRead: transport.sticky,
+      heldArrivals: transport.held,
       uncategorized: t('feed.uncategorized'),
     }
   }
@@ -253,9 +261,44 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     transport.mark(clean, value, shown)
   }
 
-  /** Forget the rows that were kept only so the current list would stay put. */
+  /**
+   * Forget the rows that were kept only so the current list would stay put, and
+   * let the arrivals that were waiting for the reader to move land with them.
+   */
   function clearSticky(): void {
     transport.clearSticky()
+    transport.releaseHeld()
+  }
+
+  /**
+   * Let a refresh's held arrivals land, rebuilding the list when that adds
+   * rows. The list calls this once the viewport is back at the top, where new
+   * rows are what the reader expects to find.
+   */
+  function releaseHeld(): void {
+    if (transport.releaseHeld()) bumpList()
+  }
+
+  /** Tell the transport whether the list is scrolled into the archive. */
+  function setScrolled(value: boolean): void {
+    scrolled = value
+  }
+
+  /**
+   * Rows the current view has, counted from the archive instead of from the
+   * list, so a row a refresh is holding still counts as something to read.
+   */
+  function countInView(): number {
+    const query = ui.query.trim().toLowerCase()
+    let n = 0
+    for (const item of data.items) {
+      if (ui.feedId && item.feed !== ui.feedId) continue
+      if (ui.filter === 'unread' && data.read.has(item.id)) continue
+      if (ui.filter === 'starred' && !data.starred.has(item.id)) continue
+      if (query && searchHay(item).indexOf(query) === -1) continue
+      n++
+    }
+    return n
   }
 
   /**
@@ -530,6 +573,9 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     digest: digestOf,
     releaseSticky: releaseSticky,
     trimSticky: trimSticky,
+    releaseHeld: releaseHeld,
+    setScrolled: setScrolled,
+    countInView: countInView,
     setFolderOpen: setFolderOpen,
     setWidths: setWidths,
     addFeed: transport.addFeed,

@@ -59,6 +59,8 @@ export interface TransportPorts {
   toast(text: string, error?: boolean, undo?: boolean): void
   /** The name a source is shown by, for the toast that names it. */
   titleOf(feedId: string): string
+  /** Whether the list is scrolled into the archive rather than sitting at its top. */
+  scrolled(): boolean
   /** Drop the row text a new item model invalidates. */
   resetText(): void
   t: Translate
@@ -80,6 +82,13 @@ export interface Transport {
   release: (ids: readonly string[]) => boolean
   /** Rows kept on screen only so the list stays put; the view reads this. */
   readonly sticky: ReadonlySet<string>
+  /** Arrivals held back until the reader leaves the position they would move. */
+  readonly held: ReadonlySet<string>
+  /**
+   * Let those arrivals land. Answers whether anything was being held, so the
+   * caller rebuilds the list only when the release actually adds rows.
+   */
+  releaseHeld: () => boolean
 }
 
 /**
@@ -100,6 +109,14 @@ export function createTransport(ports: TransportPorts): Transport {
    * which is what made the list jump on every mark.
    */
   const stickyRead = new Set<string>()
+  /**
+   * Rows a refresh brought in while the reader was scrolled into the archive.
+   * A row that lands between the top edge and the rows under it pushes
+   * everything below it down; the fade that softens that only makes it blink.
+   * They wait here instead, and land when the reader leaves the position they
+   * would have moved — the top of the list, or another scope.
+   */
+  const heldArrivals = new Set<string>()
 
   let loadPromise: Promise<void> | null = null
   let pollTimer: ReturnType<typeof setInterval> | null = null
@@ -188,6 +205,12 @@ export function createTransport(ports: TransportPorts): Transport {
       if (replaceItems && data().loadedOnce) {
         for (const item of items) if (!data().byId.has(item.id)) fresh.add(item.id)
       }
+      // A refresh that lands rows under the reader's eye moves the rows below
+      // them, and the fade meant to soften that reads as a blink: the count
+      // moves, the rows do not.
+      if (fresh.size && ports.scrolled()) {
+        for (const id of fresh) heldArrivals.add(id)
+      }
       const read = new Set<string>(Array.isArray(payload.read) ? payload.read : data().read)
       const starred = new Set<string>(Array.isArray(payload.starred) ? payload.starred : data().starred)
       const feeds: Feed[] = Array.isArray(payload.feeds) ? payload.feeds : data().feeds
@@ -240,6 +263,15 @@ export function createTransport(ports: TransportPorts): Transport {
     return loadPromise
   }
 
+  /**
+   * Reload after an act the reader asked for. Rows a refresh was holding land
+   * with it: the reader moved the list, so the rows may move now too.
+   */
+  function showAll(): Promise<void> {
+    heldArrivals.clear()
+    return load({ force: true })
+  }
+
   function flushMarks(): void {
     flushTimer = null
     const readIds = Array.from(pendingRead)
@@ -250,15 +282,19 @@ export function createTransport(ports: TransportPorts): Transport {
     const jobs: Array<Promise<ApiResponse>> = []
     if (readIds.length) jobs.push(request('/mark', { ids: readIds, read: true }))
     if (unreadIds.length) jobs.push(request('/mark', { ids: unreadIds, read: false }))
-    Promise.all(jobs).then(function (results) {
-      const last = results.at(-1)
-      if (last?.version) ports.setData({ version: last.version })
+    Promise.all(jobs).then(function () {
       // No reload here. The marks are already applied, and reloading after
       // every burst rebuilt the rows, the count, and the digest text under the
       // reader's pointer several times a second while scrolling — the list that
       // flashed while it was being read. Marks are the one write whose result
       // the caller already holds; the poll and every scope change still bring
       // whatever changed elsewhere.
+      //
+      // And the version the mark answers with is *not* adopted: it describes
+      // the root as it stands, which may already hold item shards this reader
+      // never loaded. Adopting it made the next poll answer "unchanged", and
+      // those rows were never delivered — rows missing until something else
+      // moved the version. The version stays the one the last full load named.
     }).catch(function (err: unknown) {
       ports.toast(t('toast.readFailed', { error: messageOf(err) }), true)
       load({ force: true }).catch(function () { })
@@ -296,8 +332,9 @@ export function createTransport(ports: TransportPorts): Transport {
   }
 
   function star(id: string, on: boolean): Promise<void> {
-    return request('/star', { ids: [id], star: on }).then(function (payload) {
-      if (payload.version) ports.setData({ version: payload.version })
+    // The load that follows is what settles the version: the answer to the
+    // star names the root, not the state this reader is holding.
+    return request('/star', { ids: [id], star: on }).then(function () {
       return load().catch(function () { })
     })
   }
@@ -309,7 +346,7 @@ export function createTransport(ports: TransportPorts): Transport {
       const payload = await request('/feeds', { url: url, folder: folder })
       if (payload.ok === false) throw new Error(payload.error || 'could not add feed')
       ports.toast(t('toast.subscribed', { name: (payload.feed && (payload.feed.title || payload.feed.url)) || url }))
-      await load({ force: true })
+      await showAll()
       return true
     } catch (err) {
       ports.toast(t('toast.failed', { error: messageOf(err) }), true)
@@ -327,7 +364,7 @@ export function createTransport(ports: TransportPorts): Transport {
       if (payload.ok === false) throw new Error(payload.error || 'could not remove feed')
       if (ui().feedId === id) ports.setUi({ feedId: null })
       ports.toast(t('toast.unsubscribed', { name: ports.titleOf(id) }))
-      await load({ force: true })
+      await showAll()
       return true
     } catch (err) {
       ports.toast(t('toast.failed', { error: messageOf(err) }), true)
@@ -351,7 +388,7 @@ export function createTransport(ports: TransportPorts): Transport {
       if (payload.ok === false) throw new Error(payload.error || 'could not move feed')
       const name = (payload.feed && payload.feed.folder) || t('feed.uncategorized')
       ports.toast(t('toast.moved', { name: ports.titleOf(id), folder: name }))
-      await load({ force: true })
+      await showAll()
       return true
     } catch (err) {
       ports.toast(t('toast.failed', { error: messageOf(err) }), true)
@@ -377,7 +414,7 @@ export function createTransport(ports: TransportPorts): Transport {
       } else {
         ports.toast(`${name}: ok`)
       }
-      await load({ force: true })
+      await showAll()
     } catch (err) {
       ports.toast(t('toast.failed', { error: messageOf(err) }), true)
     } finally {
@@ -438,11 +475,17 @@ export function createTransport(ports: TransportPorts): Transport {
     unmount: unmount,
     dispose: dispose,
     clearSticky: function () { if (stickyRead.size) stickyRead.clear() },
+    releaseHeld: function (): boolean {
+      if (!heldArrivals.size) return false
+      heldArrivals.clear()
+      return true
+    },
     release: function (ids: readonly string[]): boolean {
       let changed = false
       for (const id of ids) if (stickyRead.delete(id)) changed = true
       return changed
     },
     get sticky() { return stickyRead },
+    get held() { return heldArrivals },
   }
 }

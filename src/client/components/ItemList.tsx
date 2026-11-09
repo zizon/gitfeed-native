@@ -144,6 +144,10 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
       return { start: next.start, end: next.end, headerIndex: next.headerIndex }
     })
     scrollAnchor.current = next.anchor
+    // A refresh must not put rows where the reader is looking, and the top of
+    // the list is the one place where new rows are what the reader expects.
+    controller.setScrolled(next.anchor !== null)
+    if (!next.anchor) controller.releaseHeld()
     // Rows above the band that were read on the way here were kept only so the
     // list would not move; the anchor holds the position now. A flat list has
     // no section to fade them out, so the band is what lets them go.
@@ -436,17 +440,15 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
 
   const count = list.length
   /**
-   * What the header counts: the rows still to read in this view, not the rows
-   * on screen. A read row stays listed until something else moves the list, so
-   * counting the list made the number lag behind the reading and change in
-   * jumps when a rebuild finally released those rows.
+   * What the header counts: the rows this view has, counted from the archive
+   * rather than from the list. A read row stays listed until something else
+   * moves the list, so counting the list made the number lag behind the
+   * reading — and a refresh that holds its arrivals back would leave them out
+   * of the only number that says they are there.
    */
   const remaining = useMemo(function () {
-    if (state.filter !== 'unread') return count
-    let n = 0
-    for (const item of list) if (!state.read.has(item.id)) n++
-    return n
-  }, [list, state.read, state.filter, count])
+    return controller.countInView()
+  }, [state.items, state.read, state.starred, state.filter, state.query, state.feedId, state.listEpoch, controller])
   const paneClass = `gf-listpane${wide ? ' wide' : ''}${showDigest ? '' : ' rows-plain'}`
 
   // The bar follows the viewport, but the scope is picked from the strongest

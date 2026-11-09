@@ -411,13 +411,16 @@ The Sidebar has one pane, so an open article is drawn over the list rather than
 in place of it: the list stays mounted and closing an article returns to the
 same rows at the same scroll position.
 
-Two things follow from "nothing moves under the pointer". A row that has been
+Three things follow from "nothing moves under the pointer". A row that has been
 read stays listed until something else rebuilds the list, so the header counts
-what is **left to read** rather than what is on screen — the number falls as the
-reading does, instead of in jumps when a rebuild finally releases those rows.
-And a mark burst does not reload the state behind it: the reader already holds
-the change it sent, and refetching rebuilt the rows, the count, and the digest
-text under the pointer several times a second while scrolling.
+what the view **has** rather than what the list happens to hold: it is counted
+from the archive, which is why it falls as the reading does instead of in jumps
+when a rebuild finally releases those rows. A mark burst does not reload the
+state behind it — the reader already holds the change it sent, and refetching
+rebuilt the rows, the count, and the digest text under the pointer several
+times a second while scrolling. And a refresh that lands while the reader is
+scrolled into the archive holds its new rows back: the count says they are
+there, the rows arrive when the reader leaves the spot they would have moved.
 
 - **Sections hold one order.** Grouped sections are ordered by name — the way
   the rail lists folders and sources — instead of being re-ranked by item
@@ -428,9 +431,14 @@ text under the pointer several times a second while scrolling.
   viewport, the list is put back on the entry that was under its top edge, so
   the text being read does not slide down the screen. At the very top the new
   rows push in as expected instead.
-- **New rows fade in once.** Rows that arrived while the page was open get a
-  short fade (`gf-row-in`), then the class is dropped; a quiet poll animates
-  nothing, and neither does scrolling through the virtualized list.
+- **Arrivals wait for the reader to move.** A fetch brings rows older than the
+  newest ones on screen — feeds that were quiet for an hour deliver an hour's
+  worth — so a new row lands *inside* the band being read, not only at its top,
+  and inserting it pushes every row below it down. The fade meant to soften
+  that read as the page blinking. Held rows are counted but not listed; they
+  land when the reader returns to the top of the list, changes the scope, or
+  asks for a refresh. Rows that arrive where the reader is *not* looking still
+  fade in where they belong (`gf-row-in`), and a quiet poll changes nothing.
 - **Ties are broken by id**, on the Host (`compareItems`), so two items that
   share a timestamp cannot swap places between reloads.
 
@@ -836,7 +844,7 @@ Two workflows in `.github/workflows/`. `ci.yml` runs the gates on every push to
 `release.yml` turns a tag into a release:
 
 1. bump `version` in `package.json` and commit it;
-2. `git tag -a v3.4.0 -m 3.4.0 && git push origin v3.4.0`;
+2. `git tag -a v3.4.1 -m 3.4.1 && git push origin v3.4.1`;
 3. the workflow checks that the tag names that version, runs the gates, packs
    the tarball (which is also uploaded as a build artifact and attached to a
    GitHub release), and runs `npm publish --access public`.

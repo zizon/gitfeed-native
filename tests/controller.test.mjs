@@ -84,13 +84,20 @@ if (engine === undefined || esbuild === undefined) {
       const body = init && init.body ? JSON.parse(init.body) : {}
       if (target.indexOf('/state') !== -1) {
         host.states += 1
+        // The Host answers a caller that already holds this version with the
+        // volatile facts alone, so a client that claims a version it does not
+        // hold stops receiving rows.
+        const known = new URL(target, 'http://gitfeed.local').searchParams.get('version')
+        if (known === payload().version) {
+          return { ok: true, status: 200, json: async function () { return { unchanged: true, version: known, git: null, schedule: [], repo: '/tmp/gitfeed-root' } } }
+        }
         return { ok: true, status: 200, json: async function () { return payload() } }
       }
       if (target.indexOf('/mark') !== -1) {
         host.marks.push({ ids: body.ids, read: body.read })
         if (body.read) for (const id of body.ids) if (host.read.indexOf(id) === -1) host.read.push(id)
         else host.read = host.read.filter((id) => body.ids.indexOf(id) === -1)
-        return { ok: true, status: 200, json: async function () { return { ok: true, changed: body.ids.length, version: 'vm' } } }
+        return { ok: true, status: 200, json: async function () { return { ok: true, changed: body.ids.length, version: payload().version } } }
       }
       if (target.indexOf('/star') !== -1) {
         host.stars.push({ ids: body.ids, star: body.star })
@@ -98,7 +105,7 @@ if (engine === undefined || esbuild === undefined) {
           if (body.star) { if (host.starred.indexOf(id) === -1) host.starred.push(id) }
           else host.starred = host.starred.filter((kept) => kept !== id)
         }
-        return { ok: true, status: 200, json: async function () { return { ok: true, changed: body.ids.length, version: 'vs' } } }
+        return { ok: true, status: 200, json: async function () { return { ok: true, changed: body.ids.length, version: payload().version } } }
       }
       return { ok: true, status: 200, json: async function () { return { ok: true } } }
     }
@@ -190,6 +197,72 @@ if (engine === undefined || esbuild === undefined) {
     ok(!ids(starring).includes('s2'), 'unstarring it in the Starred view drops the row at once', ids(starring))
     ok(starring.get().starred.size === 0, 'and the mark is gone', [...starring.get().starred])
     starring.dispose()
+
+    // --- a mark does not make the reader claim rows it never received ---
+    // The mark's answer names the version of the root, not of the state this
+    // reader is holding; adopting it made the next poll answer "unchanged" and
+    // the rows a fetch had just written were never delivered.
+    host.items = [item('v1', 'Version one')]
+    host.read = []
+    host.starred = []
+    const versions = createController(t, createPrefs())
+    await loaded(versions)
+    const held = versions.get().version
+    // A fetch writes a row and a mark lands before the next poll.
+    host.items = [item('v2', 'Version two')].concat(host.items)
+    versions.mark(['v1'], true, true)
+    await sleep(450)
+    ok(versions.get().version === held, 'the mark does not hand the reader a version it cannot vouch for', versions.get().version)
+    await versions.load()
+    await sleep(0)
+    ok(ids(versions).includes('v2'), 'so the next poll still delivers the row the fetch wrote', ids(versions))
+    versions.dispose()
+
+    // --- a refresh that lands under the reader moves no rows ---
+    // A fetch brings rows older than the newest ones on screen, so they land
+    // inside the band being read: inserting them there pushed every row below
+    // them down, and the fade meant to soften that read as the page blinking.
+    host.items = [item('r1', 'Row one'), item('r2', 'Row two'), item('r3', 'Row three')]
+    host.read = []
+    host.starred = []
+    const still = createController(t, createPrefs())
+    await loaded(still)
+    ok(still.getList().length === 3, 'the list starts with the archive as loaded', still.getList().length)
+
+    // The reader is scrolled into the list when the refresh lands.
+    still.setScrolled(true)
+    const added = item('r4', 'Row four')
+    host.items = [host.items[0], host.items[1], added, host.items[2]]
+    await loaded(still)
+    ok(!ids(still).includes('r4'), 'a row that arrived under the reader is held back', ids(still))
+    ok(still.getList().length === 3, 'and the rows being read do not move', still.getList().length)
+    ok(still.countInView() === 4, 'the header still counts it as something to read', still.countInView())
+
+    // Coming back to the top is where new rows belong.
+    still.setScrolled(false)
+    still.releaseHeld()
+    ok(ids(still).includes('r4'), 'at the top the held row lands', ids(still))
+    ok(still.getList().length === 4, 'and the list is whole again', still.getList().length)
+
+    // A scope change is the other way out: the reader moved the list themselves.
+    still.setScrolled(true)
+    host.items = [item('r5', 'Row five')].concat(host.items)
+    await loaded(still)
+    ok(!ids(still).includes('r5'), 'another arrival is held while reading', ids(still))
+    still.setQuery('row')
+    ok(ids(still).includes('r5'), 'a search lets the held row go with the old scope', ids(still))
+    still.escape()
+
+    // With nothing scrolled, a refresh lands as it always did.
+    const arriving = createController(t, createPrefs())
+    host.items = [item('n1', 'New one')]
+    host.read = []
+    await loaded(arriving)
+    host.items = [item('n2', 'New two')].concat(host.items)
+    await loaded(arriving)
+    ok(ids(arriving).join(',') === 'n2,n1', 'an unread arrival at the top is listed at once', ids(arriving))
+    arriving.dispose()
+    still.dispose()
 
     // --- marking while scrolling does not reload the list under the pointer ---
     // Every mark used to be followed by a full /state load, which rebuilt the

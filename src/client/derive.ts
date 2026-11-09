@@ -69,6 +69,8 @@ export interface ReaderView {
   feedId: string | null
   /** Rows an implicit mark keeps on screen until the scope changes. */
   stickyRead: ReadonlySet<string>
+  /** Arrivals a refresh is holding back while the reader stays where they are. */
+  heldArrivals: ReadonlySet<string>
   /** The localized label for a source that has no folder. */
   uncategorized: string
 }
@@ -85,6 +87,10 @@ export type Haystack = (item: Item) => string
 export function listOf(view: ReaderView, haystack: Haystack): Item[] {
   const query = view.query.trim().toLowerCase()
   return view.items.filter(function (item) {
+    // A row that arrived under the reader is listed once they leave the spot
+    // it would have moved. Hiding it keeps the rows they are reading still;
+    // the count still says it is there, because it counts the archive.
+    if (view.heldArrivals.has(item.id)) return false
     if (view.filter === 'unread' && view.read.has(item.id) && !view.stickyRead.has(item.id)) return false
     if (view.filter === 'starred' && !view.starred.has(item.id)) return false
     if (view.feedId && item.feed !== view.feedId) return false
