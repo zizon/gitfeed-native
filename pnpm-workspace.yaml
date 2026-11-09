@@ -2,3 +2,10 @@
 # postinstall is optional (its platform binary comes from an optional dependency),
 # so skip rather than approve it.
 strictDepBuilds: false
+
+# minimatch < 11.0.1 has a ReDoS advisory (dev-only here: it is pulled in by
+# eslint's config-array, which the plugins carry as a peer, and the patterns it
+# matches are the static ones in .oxlintrc.json). No released eslint chain has
+# moved off ^10 yet, so the range is overridden rather than waited out.
+overrides:
+  minimatch: ^11.0.1
