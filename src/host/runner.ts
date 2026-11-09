@@ -25,6 +25,7 @@ import type { Logger } from './types.js'
 import type { ScheduleJobInfo, ScheduleJobRun } from '../shared/types.js'
 import { pathsFor } from './settings.js'
 import { readJson, writeJson } from './store.js'
+import { messageOf } from '../shared/errors.js'
 
 /** Whether a job has work right now, and when to look again when it does not. */
 export interface DueDecision {
@@ -181,13 +182,6 @@ function numberOr(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback
 }
 
-function errorText(err: unknown): string {
-  if (typeof err === 'string') return err.trim() || 'unknown error'
-  if (err instanceof Error) return err.message.trim() || 'unknown error'
-  const failure = err as { message?: unknown } | null
-  return typeof failure?.message === 'string' && failure.message.trim() ? failure.message.trim() : 'unknown error'
-}
-
 function parseLast(value: unknown): ScheduleJobRun | null {
   if (!isRecord(value) || typeof value.at !== 'string' || !value.at) return null
   const detail: Record<string, number> = {}
@@ -298,7 +292,7 @@ export function createJobRunner(options: JobRunnerOptions): JobRunner {
         try {
           file = await readScheduleFile(root)
         } catch (err) {
-          logger.warn(`gitfeed: could not read the schedule: ${errorText(err)}`)
+          logger.warn(`gitfeed: could not read the schedule: ${messageOf(err)}`)
           file = { version: 2, jobs: {} }
         }
         for (const runtime of jobs.values()) {
@@ -332,7 +326,7 @@ export function createJobRunner(options: JobRunnerOptions): JobRunner {
       try {
         await writeJson(pathsFor(root).localSchedule, payload)
       } catch (err) {
-        logger.warn(`gitfeed: could not save the schedule: ${errorText(err)}`)
+        logger.warn(`gitfeed: could not save the schedule: ${messageOf(err)}`)
       }
     }
     writing = writing.then(write, write)
@@ -424,7 +418,7 @@ export function createJobRunner(options: JobRunnerOptions): JobRunner {
           logger.warn(`gitfeed: ${job.id} failed: ${outcome.summary || 'unknown error'}`)
         }
       } catch (err) {
-        const summary = errorText(err)
+        const summary = messageOf(err)
         outcome = { failed: true, summary: summary }
         logger.warn(`gitfeed: ${job.id} job failed: ${summary}`)
       }
@@ -457,7 +451,7 @@ export function createJobRunner(options: JobRunnerOptions): JobRunner {
       try {
         availability = await job.available()
       } catch (err) {
-        logger.warn(`gitfeed: could not check ${job.id}: ${errorText(err)}`)
+        logger.warn(`gitfeed: could not check ${job.id}: ${messageOf(err)}`)
         state.nextAt = now + base * 60000
         return
       }
@@ -469,7 +463,7 @@ export function createJobRunner(options: JobRunnerOptions): JobRunner {
       try {
         decision = await job.due(now, state.data)
       } catch (err) {
-        logger.warn(`gitfeed: could not check ${job.id}: ${errorText(err)}`)
+        logger.warn(`gitfeed: could not check ${job.id}: ${messageOf(err)}`)
         state.nextAt = now + base * 60000
         return
       }
@@ -480,7 +474,7 @@ export function createJobRunner(options: JobRunnerOptions): JobRunner {
       }
       await execute(runtime, now, undefined)
     } catch (err) {
-      logger.warn(`gitfeed: ${job.id} pass failed: ${errorText(err)}`)
+      logger.warn(`gitfeed: ${job.id} pass failed: ${messageOf(err)}`)
     }
   }
 
@@ -575,7 +569,7 @@ export function createJobRunner(options: JobRunnerOptions): JobRunner {
         reason = availability.ok ? null : (availability.reason ?? 'disabled')
       } catch (err) {
         enabled = false
-        reason = errorText(err)
+        reason = messageOf(err)
       }
       const base = Math.max(1, Math.round(job.baseMin))
       const intervalMin = job.reportBaseInterval || !(state.intervalMin > 0) ? base : Math.round(state.intervalMin)

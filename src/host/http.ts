@@ -3,6 +3,7 @@
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { GitfeedService } from './service.js'
+import { messageOf } from '../shared/errors.js'
 
 interface ApiBody {
   ids?: string[]
@@ -56,13 +57,6 @@ async function readBody(req: IncomingMessage): Promise<ApiBody> {
   } catch {
     throw new Error('invalid JSON body')
   }
-}
-
-function message(err: unknown): string {
-  if (typeof err === 'string') return err.trim() || 'unknown error'
-  if (err instanceof Error) return err.message.trim() || 'unknown error'
-  const failure = err as { message?: unknown } | null
-  return typeof failure?.message === 'string' && failure.message.trim() ? failure.message.trim() : 'unknown error'
 }
 
 /**
@@ -155,8 +149,8 @@ export function createHandler(service: GitfeedService) {
 
       sendJson(res, 404, { ok: false, error: 'no such endpoint' })
     } catch (err) {
-      const status = /too large|invalid JSON/.test(message(err)) ? 400 : 500
-      if (!res.headersSent) sendJson(res, status, { ok: false, error: message(err) })
+      const status = /too large|invalid JSON/.test(messageOf(err)) ? 400 : 500
+      if (!res.headersSent) sendJson(res, status, { ok: false, error: messageOf(err) })
       else res.end()
     }
   }

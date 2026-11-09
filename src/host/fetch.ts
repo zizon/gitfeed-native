@@ -14,6 +14,7 @@ import { feedIdFor, slug } from './feeds.js'
 import { appendNdjson, ensureDir, listShards, readJson, readNdjson, updateNdjson, writeJson } from './store.js'
 import type { FeedDefinition, FetchFeedOutcome, FetchResult, RepoConfig } from './types.js'
 import type { FeedEntry, Item } from '../shared/types.js'
+import { messageOf } from '../shared/errors.js'
 
 const UA = 'gitfeed/2.0 (+https://github.com; personal RSS reader)'
 
@@ -233,7 +234,7 @@ async function runFeed(feed: FeedDefinition, prev: FeedMeta | undefined, now: Da
     return Object.assign({ feed: feed }, result)
   } catch (err) {
     const failure = err as { message?: unknown } | null
-    return { feed: feed, error: String(failure?.message || err) }
+    return { feed: feed, error: messageOf(failure ?? err) }
   }
 }
 

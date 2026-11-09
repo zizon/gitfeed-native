@@ -8,7 +8,7 @@ import type { Feed, GitInfo, Item, ReaderPrefs, ScheduleJobInfo } from '../share
 import { PREFIX } from './constants.js'
 import type { Translate } from './locales.js'
 import type { ReaderData, ReaderUi } from './types.js'
-import { messageOf } from './util.js'
+import { messageOf } from '../shared/errors.js'
 
 interface ApiFeed {
   title?: string

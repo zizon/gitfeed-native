@@ -16,6 +16,7 @@ import { runFetch } from './host/fetch.js'
 import { importOpml } from './host/opml.js'
 import { scaffoldData, starterFiles } from './host/scaffold.js'
 import { expandHome } from './host/settings.js'
+import { messageOf } from './shared/errors.js'
 
 interface Flags {
   root?: string
@@ -51,13 +52,6 @@ run, and the git remote is wherever that checkout pushes. The reader's fast
 local refresh runs the same fetcher and writes to the gitignored .local/ cache
 instead of data/.
 `
-
-function message(err: unknown): string {
-  if (typeof err === 'string') return err.trim() || 'unknown error'
-  if (err instanceof Error) return err.message.trim() || 'unknown error'
-  const failure = err as { message?: unknown } | null
-  return typeof failure?.message === 'string' && failure.message.trim() ? failure.message.trim() : 'unknown error'
-}
 
 function parseArgv(argv: string[]): { flags: Flags; positional: string[] } {
   const flags: Flags = {}
@@ -152,7 +146,7 @@ export async function main(argv: string[]): Promise<number> {
     flags = parsed.flags
     positional = parsed.positional
   } catch (err) {
-    console.error(`gitfeed: ${message(err)}`)
+    console.error(`gitfeed: ${messageOf(err)}`)
     console.error(USAGE)
     return 2
   }
@@ -173,7 +167,7 @@ export async function main(argv: string[]): Promise<number> {
     console.error(USAGE)
     return 2
   } catch (err) {
-    console.error(`gitfeed: ${message(err)}`)
+    console.error(`gitfeed: ${messageOf(err)}`)
     return 1
   }
 }

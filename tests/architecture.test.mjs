@@ -4,7 +4,7 @@
 // shared with the CLI, which is not a schedule.
 import { readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
-import { finish, ok, repoRoot } from './harness.mjs'
+import { finish, lib, ok, repoRoot } from './harness.mjs'
 
 const HOST_DIR = path.join(repoRoot, 'src', 'host')
 const RAW_TIMER = /\bset(?:Timeout|Interval)\s*\(/
@@ -30,5 +30,22 @@ ok(JSON.stringify(methods) === JSON.stringify(['timeout']), 'the timer surface i
 const entry = readFileSync(path.join(repoRoot, 'src', 'index.ts'), 'utf8')
 ok(/export const inject = \[[^\]]*'timer'[^\]]*\]/.test(entry), 'the plugin injects the timer service')
 ok(/ctx\.timeout\(/.test(entry), 'the plugin arms each job through ctx.timeout')
+
+// One error-message helper for the whole package. Every half used to carry its
+// own copy and they had already drifted (git's prefers stderr), so the check is
+// on the shape rather than the name: a renamed copy still trips it.
+const sources = readdirSync(path.join(repoRoot, 'src'), { recursive: true }).filter((name) => /\.tsx?$/.test(name))
+const copies = sources.filter((name) => {
+  if (name.endsWith(path.join('shared', 'errors.ts'))) return false
+  const text = readFileSync(path.join(repoRoot, 'src', name), 'utf8')
+  return /function \w+\(\w+: unknown\): string \{/.test(text) && text.includes("|| 'unknown error'")
+})
+ok(copies.length === 0, 'no module keeps its own error-message helper', copies)
+
+const { messageOf } = await import(lib('shared', 'errors.js'))
+ok(messageOf(new Error('  boom ')) === 'boom', 'an Error contributes its trimmed message')
+ok(messageOf(' plain ') === 'plain', 'a thrown string contributes itself')
+ok(messageOf({ message: ' shaped ' }) === 'shaped', 'an object with a message is read')
+ok(messageOf(null) === 'unknown error' && messageOf(undefined) === 'unknown error', 'anything else is "unknown error"')
 
 finish()

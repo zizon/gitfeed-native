@@ -14,6 +14,7 @@ import { appendNdjson, listShards, readJson, readNdjson, updateNdjson } from './
 import type { FetchResult, GitActionResult, Logger, ReaderStateData, ReadyState, RepoConfig } from './types.js'
 import type { FeedDefinition } from './types.js'
 import type { GitInfo, Item } from '../shared/types.js'
+import { messageOf } from '../shared/errors.js'
 
 /** A local mark is pushed after this much quiet, so scrolling marks coalesce. */
 const AUTO_SYNC_DEBOUNCE_MS = 20000
@@ -54,13 +55,6 @@ interface ListToolInput {
   unreadOnly?: unknown
   starredOnly?: unknown
   limit?: unknown
-}
-
-function errorText(err: unknown): string {
-  if (typeof err === 'string') return err.trim() || 'unknown error'
-  if (err instanceof Error) return err.message.trim() || 'unknown error'
-  const failure = err as { message?: unknown } | null
-  return typeof failure?.message === 'string' && failure.message.trim() ? failure.message.trim() : 'unknown error'
 }
 
 function plainText(html: string | null | undefined): string {
@@ -304,7 +298,7 @@ export function createGitfeed(options: GitfeedOptions) {
     } catch (err) {
       return {
         version: version,
-        error: errorText(err),
+        error: messageOf(err),
         items: [], read: [], starred: [], feeds: [],
         reader: { hideEmptyFeeds: true, markReadOnScroll: true, groupBy: 'none' },
         git: await gitInfo(),
@@ -502,7 +496,7 @@ export function createGitfeed(options: GitfeedOptions) {
     try {
       await runLocalFetch({ only: entry.id })
     } catch (err) {
-      logger.warn(`gitfeed: initial fetch for ${entry.id} failed: ${errorText(err)}`)
+      logger.warn(`gitfeed: initial fetch for ${entry.id} failed: ${messageOf(err)}`)
     }
     return entry
   }

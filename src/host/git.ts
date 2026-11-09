@@ -6,16 +6,22 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 import type { GitActionResult } from './types.js'
 import type { GitInfo } from '../shared/types.js'
+import { messageOf } from '../shared/errors.js'
 
 const execFileAsync = promisify(execFile)
 
-function message(err: unknown): string {
-  if (!err) return 'unknown error'
-  const failure = err as { stderr?: unknown; message?: unknown } | null
-  const raw = typeof failure?.stderr === 'string' && failure.stderr
-    ? failure.stderr
-    : typeof failure?.message === 'string' ? failure.message : err instanceof Error ? err.message : ''
-  return raw.trim().split('\n').slice(0, 6).join('\n') || 'unknown error'
+/**
+ * A git failure: the command writes its reason to stderr, which the generic
+ * message helper never sees.
+ * @param err - the rejected exec.
+ * @returns the first lines of stderr, or the message.
+ */
+function gitMessage(err: unknown): string {
+  const failure = err as { stderr?: unknown } | null
+  const raw = typeof failure?.stderr === 'string' ? failure.stderr : ''
+  // Git's reason is the first lines of stderr; anything else is the message the
+  // rest of the package would have reported.
+  return raw.trim().split('\n').slice(0, 6).join('\n') || messageOf(err)
 }
 
 /**
@@ -46,7 +52,7 @@ export async function readGitInfo(root: string): Promise<GitInfo> {
   try {
     await runGit(root, ['rev-parse', '--git-dir'])
   } catch (err) {
-    return { repo: false, error: message(err) }
+    return { repo: false, error: gitMessage(err) }
   }
   try {
     let branch = ''
@@ -68,7 +74,7 @@ export async function readGitInfo(root: string): Promise<GitInfo> {
     }
     return { repo: true, branch: branch || null, dirty: dirty, remotes: remotes, ahead: ahead, behind: behind }
   } catch (err) {
-    return { repo: false, error: message(err) }
+    return { repo: false, error: gitMessage(err) }
   }
 }
 
@@ -82,7 +88,7 @@ export async function pull(root: string): Promise<GitActionResult> {
     const output = await runGit(root, ['pull', '--rebase', '--autostash'])
     return { ok: true, action: 'pull', output: output.trim() }
   } catch (err) {
-    return { ok: false, action: 'pull', error: message(err) }
+    return { ok: false, action: 'pull', error: gitMessage(err) }
   }
 }
 
@@ -153,7 +159,7 @@ export async function sync(root: string): Promise<GitActionResult> {
     }
     return { ok: true, action: 'sync', committed: committed, output: 'read state pushed' }
   } catch (err) {
-    return { ok: false, action: 'sync', error: message(err) }
+    return { ok: false, action: 'sync', error: gitMessage(err) }
   }
 }
 

@@ -22,6 +22,7 @@ import {
 } from './derive.js'
 import type { ReaderView } from './derive.js'
 import { LIST_MAX, LIST_MIN, RAIL_MAX, RAIL_MIN } from './constants.js'
+import { messageOf } from '../shared/errors.js'
 import type { PrefsStore } from './prefs.js'
 import { createTransport } from './transport.js'
 import type { Transport } from './transport.js'
@@ -34,7 +35,7 @@ import type {
   ReaderSource,
   ReaderUi,
 } from './types.js'
-import { clamp, digestText, messageOf } from './util.js'
+import { clamp, digestText } from './util.js'
 
 const plainCache = new Map<string, string>()
 

@@ -6,13 +6,6 @@ export function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value))
 }
 
-export function messageOf(err: unknown): string {
-  if (typeof err === 'string') return err.trim() || 'unknown error'
-  if (err instanceof Error) return err.message.trim() || 'unknown error'
-  const failure = err as { message?: unknown } | null
-  return typeof failure?.message === 'string' && failure.message.trim() ? failure.message.trim() : 'unknown error'
-}
-
 export function fmtTime(iso: string): string {
   const time = new Date(iso).getTime()
   if (!Number.isFinite(time)) return ''
