@@ -39,6 +39,8 @@ if (esbuild === undefined) {
         prevTop: 0,
         top: 0,
         height: 100,
+        // The scroll has room left unless a case says where it stops.
+        maxTop: offsets[entries.length],
         groupBy: 'none',
         markOnScroll: true,
       }, patch))
@@ -82,6 +84,34 @@ if (esbuild === undefined) {
       pass(flat, { prevTop: 0, top: 50, markOnScroll: false }).passedIds.length === 0,
       'the scroll-mark switch silences it',
     )
+    // The end of the list: the last screenful can never cross the top edge, the
+    // scroll runs out first, so reaching the end of the scroll reaches it.
+    const endOf = (patch) => pass(flat, Object.assign({ maxTop: 900 }, patch))
+    const lastScreen = endOf({ prevTop: 800, top: 900 })
+    ok(
+      lastScreen.passedIds.length === 20 && lastScreen.passedIds[19] === 'r99',
+      'the screenful the scroll stops on is passed with it',
+      `${lastScreen.passedIds.length} rows, last ${lastScreen.passedIds[19]}`,
+    )
+    ok(
+      endOf({ prevTop: 700, top: 800 }).passedIds.length === 10,
+      'short of the end only the rows the top crossed are passed',
+      endOf({ prevTop: 700, top: 800 }).passedIds.length,
+    )
+    ok(endOf({ prevTop: 900, top: 900 }).passedIds.length === 0, 'resting at the end passes nothing more')
+    ok(endOf({ prevTop: 900, top: 800 }).passedIds.length === 0, 'scrolling back up from the end passes nothing')
+    ok(
+      endOf({ prevTop: 0, top: 900 }).passedIds.length === 100,
+      'a jump to the end passes everything between, the last screenful included',
+      endOf({ prevTop: 0, top: 900 }).passedIds.length,
+    )
+    // A list shorter than its viewport cannot be scrolled at all; the end
+    // extension must not turn a stray offset into "the whole list is read".
+    ok(
+      pass(flat, { prevTop: 0, top: 40, maxTop: 0 }).passedIds.length === 4,
+      'a list with nowhere to scroll passes only the rows the top crossed',
+      pass(flat, { prevTop: 0, top: 40, maxTop: 0 }).passedIds.length,
+    )
 
     // The sticky section header stays mounted under the edge.
     const grouped = []
@@ -110,6 +140,11 @@ if (esbuild === undefined) {
     ok(deep.headerIndex === 0, 'and reports the one header it needs', deep.headerIndex)
     const ungrouped = pass(grouped, { top: 250, prevTop: 250, height: 100, groupBy: 'none' })
     ok(ungrouped.start === 21, 'with no grouping the band is the plain overscan', ungrouped.start)
+    ok(
+      pass(grouped, { prevTop: 100, top: 520, maxTop: 520 }).passedIds.length === 51,
+      'the end passes the last screenful past the section headers, which are not rows',
+      pass(grouped, { prevTop: 100, top: 520, maxTop: 520 }).passedIds.length,
+    )
 
     // Rows a scroll left behind: read rows above the band. A grouped list lets
     // them go by fading their section; a flat one has no section, which is why

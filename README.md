@@ -379,7 +379,8 @@ not carry its own theme setting.
   scroll out of the mounted band. A feed or folder that was on screen stays in
   the Feeds list for the same reason.
 - **Read on scroll**: a row counts as read only after the viewport top passed
-  it while moving down; rows a scrollbar drag skipped over are included.
+  it while moving down; rows a scrollbar drag skipped over are included, and
+  the screenful the scroll stops on counts as reached when the list ends.
 - **Starring**: the star sits on the row itself, so an item can be kept without
   opening it; it holds its space and appears on the row the pointer or the
   keyboard is on, and a starred row shows it outright. Under the Starred filter

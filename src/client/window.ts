@@ -82,6 +82,11 @@ export interface WindowInput {
   top: number
   /** Viewport height; the caller substitutes a default before measuring. */
   height: number
+  /**
+   * Furthest the viewport can scroll. The last screenful can never cross the
+   * top edge, so the end of the scroll is the only way to tell it was reached.
+   */
+  maxTop: number
   /** Grouping in effect; `none` turns the sticky floor off. */
   groupBy: string
   /** Whether rows scrolling past are marked at all. */
@@ -96,7 +101,10 @@ export interface ListWindow {
   end: number
   /** Entry under the viewport edge, and how far into it the edge sits. */
   anchor: { key: string; delta: number } | null
-  /** Rows the viewport top crossed on the way down, in archive order. */
+  /**
+   * Rows the viewport top crossed on the way down, in archive order — plus,
+   * when the scroll ran out, the last screenful it stopped on.
+   */
   passedIds: string[]
   /**
    * The section header covering the band when it sits above the mounted rows.
@@ -142,7 +150,10 @@ export function windowOf(input: WindowInput): ListWindow {
   // scrollbar drag skipped over without ever rendering them.
   if (input.markOnScroll && top > input.prevTop) {
     const from = lowerBound(offsets, input.prevTop)
-    const to = lowerBound(offsets, top)
+    // The last screenful has nowhere to go: the scroll stops before those rows
+    // cross the top edge, so scrolling to the end counts as reaching them.
+    const atEnd = input.maxTop > 0 && top >= input.maxTop - 1
+    const to = atEnd ? count : lowerBound(offsets, top)
     for (let i = from; i < to; i++) {
       const entry = entries[i]
       if (entry.kind === 'row') passedIds.push(entry.item.id)

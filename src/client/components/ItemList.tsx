@@ -134,6 +134,9 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
       prevTop: prevTop,
       top: top,
       height: el.clientHeight || 600,
+      // Where this list actually stops scrolling, padding included, so the end
+      // is the browser's end and not the sum of the entry heights.
+      maxTop: Math.max(0, el.scrollHeight - el.clientHeight),
       groupBy: groupBy,
       markOnScroll: markOnScroll,
     })
