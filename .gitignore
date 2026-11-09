@@ -4,3 +4,7 @@ node_modules/
 .tmp/
 # bundle build output (prepare builds it on install)
 /lib/
+
+# local secrets (an npm token for a release)
+.env
+.env.*
