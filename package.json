@@ -7,6 +7,7 @@
     "type": "git",
     "url": "git+https://github.com/zizon/gitfeed-native.git"
   },
+  "license": "MIT",
   "engines": {
     "node": ">=24.9.0"
   },

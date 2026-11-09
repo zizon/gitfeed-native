@@ -714,3 +714,7 @@ Before anything is published, these are the repo-side steps:
   checkout and reinstall.
 - **The data repository is yours to back up.** Nothing in this package stores
   or uploads the data; a lost data checkout is a lost reading list.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
