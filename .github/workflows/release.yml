@@ -20,10 +20,18 @@ on:
 
 permissions:
   contents: write
+  # Minted only when this workflow publishes without a token: the trusted
+  # publisher configured on the package asks GitHub who is running.
+  id-token: write
 
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      # `secrets` cannot appear in an `if:` conditional, so its presence is
+      # mapped here: with a token the publish steps use it, without one they
+      # fall back to the trusted publisher.
+      HAS_TOKEN: ${{ secrets.NPM_TOKEN != '' }}
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -64,11 +72,21 @@ jobs:
           name: tarball
           path: '*.tgz'
 
-      - name: publish
-        if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
+      # Trusted publishing needs npm 11.5.1 or newer; the bundled one may be
+      # older.
+      - name: npm for a tokenless publish
+        if: (startsWith(github.ref, 'refs/tags/v') || inputs.publish) && env.HAS_TOKEN != 'true'
+        run: npm install -g npm@latest
+
+      - name: publish with the token
+        if: (startsWith(github.ref, 'refs/tags/v') || inputs.publish) && env.HAS_TOKEN == 'true'
         run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: publish through the trusted publisher
+        if: (startsWith(github.ref, 'refs/tags/v') || inputs.publish) && env.HAS_TOKEN != 'true'
+        run: npm publish --access public
 
       - name: GitHub release
         if: startsWith(github.ref, 'refs/tags/v')
