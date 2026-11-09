@@ -86,7 +86,7 @@ function framesOf(text, name) {
   return out
 }
 
-const server = createServer((req, res) => { void createEventsHandler(service, function () { return undefined })(req, res) })
+const server = createServer((req, res) => { void createEventsHandler(service, function () { return undefined }, quiet)(req, res) })
 server.on('clientError', () => {})
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
 const port = server.address().port

@@ -3,6 +3,7 @@
 // driven over a real HTTP listener where the transport matters, and over a fake
 // response where the callback is what the test wants to control.
 import { createServer } from 'node:http'
+import { getEventListeners } from 'node:events'
 import { finish, lib, ok } from './harness.mjs'
 
 const { createEventsHandler } = await import(lib('host', 'events.js'))
@@ -41,6 +42,9 @@ const delta = {
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+// The handler now logs a stream that broke off; these tests are about the
+// frames, so the route's log is collected where it is asserted and dropped here.
+const quiet = { info() {}, warn() {}, error() {} }
 
 /**
  * A frame source the test pushes into: the handler pulls whatever is queued,
@@ -73,8 +77,15 @@ function frameSource(initial) {
         while (!closed && !signal.aborted) {
           if (queued.length === 0) {
             await new Promise(function (resolve) {
-              waiting = resolve
-              signal.addEventListener('abort', resolve, { once: true })
+              // Removed when the wake-up arrives, not only on abort: this
+              // fixture lives for dozens of frames, and a listener per wait
+              // would be the fixture's leak, not the handler's.
+              const done = function () {
+                signal.removeEventListener('abort', done)
+                resolve()
+              }
+              waiting = done
+              signal.addEventListener('abort', done, { once: true })
             })
             continue
           }
@@ -183,7 +194,7 @@ function fakeResponse() {
 // --- frames arrive in order, from the revision the surface asked ---
 {
   const source = frameSource([welcome])
-  const handler = createEventsHandler(source, function () { return undefined })
+  const handler = createEventsHandler(source, function () { return undefined }, quiet)
   const listener = await listen(handler)
   const controller = new AbortController()
   const res = await fetch(`http://127.0.0.1:${listener.port}/gitfeed/events?rev=3`, { signal: controller.signal })
@@ -211,7 +222,7 @@ function fakeResponse() {
 // reports it complete keeps the next frame from even being asked for.
 {
   const source = frameSource([welcome])
-  const handler = createEventsHandler(source, function () { return undefined })
+  const handler = createEventsHandler(source, function () { return undefined }, quiet)
   const { res, state, hold, release } = fakeResponse()
   const done = handler(fakeRequest(), res)
   await sleep(10)
@@ -243,7 +254,7 @@ function fakeResponse() {
     items: [{ id: 'big-1', feed: 'feed-a', title: 'A long body', link: '', date: '2026-11-01T10:00:00.000Z', author: '', summary: body }],
   })
   const controller = new AbortController()
-  const listener = await listen(createEventsHandler(frameSource([large]), function () { return undefined }))
+  const listener = await listen(createEventsHandler(frameSource([large]), function () { return undefined }, quiet))
   const res = await fetch(`http://127.0.0.1:${listener.port}/gitfeed/events?rev=0`, { signal: controller.signal })
   const stream = streamReader(res)
   const text = await stream.until('"big-1"', 8000)
@@ -263,7 +274,7 @@ function fakeResponse() {
       return (async function* () { yield welcome })()
     },
   }
-  const handler = createEventsHandler(source, function () { return 401 })
+  const handler = createEventsHandler(source, function () { return 401 }, quiet)
   const listener = await listen(handler)
   const res = await fetch(`http://127.0.0.1:${listener.port}/gitfeed/events`)
   ok(res.status === 401, 'a refused request is answered with its status', res.status)
@@ -282,7 +293,7 @@ function fakeResponse() {
       })()
     },
   }
-  const handler = createEventsHandler(source, function () { return undefined })
+  const handler = createEventsHandler(source, function () { return undefined }, quiet)
   const listener = await listen(handler)
   const res = await fetch(`http://127.0.0.1:${listener.port}/gitfeed/events`, { signal: controller.signal })
   const stream = streamReader(res)
@@ -292,6 +303,101 @@ function fakeResponse() {
   controller.abort()
   await sleep(20)
   await listener.close()
+}
+
+// --- a long stream does not collect an abort listener per frame ---
+// Each frame is raced against the surface going away. Built inside the loop that
+// guard adds a listener to the same signal every frame: Node reports a leak at
+// eleven, and none of them is ever released.
+{
+  let seen = null
+  const inner = frameSource([])
+  const source = {
+    frames(rev, signal) {
+      seen = signal
+      return inner.frames(rev, signal)
+    },
+  }
+  const controller = new AbortController()
+  const listener = await listen(createEventsHandler(source, function () { return undefined }, quiet))
+  const res = await fetch(`http://127.0.0.1:${listener.port}/gitfeed/events?rev=0`, { signal: controller.signal })
+  const stream = streamReader(res)
+  const next = async function (rev) {
+    inner.push(Object.assign({}, delta, { rev: rev, version: `v${rev}` }))
+    await stream.until(`"rev":${rev}`)
+    return getEventListeners(seen, 'abort').length
+  }
+  const early = await next(6)
+  let late = early
+  for (let rev = 7; rev <= 20; rev++) late = await next(rev)
+  ok(late <= early + 1, 'a stream of many frames adds no abort listener per frame', [early, late])
+  await stream.stop()
+  controller.abort()
+  await sleep(20)
+  await listener.close()
+}
+
+// --- a socket that fails is reported, not read as a surface hanging up ---
+// A boolean outcome could not tell a reader closing its tab from a broken pipe,
+// and the error the write callback carries went nowhere at all.
+{
+  const warnings = []
+  const log = { info() {}, warn(line) { warnings.push(String(line)) }, error() {} }
+  let pulled = 0
+  const source = { frames() { pulled += 1; return (async function* () { yield welcome })() } }
+  const state = { ended: 0 }
+  const res = {
+    writeHead() {},
+    write(text, callback) {
+      if (callback) callback(new Error('EPIPE: the socket went away'))
+      return false
+    },
+    end() { state.ended += 1 },
+    on() { return res },
+  }
+  const outcome = await createEventsHandler(source, function () { return undefined }, log)(fakeRequest(), res)
+  ok(outcome === undefined, 'a failed write does not reject the handler', outcome)
+  ok(warnings.length === 1, 'it is one warning, not a report per chunk', warnings)
+  ok(String(warnings[0]).includes('EPIPE'), 'naming the socket error', warnings[0])
+  ok(state.ended === 1, 'and the response is ended', state.ended)
+  ok(pulled === 0, 'before the reader is asked for a frame', pulled)
+}
+
+// --- a response that throws on write is an outcome, not a rejection ---
+{
+  const warnings = []
+  const log = { info() {}, warn(line) { warnings.push(String(line)) }, error() {} }
+  const state = { ended: 0 }
+  const res = {
+    writeHead() {},
+    write() { throw new Error('write after end') },
+    end() { state.ended += 1 },
+    on() { return res },
+  }
+  const outcome = await createEventsHandler({ frames() { return (async function* () { yield welcome })() } }, function () { return undefined }, log)(fakeRequest(), res)
+  ok(outcome === undefined, 'a response throwing on write does not reject the handler', outcome)
+  ok(warnings.length === 1 && String(warnings[0]).includes('write after end'), 'its error is reported', warnings)
+  ok(state.ended === 1, 'and the response is ended', state.ended)
+}
+
+// --- a source that throws on the way in is a frame, a line, and a closed response ---
+// `frames()` used to be called outside the try: a synchronous throw left the
+// response open and rejected the handler, where a 500 cannot be sent any more.
+{
+  const warnings = []
+  const log = { info() {}, warn(line) { warnings.push(String(line)) }, error() {} }
+  const state = { written: [], ended: 0 }
+  const res = {
+    writeHead() {},
+    write(text, callback) { state.written.push(text); if (callback) callback(); return true },
+    end() { state.ended += 1 },
+    on() { return res },
+  }
+  await createEventsHandler({ frames() { throw new Error('no reader') } }, function () { return undefined }, log)(fakeRequest(), res)
+  const last = state.written[state.written.length - 1] || ''
+  ok(last.includes('event: error') && last.includes('no reader'), 'the surface hears why the stream could not open', last.slice(0, 80))
+  ok(warnings.some(function (line) { return String(line).includes('no reader') }), 'and the log keeps the reason', warnings)
+  ok(state.ended === 1, 'with the response ended', state.ended)
 }
 
 clearTimeout(watchdog)

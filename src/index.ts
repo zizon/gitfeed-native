@@ -126,7 +126,7 @@ export function apply(ctx: PluginContext, config?: GitfeedConfig) {
     () => ctx.webServer.register({
       kind: 'exact',
       path: STREAM_PATH,
-      handler: createEventsHandler(service, admitStream),
+      handler: createEventsHandler(service, admitStream, ctx.logger),
     }),
     'gitfeed: event stream',
   )

@@ -123,6 +123,11 @@ name (`load`) that no longer describes what it does.
    keeps the *result* correct but the Host still does the work.
 5. **`load()` is a promise that loads nothing (rule 1's spirit).** A name that
    lies is an async design failure even when the code is right.
+6. **A write failure had no reader (rule 5's spirit).** Rule 2 says a sink's
+   outcome must reach its owner; `writeChunk` answered a boolean, and the handler
+   turned every `false` into `break`. A broken socket and a reader closing its tab
+   became the same event, and the `Error` the write callback carries went nowhere.
+   The stream could fail in the wild with no line anywhere saying so.
 
 ## Migration plan
 
@@ -136,8 +141,9 @@ Each slice is independently reviewable and leaves the reader working.
 | S4 | `mark(): Promise<void>`, `load` → `reconnect()`; the transport stops owning UI toasts for flush failures (the controller does) | `transport.ts`, `controller.ts`, components | low |
 | S5 | `settings()` async behind the existing cache, or the cache documented as the reason it may stay sync | `settings.ts`, call sites | low |
 | S6 | Request-signal plumbing on the HTTP routes (abort the build when the client hangs up) | `http.ts`, `index.ts` | low |
+| **S7 (landed)** | The write's outcome names the failure instead of being a boolean; the handler reports the first one per stream, with the revision it broke at; the route is given the Host logger. `source.frames()` moves inside the `try`, and the per-frame cancellation promise is hoisted out of the loop | `events.ts`, `index.ts`, tests | done — 22/22 suites |
 
-**Progress.** S1–S6 are landed or resolved as of 3.7.1, each with tests in the
+**Progress.** S1–S7 are landed or resolved as of 3.8.2, each with tests in the
 suite that owns its surface (`stream.test`, `live.test`, `controller.test`,
 `search.test`, `items-model.test`). The findings above are kept as written: they
 describe the code the review was run against, not the code that replaced it.
