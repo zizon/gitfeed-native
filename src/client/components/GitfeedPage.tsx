@@ -18,7 +18,11 @@ import { IconRss } from '../icons.js'
 import { Article } from './Article.js'
 import { FeedRail } from './FeedRail.js'
 import { ItemList } from './ItemList.js'
-import { DisplayPrefs, ErrorState, FilterTabs, GitStatus, SearchBox, Toasts } from './Shared.js'
+import { FilterTabs, SearchBox } from './FilterBar.js'
+import { ErrorState } from './Placeholders.js'
+import { DisplayPrefs } from './Prefs.js'
+import { GitStatus } from './Status.js'
+import { Toasts } from './Toasts.js'
 
 /** The whole snapshot: one list, one article pane, one source list. */
 const wholeState = function (state: ClientState) { return state }

@@ -8,7 +8,7 @@ import {
   IconRightUpOutlineRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ArticleProps } from '../types.js'
-import { EmptyArticle } from './Shared.js'
+import { EmptyArticle } from './Placeholders.js'
 import { IconButton } from './Controls.js'
 import { IconStar, IconUnreadDot } from '../icons.js'
 import { fmtDate, sanitize } from '../util.js'

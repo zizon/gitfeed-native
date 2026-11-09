@@ -19,7 +19,11 @@ import { Article } from './Article.js'
 import { FeedRail } from './FeedRail.js'
 import { ItemList } from './ItemList.js'
 import { IconButton } from './Controls.js'
-import { DisplayPrefs, ErrorState, FilterTabs, jobOf, RefreshState, SearchBox, Toasts } from './Shared.js'
+import { FilterTabs, SearchBox } from './FilterBar.js'
+import { ErrorState } from './Placeholders.js'
+import { DisplayPrefs } from './Prefs.js'
+import { jobOf, RefreshState } from './Status.js'
+import { Toasts } from './Toasts.js'
 
 function RailMenu({ state, controller, t, onClose }: {
   state: ClientState
