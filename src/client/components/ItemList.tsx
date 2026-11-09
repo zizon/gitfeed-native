@@ -30,6 +30,32 @@ function scopeLabel(label: string, n: number) {
 
 /** How long a finished section fades before the list is rebuilt without it. */
 const FADE_MS = 380
+/** Rows the first paint fakes: more than any pane of this list holds. */
+const SKELETON_ROWS = 8
+
+/**
+ * Row-shaped blocks at the height the rows will have, so the first paint does
+ * not jump when the page lands.
+ * @param props.height - the row height the list is about to use.
+ * @param props.digest - whether the rows will carry a digest line.
+ * @param props.label - what the loading state is called, for a screen reader.
+ * @returns the placeholder rows.
+ */
+function Skeleton({ height, digest, label }: { height: number; digest: boolean; label: string }) {
+  return (
+    <div className="gf-skel" role="status" aria-label={label}>
+      {Array.from({ length: SKELETON_ROWS }, function (_, i) {
+        return (
+          <div key={i} className="gf-skel-row" style={{ height: height }}>
+            <div className="gf-skel-line" style={{ width: '62%' }} />
+            <div className="gf-skel-line" style={{ width: '34%' }} />
+            {digest ? <div className="gf-skel-line" style={{ width: '88%' }} /> : null}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
 /**
  * Read rows above the band before a scroll releases them in one batch. One
  * rebuild per row would re-derive the whole archive every 66 pixels; this is
@@ -557,9 +583,9 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
 
   if (state.status === 'loading' && !state.items.length) {
     return (
-      <div className={paneClass}>
+      <div className={paneClass} aria-busy="true">
         {header}
-        <EmptyState className="compact" hint={t('status.loading')} />
+        <Skeleton height={rowH} digest={showDigest} label={t('status.loading')} />
       </div>
     )
   }

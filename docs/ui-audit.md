@@ -118,6 +118,18 @@ nine places, so this is a choice, not a violation; a virtualized selectable list
 is the case where `listbox`/`option` with `aria-selected` would describe what
 the pointer and the keyboard actually do.
 
+### F9. Two toast hosts for one banner *(low, inspected, kept)*
+
+`GitfeedPage` and `GitfeedRail` each render `<Toasts>`, so with the page and the
+rail both open the state change mounts two banners. The primitive places itself
+`position: fixed` at the frame's centre, so they overlap exactly and share one
+`toast.at`; the reader sees one. The app's rule is that a transient banner is
+owned by a host that outlives its panel — here either surface outlives the
+other, and closing the last one ends the banner with the reader's undo, which is
+the one case the rule exists to prevent. Moving the host to `shell.overlay`
+would give one owner and is the app's own pattern, but it buys nothing visible
+for a new registration and a second subscriber to the same state. Kept.
+
 ## Retired this round
 
 - **Filling the git action that applies** (`3.9.4`): git state is already in the
@@ -128,14 +140,16 @@ the pointer and the keyboard actually do.
 
 ## Plan
 
-1. **The audit**, and the README correction F4 needs.
-2. **Logic** — F3 alone, because it must stay invisible, and because it is the
-   one step whose result can be checked without the rendered page: the words
-   it builds are compared against the parent commit's expressions for the same
-   scheduler fixtures, and must be identical.
+1. **The audit**, and the README correction F4 needs. *(landed)*
+2. **Logic** — F3, the one step whose result can be checked without the
+   rendered page: the words it builds are compared against the parent commit's
+   expressions for the same scheduler fixtures, and must be identical.
+   *(landed: `jobWords()`; identical on seven fixtures)*
 3. **Chrome** — F1, F2, F5 in one change: one arrangement, the page bar's
-   measures, labels that collapse with tooltips to carry them.
-4. **States** — F6, then F7 against a rendered check.
+   measures, labels that collapse with tooltips to carry them. *(waiting for
+   the assembled page)*
+4. **States** — F6, then F7 against a rendered check. *(F6 landed: the list's
+   first paint is a skeleton at the row height)*
 5. **Accessibility** — F8, if the reader is to be operated by anything but
    `j`/`k`; it changes what a screen reader announces, so it is its own commit.
 

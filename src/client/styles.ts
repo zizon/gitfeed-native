@@ -258,6 +258,11 @@ export const CSS = `
   border-bottom: 0.5px solid var(--dsw-alias-border-l1);
 }
 .gf-count-label { flex: 1; color: var(--dsw-alias-label-tertiary); font-size: 11px; line-height: 16px; }
+/* The list's first paint: the rows it is about to draw, as their own height
+   and the theme's skeleton wash, so the page does not jump when it lands. */
+.gf-skel { flex: 1 1 auto; min-height: 0; overflow: hidden; padding: 4px 12px; }
+.gf-skel-row { display: flex; flex-direction: column; justify-content: center; gap: 6px; }
+.gf-skel-line { height: 10px; border-radius: var(--dsw-radius-xs); background: var(--dsw-alias-bg-skeleton); }
 .gf-scrollwrap { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; position: relative; }
 .gf-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; position: relative; }
 .gf-listpane .gf-scroll { padding-bottom: 52px; }
