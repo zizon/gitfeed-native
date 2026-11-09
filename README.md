@@ -668,13 +668,14 @@ the only option for the *first* publish: a trusted publisher is configured on a
 package that already exists, so until one version is on the registry there is no
 page to set it up on.
 
-**With a trusted publisher** — no secret at all. After the first publish, open
-the package on npmjs.com → **Settings → Trusted Publisher**, choose **GitHub
-Actions**, and fill in user `zizon`, repository `gitfeed-native`, and workflow
-filename `release.yml`. Allow **direct publish** there as well as staged
-publish, or the workflow's `npm publish` is refused. Then delete `NPM_TOKEN`.
-Without a token the workflow upgrades npm first, because trusted publishing
-needs npm 11.5.1 or newer.
+**With a trusted publisher** — no secret at all, and the way this repository
+now releases. The package's **Settings → Trusted Publisher** on npmjs.com names
+GitHub Actions, user `zizon`, repository `gitfeed-native`, and workflow
+`release.yml` with **direct publish** allowed (staged-only is the default and
+would refuse `npm publish`); there is no `NPM_TOKEN` secret. Without one the
+workflow upgrades npm first, because trusted publishing needs 11.5.1 or newer.
+To set this up again on another package: publish one version with a token,
+configure the publisher, then delete the token.
 
 No registry setting is needed anywhere — installs read the public registry
 anonymously, and the lockfile records only integrity hashes
