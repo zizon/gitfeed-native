@@ -378,9 +378,10 @@ not carry its own theme setting.
   nothing in it is unread, and a flat list lets rows go in one batch as they
   scroll out of the mounted band. A feed or folder that was on screen stays in
   the Feeds list for the same reason.
-- **Read on scroll**: a row counts as read only after the viewport top passed
-  it while moving down; rows a scrollbar drag skipped over are included, and
-  the screenful the scroll stops on counts as reached when the list ends.
+- **Read on scroll**: a row counts as read once it has been on screen for a
+  moment and the viewport has moved off it, so a fling or a scrollbar drag
+  leaves everything it skipped unread. The rows the scroll ends on are read
+  once the reader has stayed with them for the same moment.
 - **Starring**: the star sits on the row itself, so an item can be kept without
   opening it; it holds its space and appears on the row the pointer or the
   keyboard is on, and a starred row shows it outright. Under the Starred filter

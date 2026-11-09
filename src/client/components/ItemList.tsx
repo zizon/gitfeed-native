@@ -11,7 +11,7 @@ import {
 import { GROUP_H, ROW_H, ROW_H_PLAIN } from '../constants.js'
 import { entriesOf, exhaustedGroups, folderNames } from '../derive.js'
 import type { Entry, GroupEntry } from '../derive.js'
-import { groupFloorOf, offsetIndex, settledAbove, windowOf } from '../window.js'
+import { groupFloorOf, offsetIndex, scrollReads, settledAbove, windowOf } from '../window.js'
 import type { ItemListProps, MarkScope } from '../types.js'
 import { fmtTime } from '../util.js'
 import { IconStar } from '../icons.js'
@@ -50,10 +50,12 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
   const raf = useRef(0)
   const lastKey = useRef('')
   const lastSelected = useRef<string | null>(null)
-  /** Scroll offset the previous compute saw, to know what the viewport passed. */
-  const lastTop = useRef(0)
-  /** Scroll offset this surface moved to on its own, which must not mark anything. */
-  const programmatic = useRef<number | null>(null)
+  /** The rows that have been on screen, and since when. */
+  const seen = useRef<Map<string, number>>(new Map())
+  /** Pending pass for the rows held at the end of the list, or 0. */
+  const restTimer = useRef(0)
+  /** The latest pass, for the dwell timer to call without a stale closure. */
+  const computeRef = useRef<() => void>(function () { /* no pass to run yet */ })
   /**
    * The entry at the viewport top and how far into it the viewport sits. When a
    * refresh inserts rows above, the list is put back on this entry, so the
@@ -114,31 +116,22 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
 
   const total = offsets[entries.length] || 0
 
-  // Scroll position this surface wrote itself (a filter reset, revealing the
-  // selected item) must not count as the reader scrolling past those rows.
   function scrollTo(el: HTMLDivElement, value: number) {
     el.scrollTop = value
-    programmatic.current = el.scrollTop
   }
 
   const compute = useCallback(function () {
     const el = viewportRef.current
     if (!el) return
     const top = el.scrollTop
-    const prevTop = lastTop.current
-    lastTop.current = top
+    const height = el.clientHeight || 600
     const next = windowOf({
       entries: entries,
       offsets: offsets,
       groupFloor: groupFloor,
-      prevTop: prevTop,
       top: top,
-      height: el.clientHeight || 600,
-      // Where this list actually stops scrolling, padding included, so the end
-      // is the browser's end and not the sum of the entry heights.
-      maxTop: Math.max(0, el.scrollHeight - el.clientHeight),
+      height: height,
       groupBy: groupBy,
-      markOnScroll: markOnScroll,
     })
     setRange(function (current) {
       if (current.start === next.start && current.end === next.end && current.headerIndex === next.headerIndex) {
@@ -158,17 +151,41 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
       const settled = settledAbove(entries, next.start, state.read)
       if (settled.length >= TRIM_AT) controller.trimSticky(settled)
     }
-    let jumped = false
-    if (programmatic.current !== null) {
-      jumped = Math.abs(programmatic.current - top) < 1
-      programmatic.current = null
+    window.clearTimeout(restTimer.current)
+    restTimer.current = 0
+    // A row counts as read once it has been on screen long enough to be seen
+    // and the viewport has moved off it; with the preference off, nothing is
+    // timed and nothing is marked.
+    if (!markOnScroll) {
+      seen.current.clear()
+      return
     }
-    if (jumped) return
-    const markIds = next.passedIds.filter(function (id) { return !state.read.has(id) })
+    for (const id of seen.current.keys()) {
+      if (!itemIndex.has(id) || state.read.has(id)) seen.current.delete(id)
+    }
+    const reads = scrollReads({
+      entries: entries,
+      offsets: offsets,
+      index: itemIndex,
+      top: top,
+      height: height,
+      maxTop: Math.max(0, el.scrollHeight - el.clientHeight),
+      seen: seen.current,
+      read: state.read,
+      now: window.performance.now(),
+    })
+    for (const row of reads.entering) seen.current.set(row[0], row[1])
+    for (const id of reads.leaving) seen.current.delete(id)
     // Implicit marks keep their rows: a row must not vanish from under the
     // pointer. The section releases them once it has nothing unread left.
-    if (markIds.length) void controller.mark(markIds, true, true)
-  }, [offsets, entries, groupFloor, groupBy, markOnScroll, state.read, state.filter, controller])
+    if (reads.readIds.length) void controller.mark(reads.readIds, true, true)
+    // The rows the scroll stopped on are the only ones that can become read
+    // without a scroll, so the pass that can see them schedules the next one.
+    if (reads.restMs > 0) {
+      restTimer.current = window.setTimeout(function () { computeRef.current() }, reads.restMs)
+    }
+  }, [offsets, entries, groupFloor, groupBy, markOnScroll, state.read, state.filter, controller, itemIndex])
+  computeRef.current = compute
 
   const onScroll = useCallback(function () {
     if (raf.current) return
@@ -193,7 +210,6 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
     const target = Math.max(0, (offsets[index] || 0) + held.delta)
     if (Math.abs(target - el.scrollTop) < 1) return
     scrollTo(el, target)
-    lastTop.current = el.scrollTop
   }, [entries, offsets, keyIndex])
 
   useEffect(function () {
@@ -205,6 +221,10 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
     }
     compute()
   }, [compute, groupBy, state.query, state.feedId, state.version])
+
+  useEffect(function () {
+    return function () { window.clearTimeout(restTimer.current); restTimer.current = 0 }
+  }, [])
 
   useEffect(function () {
     const el = viewportRef.current

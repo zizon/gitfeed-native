@@ -25,7 +25,7 @@ if (esbuild === undefined) {
       `--outfile=${bundle}`,
       '--log-level=warning',
     ])
-    const { groupFloorOf, lowerBound, offsetIndex, settledAbove, windowOf } = await import(pathToFileURL(bundle).href)
+    const { groupFloorOf, lowerBound, offsetIndex, scrollReads, settledAbove, windowOf } = await import(pathToFileURL(bundle).href)
 
     const row = (id, h = 10) => ({ kind: 'row', key: id, item: { id: id }, h: h })
     const header = (key, h = 10) => ({ kind: 'group', key: `group:${key}`, group: { key: key, label: key, items: [] }, h: h })
@@ -36,13 +36,9 @@ if (esbuild === undefined) {
         entries: entries,
         offsets: offsets,
         groupFloor: groupFloorOf(entries),
-        prevTop: 0,
         top: 0,
         height: 100,
-        // The scroll has room left unless a case says where it stops.
-        maxTop: offsets[entries.length],
         groupBy: 'none',
-        markOnScroll: true,
       }, patch))
     }
 
@@ -55,62 +51,75 @@ if (esbuild === undefined) {
     ok(flatOffsets.length === 101 && flatOffsets[100] === 1000, 'the offset index ends with the full height')
 
     // The mounted band, with its overscan on both sides.
-    const band = pass(flat, { top: 200, prevTop: 200 })
+    const band = pass(flat, { top: 200 })
     ok(band.start === 16 && band.end === 35, 'the band is the visible rows plus overscan', band)
     ok(pass(flat, { top: 995, height: 100 }).end === 100, 'the band never runs past the last row')
     ok(pass([], { top: 0 }).start === 0 && pass([], { top: 0 }).end === 0, 'an empty list mounts nothing')
 
     // The anchor: the row under the viewport edge, and how far into it.
-    const anchored = pass(flat, { top: 205, prevTop: 205 })
+    const anchored = pass(flat, { top: 205 })
     ok(anchored.anchor && anchored.anchor.key === 'r20', 'the anchor is the row under the edge', anchored.anchor)
     ok(anchored.anchor && anchored.anchor.delta === 5, 'the anchor keeps the edge offset into the row', anchored.anchor)
     ok(pass(flat, { top: 12 }).anchor === null, 'at the very top there is no anchor to hold')
     ok(pass(flat, { top: 13 }).anchor !== null, 'just below the top the anchor is kept')
 
-    // Marking: rows the top crossed on the way down, including skipped ones.
+    // Read on scroll: a row is read once it has been on screen for the dwell
+    // and the viewport has moved off it. The clock is passed in, so the rule is
+    // checked rather than waited for.
+    const dwell = (entries, patch) => {
+      const offsets = offsetIndex(entries)
+      const index = new Map()
+      entries.forEach((entry, i) => { if (entry.kind === 'row') index.set(entry.item.id, i) })
+      const total = offsets[entries.length]
+      return scrollReads(Object.assign({
+        entries: entries,
+        offsets: offsets,
+        index: index,
+        top: 0,
+        height: 100,
+        maxTop: Math.max(0, total - 100),
+        seen: new Map(),
+        read: new Set(),
+        now: 1000,
+      }, patch))
+    }
+    const visible = dwell(flat, { top: 0 })
+    ok(visible.entering[0][0] === 'r0', 'the rows on screen start their clock', visible.entering[0])
+    ok(visible.readIds.length === 0, 'and none of them is read while still on screen')
     ok(
-      pass(flat, { prevTop: 0, top: 50 }).passedIds.join(',') === 'r0,r1,r2,r3,r4',
-      'rows crossed on the way down are the ones between the two offsets',
-      pass(flat, { prevTop: 0, top: 50 }).passedIds,
+      dwell(flat, { top: 100, seen: new Map([['r0', 0]]) }).readIds.join(',') === 'r0',
+      'a row seen for the dwell and then left behind is read',
     )
     ok(
-      pass(flat, { prevTop: 0, top: 950 }).passedIds.length === 95,
-      'a scrollbar drag marks the rows it skipped over',
-      pass(flat, { prevTop: 0, top: 950 }).passedIds.length,
+      dwell(flat, { top: 100, seen: new Map([['r0', 999]]) }).readIds.length === 0,
+      'a row that only flashed past is not read',
     )
-    ok(pass(flat, { prevTop: 100, top: 50 }).passedIds.length === 0, 'scrolling up marks nothing')
-    ok(pass(flat, { prevTop: 50, top: 50 }).passedIds.length === 0, 'standing still marks nothing')
+    const flashed = dwell(flat, { top: 100, seen: new Map([['r0', 999]]) })
+    ok(flashed.leaving.join(',') === 'r0', 'and its clock still stops', flashed.leaving)
     ok(
-      pass(flat, { prevTop: 0, top: 50, markOnScroll: false }).passedIds.length === 0,
-      'the scroll-mark switch silences it',
+      dwell(flat, { top: 900 }).readIds.length === 0,
+      'a drag to the bottom marks nothing it skipped',
     )
-    // The end of the list: the last screenful can never cross the top edge, the
-    // scroll runs out first, so reaching the end of the scroll reaches it.
-    const endOf = (patch) => pass(flat, Object.assign({ maxTop: 900 }, patch))
-    const lastScreen = endOf({ prevTop: 800, top: 900 })
+    ok(dwell(flat, { top: 0, seen: new Map([['r0', 0]]), now: 5000 }).readIds.length === 0, 'a row still on screen is not read')
     ok(
-      lastScreen.passedIds.length === 20 && lastScreen.passedIds[19] === 'r99',
-      'the screenful the scroll stops on is passed with it',
-      `${lastScreen.passedIds.length} rows, last ${lastScreen.passedIds[19]}`,
+      dwell(flat, { top: 0, read: new Set(['r0']) }).entering.every(function (row) { return row[0] !== 'r0' }),
+      'a row that is already read is not timed',
     )
+    // The rows the scroll stops on never leave the viewport, so the time the
+    // reader stays with them is the only evidence there is.
+    const resting = dwell(flat, { top: 900 })
+    ok(resting.restMs === 1000, 'the rows held at the end wait out the dwell', resting.restMs)
+    const rested = dwell(flat, {
+      top: 900,
+      seen: new Map([['r95', 0], ['r99', 500]]),
+      now: 1000,
+    })
+    ok(rested.readIds.includes('r95'), 'the end reads the rows the reader stayed with', rested.readIds)
+    ok(!rested.readIds.includes('r99'), 'and leaves the ones that just arrived')
+    ok(rested.restMs === 500, 'and says how long the rest still needs', rested.restMs)
     ok(
-      endOf({ prevTop: 700, top: 800 }).passedIds.length === 10,
-      'short of the end only the rows the top crossed are passed',
-      endOf({ prevTop: 700, top: 800 }).passedIds.length,
-    )
-    ok(endOf({ prevTop: 900, top: 900 }).passedIds.length === 0, 'resting at the end passes nothing more')
-    ok(endOf({ prevTop: 900, top: 800 }).passedIds.length === 0, 'scrolling back up from the end passes nothing')
-    ok(
-      endOf({ prevTop: 0, top: 900 }).passedIds.length === 100,
-      'a jump to the end passes everything between, the last screenful included',
-      endOf({ prevTop: 0, top: 900 }).passedIds.length,
-    )
-    // A list shorter than its viewport cannot be scrolled at all; the end
-    // extension must not turn a stray offset into "the whole list is read".
-    ok(
-      pass(flat, { prevTop: 0, top: 40, maxTop: 0 }).passedIds.length === 4,
-      'a list with nowhere to scroll passes only the rows the top crossed',
-      pass(flat, { prevTop: 0, top: 40, maxTop: 0 }).passedIds.length,
+      dwell(flat, { top: 0, maxTop: 0, seen: new Map([['r0', 0]]), now: 5000 }).readIds.length === 0,
+      'a list with nowhere to scroll reads nothing by resting',
     )
 
     // The sticky section header stays mounted under the edge.
@@ -123,28 +132,23 @@ if (esbuild === undefined) {
     ok(floors[0] === 0 && floors[15] === 0 && floors[31] === 31, 'each row names its own section header', floors.slice(0, 3))
     // The header covering the band is reported for pinning; the band itself
     // stays at the overscan, so a tall section costs one header, not its rows.
-    const beta = pass(grouped, { top: 500, prevTop: 500, height: 100, groupBy: 'folder' })
+    const beta = pass(grouped, { top: 500, height: 100, groupBy: 'folder' })
     ok(beta.start === 46 && beta.headerIndex === 31, 'a row deep in a section reports its header, not its rows', beta)
-    const alpha = pass(grouped, { top: 250, prevTop: 250, height: 100, groupBy: 'folder' })
+    const alpha = pass(grouped, { top: 250, height: 100, groupBy: 'folder' })
     ok(alpha.start === 21 && alpha.headerIndex === 0, 'the first section reports its header too', alpha)
-    const nearHeader = pass(grouped, { top: 340, prevTop: 340, height: 100, groupBy: 'folder' })
+    const nearHeader = pass(grouped, { top: 340, height: 100, groupBy: 'folder' })
     ok(nearHeader.headerIndex === null, 'a header already inside the band needs no pin', nearHeader)
-    ok(pass(grouped, { top: 500, prevTop: 500, height: 100 }).headerIndex === null, 'without grouping nothing is pinned')
+    ok(pass(grouped, { top: 500, height: 100 }).headerIndex === null, 'without grouping nothing is pinned')
 
     // The regression this guards: one section holding thousands of rows must
     // still mount only the band. The archive really has a 2,334-row section.
     const huge = [header('Fresh')]
     for (let i = 0; i < 3000; i++) huge.push(row(`f${i}`))
-    const deep = pass(huge, { top: 20000, prevTop: 20000, height: 600, groupBy: 'folder' })
+    const deep = pass(huge, { top: 20000, height: 600, groupBy: 'folder' })
     ok(deep.end - deep.start <= 80, 'a three-thousand-row section mounts only the band', deep.end - deep.start)
     ok(deep.headerIndex === 0, 'and reports the one header it needs', deep.headerIndex)
-    const ungrouped = pass(grouped, { top: 250, prevTop: 250, height: 100, groupBy: 'none' })
+    const ungrouped = pass(grouped, { top: 250, height: 100, groupBy: 'none' })
     ok(ungrouped.start === 21, 'with no grouping the band is the plain overscan', ungrouped.start)
-    ok(
-      pass(grouped, { prevTop: 100, top: 520, maxTop: 520 }).passedIds.length === 51,
-      'the end passes the last screenful past the section headers, which are not rows',
-      pass(grouped, { prevTop: 100, top: 520, maxTop: 520 }).passedIds.length,
-    )
 
     // Rows a scroll left behind: read rows above the band. A grouped list lets
     // them go by fading their section; a flat one has no section, which is why

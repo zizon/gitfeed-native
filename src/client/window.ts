@@ -1,7 +1,7 @@
 /**
  * The viewport half of the list: which entries are mounted, which one the top
- * edge sits on, and which rows scrolling past marked. Pure — the component
- * keeps the rAF throttle, the self-inflicted-scroll guard, and the restore.
+ * edge sits on, and which rows scrolling past have been read. Pure — the
+ * component keeps the rAF throttle, the dwell clock, and the scroll restore.
  */
 
 import type { Entry } from './derive.js'
@@ -76,24 +76,15 @@ export interface WindowInput {
   entries: readonly Entry[]
   offsets: readonly number[]
   groupFloor: readonly number[]
-  /** Scroll offset the previous pass saw. */
-  prevTop: number
   /** Scroll offset now. */
   top: number
   /** Viewport height; the caller substitutes a default before measuring. */
   height: number
-  /**
-   * Furthest the viewport can scroll. The last screenful can never cross the
-   * top edge, so the end of the scroll is the only way to tell it was reached.
-   */
-  maxTop: number
   /** Grouping in effect; `none` turns the sticky floor off. */
   groupBy: string
-  /** Whether rows scrolling past are marked at all. */
-  markOnScroll: boolean
 }
 
-/** What one pass decided to render and to mark. */
+/** What one pass decided to render. */
 export interface ListWindow {
   /** First entry to mount. */
   start: number
@@ -102,16 +93,14 @@ export interface ListWindow {
   /** Entry under the viewport edge, and how far into it the edge sits. */
   anchor: { key: string; delta: number } | null
   /**
-   * Rows the viewport top crossed on the way down, in archive order — plus,
-   * when the scroll ran out, the last screenful it stopped on.
-   */
-  passedIds: string[]
-  /**
    * The section header covering the band when it sits above the mounted rows.
    * The caller pins that one header instead of pulling the band back to it.
    */
   headerIndex: number | null
 }
+
+/** How long a row has to stay on screen before the reader counts as having seen it. */
+export const READ_DWELL_MS = 1000
 
 /** Rows kept mounted beyond the visible band, so a fast scroll never shows a gap. */
 const OVERSCAN = 4
@@ -121,7 +110,7 @@ const AT_TOP = 12
 /**
  * Decide one viewport pass.
  * @param input - the mounted entries, their offsets, and the scroll facts.
- * @returns the mounted band, the anchor, and the rows to mark.
+ * @returns the mounted band, the anchor, and the pinned section header.
  */
 export function windowOf(input: WindowInput): ListWindow {
   const entries = input.entries
@@ -145,25 +134,96 @@ export function windowOf(input: WindowInput): ListWindow {
   const anchor = anchorEntry
     ? { key: anchorEntry.key, delta: Math.max(0, top - offsets[anchorIndex]) }
     : null
-  const passedIds: string[] = []
-  // Rows the viewport top passed on the way down are read, including the ones a
-  // scrollbar drag skipped over without ever rendering them.
-  if (input.markOnScroll && top > input.prevTop) {
-    const from = lowerBound(offsets, input.prevTop)
-    // The last screenful has nowhere to go: the scroll stops before those rows
-    // cross the top edge, so scrolling to the end counts as reaching them.
-    const atEnd = input.maxTop > 0 && top >= input.maxTop - 1
-    const to = atEnd ? count : lowerBound(offsets, top)
-    for (let i = from; i < to; i++) {
-      const entry = entries[i]
-      if (entry.kind === 'row') passedIds.push(entry.item.id)
-    }
-  }
   return {
     start: start,
     end: end,
     anchor: anchor,
-    passedIds: passedIds,
     headerIndex: headerIndex,
   }
+}
+
+/** One read-on-scroll pass. The caller owns `seen`, so a pass stays pure. */
+export interface ScrollReadInput {
+  entries: readonly Entry[]
+  offsets: readonly number[]
+  /** Row id to its entry index, for the rows the list still holds. */
+  index: ReadonlyMap<string, number>
+  /** Viewport top. */
+  top: number
+  /** Viewport height. */
+  height: number
+  /** Where the scroll stops. The rows resting there never leave the viewport. */
+  maxTop: number
+  /** When each row first came on screen, by id. */
+  seen: ReadonlyMap<string, number>
+  /** The rows already read; they are neither timed nor marked. */
+  read: ReadonlySet<string>
+  /** Now, on the same clock as `seen`. */
+  now: number
+}
+
+/** What one read-on-scroll pass decides, and how long until it can decide more. */
+export interface ScrollRead {
+  /** Rows that came on screen this pass, and when. */
+  entering: Array<[string, number]>
+  /** Rows that are no longer on screen, read or not: stop timing them. */
+  leaving: string[]
+  /** Rows the reader stayed with long enough to count as read. */
+  readIds: string[]
+  /**
+   * Milliseconds until a row could next count as read, for the rows held at
+   * the end of the list; 0 when nothing is waiting on the clock. A row read
+   * anywhere else is read on the pass that moves the viewport past it.
+   */
+  restMs: number
+}
+
+/**
+ * Decide which rows the reader has seen and can stop counting as unread.
+ *
+ * A row counts as read once it has been on screen for {@link READ_DWELL_MS}
+ * and the viewport has moved off it. Rows that only flashed past — a flicked
+ * scroll, a scrollbar drag — were never on screen long enough and stay unread.
+ * The rows the scroll stops on have nowhere left to go, so staying with them
+ * is the same evidence.
+ *
+ * @param input - the mounted entries, the scroll facts, and the dwell clock.
+ * @returns the rows coming on screen, leaving, and read, plus the next wait.
+ */
+export function scrollReads(input: ScrollReadInput): ScrollRead {
+  const first = lowerBound(input.offsets, input.top)
+  const last = Math.min(input.entries.length, lowerBound(input.offsets, input.top + input.height) + 1)
+  const restingAtEnd = input.maxTop > 0 && input.top >= input.maxTop - 1
+  const now = input.now
+  const entering: Array<[string, number]> = []
+  const leaving: string[] = []
+  const readIds: string[] = []
+  let restMs = 0
+  const visible = new Set<string>()
+  for (let i = first; i < last; i++) {
+    const entry = input.entries[i]
+    if (entry.kind !== 'row') continue
+    const id = entry.item.id
+    if (input.read.has(id)) continue
+    visible.add(id)
+    const at = input.seen.get(id)
+    let wait = READ_DWELL_MS
+    if (at === undefined) {
+      entering.push([id, now])
+    } else {
+      wait = READ_DWELL_MS - (now - at)
+      // A row resting at the end of the list never leaves the viewport, so the
+      // time the reader stays with it is the only chance it has to be read.
+      if (restingAtEnd) {
+        if (wait <= 0) readIds.push(id)
+      }
+    }
+    if (restingAtEnd && wait > 0) restMs = restMs === 0 ? wait : Math.min(restMs, wait)
+  }
+  for (const [id, at] of input.seen) {
+    if (visible.has(id) || input.read.has(id) || !input.index.has(id)) continue
+    if (now - at >= READ_DWELL_MS) readIds.push(id)
+    leaving.push(id)
+  }
+  return { entering: entering, leaving: leaving, readIds: readIds, restMs: restMs }
 }
