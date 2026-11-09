@@ -27,13 +27,17 @@ The same reader in the right Sidebar, beside whatever session is open:
 Moving a source lists the folders already in use, marks the one it is in, and
 keeps naming a new one on its own row:
 
-![The folder picker open over the feed rail, listing Daily Aggregation, Daily Flood, Fresh, News, Papers, Publication, Uncategorized, and a New folder row](docs/screenshots/picker.png)
+![The folder picker open over the feed rail, listing the folders in use and a New folder row](docs/screenshots/picker.png)
+
+The library in those images is a fixture (`docs/screenshots/demo-library.js`),
+not a real reading list: it answers the reader's own API with invented
+subscriptions and items, so no one's feeds or history are in this repository.
 
 ## Two repositories, one reader
 
 | repository | contents | visibility |
 | --- | --- | --- |
-| `zizon/gitfeed-native` (this one) | the plugin: TypeScript sources, bundle metadata, CLI | private today; publish it when ready |
+| `zizon/gitfeed-native` (this one) | the plugin: TypeScript sources, bundle metadata, CLI | public |
 | `zizon/gitfeed` | the reader data: `feeds.json`, `config.json`, `data/` | private, cloned to `~/gitfeed` |
 
 Why split them:
@@ -857,18 +861,17 @@ anonymously, and the lockfile records only integrity hashes
 (`lockfileIncludeTarballUrl: false`), so a machine that installs through a
 mirror produces the same file CI can verify.
 
-Publishing runs without `--provenance` on purpose: npm attestation requires the
-source repository to be public, and this one is not yet. When it is, add
-`--provenance` to both publish steps.
+Publishing does not pass `--provenance` yet: npm attestation requires the
+source repository to be public, and this one is only now being opened up. Once
+it is, add the flag to both publish steps (`npm publish --access public
+--provenance`); the workflow already carries the `id-token: write` permission
+that lets npm attest, and `npm attest` or the package page can then verify which
+workflow run and commit produced the tarball.
 
-Before anything is published, these are the repo-side steps:
-
-1. Confirm `git log` has no data files, secrets, or local paths.
-2. Choose a license. There is none today, which a published package should not
-   be missing; add `LICENSE` and a `license` field to `package.json`.
-3. Flip this repository to public (`gh repo edit --visibility public
-   --accept-visibility-change-consequences`), then switch the install spec in
-   this README to `@zizon/gitfeed-native`.
+Everything else in the release path needs no manual setup: the repository is
+public, the package is published through a trusted publisher, and the two things
+that must stay private — the data repository and any registry credential — are
+not in this tree. `.gitignore` covers the local files that carry them.
 
 ## Limitations
 

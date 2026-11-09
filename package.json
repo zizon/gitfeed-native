@@ -8,6 +8,20 @@
     "url": "git+https://github.com/zizon/gitfeed-native.git"
   },
   "license": "MIT",
+  "author": "zizon",
+  "homepage": "https://github.com/zizon/gitfeed-native#readme",
+  "bugs": {
+    "url": "https://github.com/zizon/gitfeed-native/issues"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "rss",
+    "feed-reader",
+    "git",
+    "plugin",
+    "bundle"
+  ],
   "engines": {
     "node": ">=24.9.0"
   },

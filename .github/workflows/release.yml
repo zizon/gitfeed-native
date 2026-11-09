@@ -3,11 +3,12 @@ name: release
 # A tag publishes that version. A manual run builds and checks the tarball
 # without publishing unless `publish` is ticked.
 #
-# The repository is private today, so this publishes without `--provenance`:
-# npm attestation requires the source repository to be public. Once it is
-# public, add `id-token: write` to `permissions` and `--provenance` to the
-# publish command — or configure the package on npmjs.com as a trusted
-# publisher and drop NPM_TOKEN entirely.
+# Publishing does not pass `--provenance` yet: npm attestation needs the source
+# repository to be public, and it is only now being opened up. Once it is, add
+# `--provenance` to both publish steps; the `id-token: write` permission below
+# is already what npm attests with. Authentication is either a trusted publisher
+# (no secret, what this repository uses) or an NPM_TOKEN secret, and the steps
+# handle both.
 on:
   push:
     tags: ['v*']
