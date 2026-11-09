@@ -102,6 +102,9 @@ lets the Client poll compactly after an optimistic update.
 
 ## Install
 
+The package needs Node 24.9 or newer — the floor the Harness runs on, and the
+one `engines` declares.
+
 Harness installs the bundle the same way it installs any external plugin:
 `plugin_manager` with a package spec, or **Plugins → Add source** in the Web UI.
 Two forms work.
@@ -624,8 +627,8 @@ pnpm lint        # oxlint, including the type-aware rules
 protocols, the timer-runtime check against a real Harness checkout, and the
 architecture ratchet that keeps a second clock out of the Host half. Suites are
 plain node scripts driven by `tests/run.mjs`; no test framework is installed.
-CI runs the same four gates on every push, on the two Node lines the package
-supports (22, the floor `engines` declares, and 24, the current LTS).
+CI runs the same four gates on every push, on the floor `engines` declares
+(Node 24.9, which is what the Harness itself requires) and the latest 24.
 
 Lint reads the single root `tsconfig.json`, so Host and Client files resolve
 from one project; `pnpm lint:fix` also applies the formatting rules.

@@ -17,11 +17,12 @@ jobs:
   gates:
     runs-on: ubuntu-latest
     strategy:
-      # The floor this package declares, and the current LTS. `fail-fast: false`
-      # so a failure reports both.
+      # The floor the package declares — the same one the Harness requires,
+      # because a bundle only ever runs inside it — and the latest 24.
+      # `fail-fast: false` so a failure reports both.
       fail-fast: false
       matrix:
-        node: [22, 24]
+        node: ['24.9', 24]
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
