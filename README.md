@@ -864,12 +864,28 @@ node build.mjs                     # rebuild after an edit
 ```
 
 Then point the plugin at this checkout by installing the bundle (or, for an
-already installed profile, replace `node_modules/gitfeed-native` by a local
-install) and toggle **Plugins → @zizon/gitfeed-native** off/on. With HMR on, a linked
+already installed profile, replace `node_modules/@zizon/gitfeed-native` by a
+local install) and toggle **Plugins → @zizon/gitfeed-native** off/on. With HMR on, a linked
 checkout's changed modules are replaced on the next profile recomposition (any
 Plugin Manager change, or an edit to the profile patch), so a rebuilt `lib/`
 usually takes effect without a restart; a `dsh web` restart is the fallback.
 The Client bundle reloads on a page refresh once the plugin is re-activated.
+
+A `~/.dsh` that is a symlink — the usual iCloud Drive arrangement, where
+`~/.dsh` points at `~/Documents/.dsh` — gives the profile two paths: the logical
+one the Harness composes (`~/.dsh/profiles/web`) and the physical one on disk.
+pnpm writes a `link:` dependency relative to the physical directory; the Plugin
+Manager resolves the same recorded value against the logical one. When the
+relative hop crosses that symlink, an install can leave
+`node_modules/@zizon/gitfeed-native` pointing at `/gitfeed-native`, and the
+reader disappears from the sidebar on the next start. Reinstalling is the
+repair: remove the bundle and install the checkout again (the Plugins page, or
+`plugin_manager` with `remove_bundle` then `install_bundle` at the absolute
+path), which recomputes the link against the real directory. A machine that has
+never installed it gets this right the first time, which is why the same
+breakage does not follow the repository. Check without the UI, from the profile
+directory: `node -e "console.log(require.resolve('@zizon/gitfeed-native'))"`
+should print the checkout's `lib/index.js`.
 
 The build uses `tsc` for the ESM Host tree and `esbuild` for the Client bundle,
 both from `node_modules`. The Client resolves `react` and
