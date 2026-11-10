@@ -164,9 +164,9 @@ export interface ScrollReadInput {
 export interface ScrollRead {
   /** Rows that came on screen this pass, and when. */
   entering: Array<[string, number]>
-  /** Rows that are no longer on screen, read or not: stop timing them. */
+  /** Rows the viewport scrolled past, read or not: stop timing them. */
   leaving: string[]
-  /** Rows that were on screen long enough, and are now behind the viewport. */
+  /** Rows that were on screen long enough and are now above the viewport. */
   readIds: string[]
 }
 
@@ -174,10 +174,16 @@ export interface ScrollRead {
  * Decide which rows the reader has seen and can stop counting as unread.
  *
  * A row counts as read once it has been on screen for {@link READ_DWELL_MS}
- * and the viewport has moved off it. Rows that only flashed past — a flicked
- * scroll, a scrollbar drag — were never on screen long enough and stay unread.
- * The list scrolls one viewport past its last row, so the rows it ends on can
- * leave the viewport too, instead of resting there unread.
+ * and the viewport has scrolled *past* it: it sits wholly above the band. Rows
+ * that only flashed past — a flicked scroll, a scrollbar drag — were never on
+ * screen long enough and stay unread. The list scrolls one viewport past its
+ * last row, so the rows it ends on can leave the viewport too, instead of
+ * resting there unread.
+ *
+ * A row that left the band any other way keeps its clock and stays unread: the
+ * list was rebuilt, rows arrived above it, or the view jumped back to the top.
+ * Those rows were never scroll-past, and marking them is the reader losing
+ * unread items to a refresh it did not ask for.
  *
  * @param input - the mounted entries, the scroll facts, and the dwell clock.
  * @returns the rows coming on screen, leaving, and read, plus the next wait.
@@ -199,7 +205,14 @@ export function scrollReads(input: ScrollReadInput): ScrollRead {
     if (!input.seen.has(id)) entering.push([id, now])
   }
   for (const [id, at] of input.seen) {
-    if (visible.has(id) || input.read.has(id) || !input.index.has(id)) continue
+    if (visible.has(id) || input.read.has(id)) continue
+    const index = input.index.get(id)
+    if (index === undefined) continue
+    // Only the rows the viewport scrolled past are read. A row that left the
+    // band downwards — pushed out by arrivals above it, or by the list jumping
+    // to the top — was never scrolled past, so it keeps its clock and is
+    // marked when a later pass carries the band over it.
+    if (input.offsets[index] + input.entries[index].h > input.top) continue
     if (now - at >= READ_DWELL_MS) readIds.push(id)
     leaving.push(id)
   }

@@ -64,8 +64,8 @@ if (esbuild === undefined) {
     ok(pass(flat, { top: 13 }).anchor !== null, 'just below the top the anchor is kept')
 
     // Read on scroll: a row is read once it has been on screen for the dwell
-    // and the viewport has moved off it. The clock is passed in, so the rule is
-    // checked rather than waited for.
+    // and the viewport has scrolled past it. The clock is passed in, so the rule
+    // is checked rather than waited for.
     const dwell = (entries, patch) => {
       const offsets = offsetIndex(entries)
       const index = new Map()
@@ -99,6 +99,16 @@ if (esbuild === undefined) {
       'a drag to the bottom marks nothing it skipped',
     )
     ok(dwell(flat, { top: 0, seen: new Map([['r0', 0]]), now: 5000 }).readIds.length === 0, 'a row still on screen is not read')
+    // A rebuild or a refresh moves rows under a still viewport. A row that
+    // ended up below the band was never scrolled past, so it stays unread and
+    // keeps its clock for a pass that does carry the band over it.
+    const pushed = dwell(flat, { top: 0, seen: new Map([['r50', 0]]), now: 9000 })
+    ok(pushed.readIds.length === 0, 'a row pushed out below the band is not read', pushed.readIds)
+    ok(pushed.leaving.length === 0, 'and it keeps its clock', pushed.leaving)
+    ok(
+      dwell(flat, { top: 510, seen: new Map([['r50', 0]]) }).readIds.join(',') === 'r50',
+      'the row is read once the viewport scrolls past it',
+    )
     ok(
       dwell(flat, { top: 0, read: new Set(['r0']) }).entering.every(function (row) { return row[0] !== 'r0' }),
       'a row that is already read is not timed',

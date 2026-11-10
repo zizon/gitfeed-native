@@ -178,8 +178,10 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
       if (settled.length >= TRIM_AT) controller.trimSticky(settled)
     }
     // A row counts as read once it has been on screen long enough to be seen
-    // and the viewport has moved off it; with the preference off, nothing is
-    // timed and nothing is marked.
+    // and the viewport has scrolled past it; with the preference off, nothing
+    // is timed and nothing is marked. This pass runs on a rebuild as well as on
+    // a scroll, which is why only a row the band carried over is read: rows a
+    // refresh pushed down were never scrolled past.
     if (!markOnScroll) {
       seen.current.clear()
       return
