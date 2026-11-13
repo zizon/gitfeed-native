@@ -112,13 +112,26 @@ if (esbuild === undefined || !existsSync(reactDir) || !existsSync(domDir) || !ex
         marked: [],
         trimmed: [],
       }
+      // The controller caches the list by what it is made of, like the real
+      // one: an unchanged render must hand the component the same array, or
+      // every render would look like a rebuild to it.
+      let cachedKey = null
+      let cachedList = []
       const controller = {
         getList() {
-          return db.items.filter(function (item) {
-            if (db.held.has(item.id)) return false
-            if (db.read.has(item.id) && !db.sticky.has(item.id)) return false
-            return true
-          })
+          const key = db.items.length + '|' + db.items.map(function (item) { return item.id }).join(',')
+            + '|' + [...db.read].sort().join(',')
+            + '|' + [...db.sticky].sort().join(',')
+            + '|' + [...db.held].sort().join(',')
+          if (key !== cachedKey) {
+            cachedKey = key
+            cachedList = db.items.filter(function (item) {
+              if (db.held.has(item.id)) return false
+              if (db.read.has(item.id) && !db.sticky.has(item.id)) return false
+              return true
+            })
+          }
+          return cachedList
         },
         heldCount() { return db.held.size },
         releaseHeld() {
