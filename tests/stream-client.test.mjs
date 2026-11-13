@@ -191,13 +191,13 @@ if (engine === undefined || esbuild === undefined) {
       item('r3', '2026-11-01T10:00:00.000Z'),
     ]))
     await sleep(0)
-    still.setScrolled(true)
+    still.setHold(true)
     stillStream.fire('delta', delta(4, { items: { added: [item('r4', '2026-11-02T12:00:00.000Z')], updated: [], removed: [] } }))
     await sleep(0)
     ok(!ids(still).includes('r4'), 'a row that arrives under the reader is held back', ids(still))
     ok(still.getList().length === 3, 'and the rows being read do not move', still.getList().length)
     ok(still.countInView() === 4, 'the header still counts it', still.countInView())
-    still.setScrolled(false)
+    still.setHold(false)
     still.releaseHeld()
     ok(ids(still).includes('r4'), 'at the top the held row lands', ids(still))
 
@@ -271,7 +271,7 @@ if (engine === undefined || esbuild === undefined) {
     const emptiedStream = FakeEventSource.instances[FakeEventSource.instances.length - 1]
     emptiedStream.fire('welcome', welcome(9, [item('gone', '2026-11-09T10:00:00.000Z')], ['gone']))
     emptied.setFilter('unread')
-    emptied.setScrolled(true)
+    emptied.setHold(true)
     ok(ids(emptied).length === 0, 'the unread list holds nothing after its last row is read', ids(emptied))
     emptiedStream.fire('delta', delta(10, {
       items: { added: [item('fresh', '2026-11-09T11:00:00.000Z')], updated: [], removed: [] },

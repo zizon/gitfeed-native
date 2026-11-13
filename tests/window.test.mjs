@@ -25,7 +25,7 @@ if (esbuild === undefined) {
       `--outfile=${bundle}`,
       '--log-level=warning',
     ])
-    const { groupFloorOf, lowerBound, offsetIndex, scrollReads, settledAbove, windowOf } = await import(pathToFileURL(bundle).href)
+    const { groupFloorOf, lowerBound, offsetIndex, scrollAfterRebuild, scrollReads, settledAbove, windowOf } = await import(pathToFileURL(bundle).href)
 
     const row = (id, h = 10) => ({ kind: 'row', key: id, item: { id: id }, h: h })
     const header = (key, h = 10) => ({ kind: 'group', key: `group:${key}`, group: { key: key, label: key, items: [] }, h: h })
@@ -127,6 +127,46 @@ if (esbuild === undefined) {
       dwell(flat, { top: 1000, seen: new Map([['r99', 999]]) }).readIds.length === 0,
       'and the last row still has to have been seen for the dwell',
     )
+
+    // A rebuild under a live viewport: the entry under the edge has to stay
+    // under the edge. This is the transition the component applies before it
+    // paints, and the one whose absence showed up as the list jumping.
+    const rebuild = (next, top) => scrollAfterRebuild({
+      prev: flat,
+      prevOffsets: flatOffsets,
+      next: next,
+      nextOffsets: offsetIndex(next),
+      top: top,
+      height: 100,
+      groupBy: 'none',
+    })
+    const named = (prefix, n) => Array.from({ length: n }, (_, i) => row(`${prefix}${i}`))
+    ok(rebuild(flat, 205) === 205, 'a rebuild that changed nothing keeps the viewport where it was', rebuild(flat, 205))
+    ok(rebuild(flat, 0) === 0 && rebuild(flat, 5) === 0, 'at the top the viewport stays at the top', [rebuild(flat, 0), rebuild(flat, 5)])
+    const grown = named('new', 3).concat(flat)
+    ok(rebuild(grown, 205) === 235, 'rows inserted above are paid for in scroll offset, not in the text moving', rebuild(grown, 205))
+    const shrunk = flat.slice(3)
+    ok(rebuild(shrunk, 205) === 175, 'rows removed above are given back the same way', rebuild(shrunk, 205))
+    const trimmed = flat.filter((entry) => entry.key !== 'r20')
+    // r21 was 5px below the edge; it is still 5px below the edge afterwards.
+    ok(rebuild(trimmed, 205) === 195, 'when the anchored row itself is gone, the row below it takes the place the edge had', rebuild(trimmed, 205))
+    const cut = flat.slice(25)
+    ok(rebuild(cut, 205) === 0, 'when everything up to the anchored row went, the list starts at its top', rebuild(cut, 205))
+    ok(rebuild([], 205) === 0, 'an empty list has no position to hold')
+    const taller = flat.map((entry) => Object.assign({}, entry, { h: 20 }))
+    const tallerTarget = rebuild(taller, 205)
+    ok(tallerTarget === 405, 'a row that got taller keeps the edge inside the row it was in', tallerTarget)
+    // The band that follows the rebuilt list covers the viewport: the whole
+    // point is that the painted frame is consistent with the rows it draws.
+    for (const [next, top, target] of [[grown, 205, rebuild(grown, 205)], [shrunk, 205, rebuild(shrunk, 205)], [trimmed, 205, rebuild(trimmed, 205)]]) {
+      const nextOffsets = offsetIndex(next)
+      const band = windowOf({ entries: next, offsets: nextOffsets, groupFloor: groupFloorOf(next), top: target, height: 100, groupBy: 'none' })
+      ok(
+        nextOffsets[band.start] <= target && nextOffsets[band.end] >= Math.min(nextOffsets[next.length], target + 100),
+        'the band drawn after a rebuild covers the viewport it was put back on',
+        [band.start, band.end, target],
+      )
+    }
 
     // The sticky section header stays mounted under the edge.
     const grouped = []

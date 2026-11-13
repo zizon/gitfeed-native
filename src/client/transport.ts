@@ -47,8 +47,12 @@ export interface TransportPorts {
   toast(text: string, error?: boolean, undo?: boolean): void
   /** The name a source is shown by, for the toast that names it. */
   titleOf(feedId: string): string
-  /** Whether the list is scrolled into the archive rather than sitting at its top. */
-  scrolled(): boolean
+  /**
+   * Whether a surface is showing a list it does not want a refresh to move.
+   * That is any list with rows on it: the reader is looking at one, at the top
+   * as much as in the middle, and rows that land above it push it down.
+   */
+  hold(): boolean
   /**
    * The item model moved: a text filter the Host answered may be stale, and the
    * surface's query is the Host's to answer.
@@ -122,13 +126,18 @@ export function createTransport(ports: TransportPorts): Transport {
    */
   const stickyRead = new Set<string>()
   /**
-   * Rows a refresh brought in while the reader was scrolled into the archive.
-   * A row that lands between the top edge and the rows under it pushes
-   * everything below it down; the fade that softens that only makes it blink.
-   * They wait here instead, and land when the reader leaves the position they
-   * would have moved — the top of the list, or another scope.
+   * Rows a refresh brought in while a surface was showing a list. A row that
+   * lands above the reader — or inside the rows under them — pushes everything
+   * below it down; the fade that softens that only makes it blink. They wait
+   * here instead, and land when the reader acts: leaves the top and comes back,
+   * changes the scope, or asks for them.
    */
   const heldArrivals = new Set<string>()
+  /**
+   * The first frame a (re)opened stream delivers. It is the baseline, not a
+   * change: a surface that has just come on screen has no rows for it to move.
+   */
+  let firstFrame = true
 
   let flushTimer: ReturnType<typeof setTimeout> | null = null
   let freshTimer: ReturnType<typeof setTimeout> | null = null
@@ -216,9 +225,16 @@ export function createTransport(ports: TransportPorts): Transport {
     // A refresh that lands rows under the reader's eye moves the rows below
     // them, and the fade meant to soften that reads as a blink: the count
     // moves, the rows do not.
-    if (fresh.size && ports.scrolled()) {
+    if (fresh.size && !firstFrame && ports.hold()) {
       for (const id of fresh) heldArrivals.add(id)
     }
+    firstFrame = false
+    // A full state can drop rows a held set or a retained row still names.
+    for (const id of heldArrivals) {
+      if (!byId.has(id)) heldArrivals.delete(id)
+      else fresh.delete(id)
+    }
+    for (const id of stickyRead) if (!byId.has(id)) stickyRead.delete(id)
     const read = new Set<string>(Array.isArray(payload.read) ? payload.read : before.read)
     const starred = new Set<string>(Array.isArray(payload.starred) ? payload.starred : before.starred)
     const feeds: Feed[] = Array.isArray(payload.feeds) ? payload.feeds : before.feeds
@@ -322,7 +338,7 @@ export function createTransport(ports: TransportPorts): Transport {
       if (before.loadedOnce) {
         for (const item of frame.items.added) if (!before.byId.has(item.id)) fresh.add(item.id)
       }
-      if (fresh.size && ports.scrolled()) {
+      if (fresh.size && !firstFrame && ports.hold()) {
         for (const id of fresh) heldArrivals.add(id)
       }
       for (const id of heldArrivals) fresh.delete(id)
@@ -382,6 +398,7 @@ export function createTransport(ports: TransportPorts): Transport {
       current: current && rows.has(current) ? current : null,
       listEpoch: epoch ? ui().listEpoch + 1 : ui().listEpoch,
     })
+    firstFrame = false
     if (fresh.size) armFresh()
     if (frame.items) {
       // The rows moved under an active text filter: the Host answers that query,
@@ -451,6 +468,9 @@ export function createTransport(ports: TransportPorts): Transport {
   function openStream(): void {
     closeStream()
     streamAttempts = 0
+    // The stream starts over: its first frame is the state this surface will
+    // hold, not a change to the one it had.
+    firstFrame = true
     if (!data().loadedOnce && data().status !== 'error') ports.setData({ status: 'loading' })
     if (disposed) return
     if (typeof EventSource === 'undefined') {
@@ -498,9 +518,25 @@ export function createTransport(ports: TransportPorts): Transport {
    * with it: the reader moved the list, so the rows may move now too.
    */
   function showAll(): Promise<void> {
-    heldArrivals.clear()
+    if (releaseRows()) ports.setUi({ listEpoch: ui().listEpoch + 1 })
     // The Host announces what the action changed; there is nothing to ask for.
     return Promise.resolve()
+  }
+
+  /**
+   * Let the rows a refresh was holding land. They fade in where they belong,
+   * the way a row that arrived where the reader was not looking does.
+   * @returns whether anything was being held.
+   */
+  function releaseRows(): boolean {
+    if (!heldArrivals.size) return false
+    const ids = Array.from(heldArrivals)
+    heldArrivals.clear()
+    const fresh = new Set(data().fresh)
+    for (const id of ids) fresh.add(id)
+    ports.setData({ fresh: fresh })
+    armFresh()
+    return true
   }
 
   function flushMarks(): void {
@@ -704,11 +740,7 @@ export function createTransport(ports: TransportPorts): Transport {
     unmount: unmount,
     dispose: dispose,
     clearSticky: function () { if (stickyRead.size) stickyRead.clear() },
-    releaseHeld: function (): boolean {
-      if (!heldArrivals.size) return false
-      heldArrivals.clear()
-      return true
-    },
+    releaseHeld: releaseRows,
     release: function (ids: readonly string[]): boolean {
       let changed = false
       for (const id of ids) if (stickyRead.delete(id)) changed = true

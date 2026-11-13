@@ -252,7 +252,7 @@ if (engine === undefined || esbuild === undefined) {
     ok(still.getList().length === 3, 'the list starts with the archive as loaded', still.getList().length)
 
     // The reader is scrolled into the list when the refresh lands.
-    still.setScrolled(true)
+    still.setHold(true)
     const added = item('r4', 'Row four')
     host.items = [host.items[0], host.items[1], added, host.items[2]]
     await loaded(still)
@@ -261,13 +261,52 @@ if (engine === undefined || esbuild === undefined) {
     ok(still.countInView() === 4, 'the header still counts it as something to read', still.countInView())
 
     // Coming back to the top is where new rows belong.
-    still.setScrolled(false)
+    still.setHold(false)
     still.releaseHeld()
     ok(ids(still).includes('r4'), 'at the top the held row lands', ids(still))
     ok(still.getList().length === 4, 'and the list is whole again', still.getList().length)
 
+    // --- a list on screen is a position to protect, top or not ---
+    // The surface says it is showing a list; the transport holds whatever a
+    // refresh brings. The top is the place that used to be special-cased, and
+    // it is exactly where a reader sits while the newest row is under them.
+    host.items = [item('h1', 'Hold one'), item('h2', 'Hold two')]
+    host.read = []
+    host.starred = []
+    const holding = createController(t, createPrefs())
+    await loaded(holding)
+    holding.setHold(true)
+    ok(holding.heldCount() === 0, 'nothing is held while nothing new has arrived', holding.heldCount())
+    host.items = [item('h0', 'Hold zero')].concat(host.items)
+    await loaded(holding)
+    ok(!ids(holding).includes('h0') && holding.heldCount() === 1,
+      'a row that arrives on a list at its top is held, not inserted under the reader', ids(holding))
+    ok(holding.countInView() === 3, 'and the count still says it is there', holding.countInView())
+    holding.releaseHeld()
+    ok(ids(holding).includes('h0'), 'asking for it lands it', ids(holding))
+    ok(holding.get().fresh.has('h0'), 'and it fades in where it belongs', [...holding.get().fresh])
+
+    // An act the reader asked for lands them too: the list may move because
+    // they moved it.
+    host.items = [item('h-1', 'Hold minus one')].concat(host.items)
+    await loaded(holding)
+    ok(!ids(holding).includes('h-1'), 'another arrival is held while the list is still', ids(holding))
+    await holding.runAction('fetch')
+    ok(ids(holding).includes('h-1'), 'an explicit refresh lands the rows it was holding', ids(holding))
+
+    // The first frame of a new stream is the baseline, not a change to hold
+    // back: a surface that just came on screen has no position yet.
+    host.items = [item('h-2', 'Hold minus two')].concat(host.items)
+    holding.reconnect()
+    lastSource.fire('open')
+    lastSource.fire('welcome', welcome())
+    await sleep(0)
+    ok(ids(holding).includes('h-2'), 'the first frame after reconnecting lands its rows', ids(holding))
+    ok(holding.heldCount() === 0, 'and holds none of them', holding.heldCount())
+    holding.dispose()
+
     // A scope change is the other way out: the reader moved the list themselves.
-    still.setScrolled(true)
+    still.setHold(true)
     host.items = [item('r5', 'Row five')].concat(host.items)
     await loaded(still)
     ok(!ids(still).includes('r5'), 'another arrival is held while reading', ids(still))
@@ -276,7 +315,7 @@ if (engine === undefined || esbuild === undefined) {
     ok(ids(still).includes('r5'), 'a search lets the held row go with the old scope', ids(still))
     still.escape()
 
-    // With nothing scrolled, a refresh lands as it always did.
+    // With no surface asking to hold it, a refresh lands as it always did.
     const arriving = createController(t, createPrefs())
     host.items = [item('n1', 'New one')]
     host.read = []

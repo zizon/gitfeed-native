@@ -100,11 +100,11 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
   /** Rows whose body is being read, so an article opening twice reads it once. */
   const bodyRequests = new Set<string>()
   /**
-   * Whether the list is scrolled into the archive. The transport asks before it
-   * lets a refresh put rows where the reader is looking; it is not published,
-   * because a scroll must not republish the snapshot.
+   * Whether a surface is showing a list it wants held still. The transport asks
+   * before it lets a refresh put rows where the reader is looking; it is not
+   * published, because a scroll must not republish the snapshot.
    */
-  let scrolled = false
+  let hold = false
 
   function get(): ClientState {
     return reader.getSnapshot()
@@ -149,7 +149,7 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     // outlive the list that set it — a scroll to the end, then the filter
     // emptying it — and no scroll pass would clear it, because an empty list
     // renders no viewport.
-    scrolled: function () { return scrolled && getList().length > 0 },
+    hold: function () { return hold && getList().length > 0 },
     refilter: function () {
       // The model moved under a query: ask again for the text the reader left
       // in the box, so a row a refresh brought in is searchable at once.
@@ -317,9 +317,18 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     if (transport.releaseHeld()) bumpList()
   }
 
-  /** Tell the transport whether the list is scrolled into the archive. */
-  function setScrolled(value: boolean): void {
-    scrolled = value
+  /**
+   * Tell the transport whether a surface is showing a list it wants held
+   * still, which is any list with rows on it.
+   * @param value - whether a list with rows is on screen.
+   */
+  function setHold(value: boolean): void {
+    hold = value
+  }
+
+  /** How many rows a refresh is holding back until the reader asks for them. */
+  function heldCount(): number {
+    return transport.held.size
   }
 
   /**
@@ -654,7 +663,8 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     releaseSticky: releaseSticky,
     trimSticky: trimSticky,
     releaseHeld: releaseHeld,
-    setScrolled: setScrolled,
+    setHold: setHold,
+    heldCount: heldCount,
     countInView: countInView,
     setFolderOpen: setFolderOpen,
     setWidths: setWidths,

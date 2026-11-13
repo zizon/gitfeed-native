@@ -107,8 +107,14 @@ export interface Controller {
   releaseSticky(ids: string[]): void
   /** Let go of rows a scroll left behind, rebuilding only if it held any. */
   trimSticky(ids: string[]): void
-  /** Tell the reader whether the list is scrolled into the archive. */
-  setScrolled(value: boolean): void
+  /**
+   * Tell the reader whether a surface is showing a list it wants held still.
+   * A refresh lands its rows on a list that has none, and holds them for one
+   * that has rows the reader is looking at.
+   */
+  setHold(value: boolean): void
+  /** How many rows a refresh is holding back until the reader asks for them. */
+  heldCount(): number
   /** Let the arrivals a refresh held back land, rebuilding if it added rows. */
   releaseHeld(): void
   /** How many rows the current view has, counted from the archive. */

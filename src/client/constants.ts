@@ -17,3 +17,9 @@ export const ROW_H = 66
 export const ROW_H_PLAIN = 46
 export const GROUP_H = 32
 export const DIGEST_CHARS = 240
+/**
+ * How close to zero the viewport still counts as being at the top of the list.
+ * The top is the one place with no entry under its edge to hold, so the rules
+ * that keep a rebuild from moving the reader start just below it.
+ */
+export const AT_TOP = 12

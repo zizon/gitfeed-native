@@ -1,9 +1,17 @@
 /**
  * The viewport half of the list: which entries are mounted, which one the top
- * edge sits on, and which rows scrolling past have been read. Pure — the
- * component keeps the rAF throttle, the dwell clock, and the scroll restore.
+ * edge sits on, and which rows scrolling past have been read.
+ *
+ * The band is derived, never stored: a render draws the entries it was handed
+ * from the scroll offset it was handed, so a rebuild cannot leave the mounted
+ * rows describing the list that was replaced. The one transition the browser
+ * cannot make on its own is a rebuild under a live viewport, and
+ * {@link scrollAfterRebuild} answers where the viewport has to go for the entry
+ * under its edge to stay under its edge. The component owns the rAF throttle,
+ * the dwell clock, and applying the answer before paint.
  */
 
+import { AT_TOP } from './constants.js'
 import type { Entry } from './derive.js'
 
 /**
@@ -104,8 +112,6 @@ export const READ_DWELL_MS = 1000
 
 /** Rows kept mounted beyond the visible band, so a fast scroll never shows a gap. */
 const OVERSCAN = 4
-/** Below this offset the viewport counts as being at the very top. */
-const AT_TOP = 12
 
 /**
  * Decide one viewport pass.
@@ -140,6 +146,82 @@ export function windowOf(input: WindowInput): ListWindow {
     anchor: anchor,
     headerIndex: headerIndex,
   }
+}
+
+/** The entries a rebuild replaced, and the entries that replaced them. */
+export interface RebuildInput {
+  /** The entries that were on screen. */
+  prev: readonly Entry[]
+  prevOffsets: readonly number[]
+  /** The entries the list was rebuilt from. */
+  next: readonly Entry[]
+  nextOffsets: readonly number[]
+  /** The scroll offset just before the rebuild. */
+  top: number
+  /** Viewport height. */
+  height: number
+  /** Grouping in effect; a changed grouping is a new list, not a rebuild. */
+  groupBy: string
+}
+
+/**
+ * Where the viewport goes when the list is rebuilt under it.
+ *
+ * A rebuild replaces every entry object, so React has no key to keep the
+ * browser's scroll position on: the entry under the viewport edge is the only
+ * landmark that says what the reader is looking at. The answer puts that entry
+ * back under the edge, at the same offset into it, so rows inserted or removed
+ * above the viewport move the scroll offset instead of the text.
+ *
+ * Two cases have no landmark to hold. At the top there is no entry above the
+ * edge to stand behind, so the top stays the top. And when the anchored entry
+ * itself is gone — retention deleted it, or a mark dropped it — the first entry
+ * after it that survived takes its place; if the whole tail went with it, the
+ * list starts over at its top.
+ *
+ * @param input - the entries before and after, and where the viewport was.
+ * @returns the scroll offset to apply before the next paint.
+ */
+export function scrollAfterRebuild(input: RebuildInput): number {
+  const prev = input.prev
+  if (!prev.length || !input.next.length) return 0
+  const band = windowOf({
+    entries: prev,
+    offsets: input.prevOffsets,
+    groupFloor: groupFloorOf(prev),
+    top: input.top,
+    height: input.height,
+    groupBy: input.groupBy,
+  })
+  if (!band.anchor) return 0
+  const anchorIndex = Math.min(prev.length - 1, lowerBound(input.prevOffsets, input.top))
+  const nextAt = indexOf(input.next)
+  const kept = nextAt.get(prev[anchorIndex].key)
+  if (kept !== undefined) {
+    const delta = Math.min(band.anchor.delta, Math.max(0, input.next[kept].h - 1))
+    return Math.max(0, (input.nextOffsets[kept] || 0) + delta)
+  }
+  // The anchor is gone. The nearest entry after it that survived keeps the
+  // screen position the anchor had, so the reader keeps looking at the same
+  // part of the archive rather than at whatever slid into its place.
+  for (let i = anchorIndex + 1; i < prev.length; i++) {
+    const at = nextAt.get(prev[i].key)
+    if (at === undefined) continue
+    return Math.max(0, (input.nextOffsets[at] || 0) - (input.prevOffsets[i] - input.top))
+  }
+  for (let i = anchorIndex - 1; i >= 0; i--) {
+    const at = nextAt.get(prev[i].key)
+    if (at === undefined) continue
+    return Math.max(0, (input.nextOffsets[at] || 0) - (input.prevOffsets[i] - input.top))
+  }
+  return 0
+}
+
+/** Every entry key to its index, for the rebuild's two lookups. */
+function indexOf(entries: readonly Entry[]): Map<string, number> {
+  const out = new Map<string, number>()
+  for (let i = 0; i < entries.length; i++) out.set(entries[i].key, i)
+  return out
 }
 
 /** One read-on-scroll pass. The caller owns `seen`, so a pass stays pure. */

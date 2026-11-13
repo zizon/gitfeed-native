@@ -422,9 +422,8 @@ from the archive, which is why it falls as the reading does instead of in jumps
 when a rebuild finally releases those rows. A mark burst does not reload the
 state behind it — the reader already holds the change it sent, and refetching
 rebuilt the rows, the count, and the digest text under the pointer several
-times a second while scrolling. And a refresh that lands while the reader is
-scrolled into the archive holds its new rows back: the count says they are
-there, the rows arrive when the reader leaves the spot they would have moved.
+times a second while scrolling. And a refresh holds its new rows back while a
+surface shows a list: the count says they are there, and the bar offers them.
 An empty list has no spot to protect, so its arrivals land at once.
 
 - **Sections hold one order.** Grouped sections are ordered by name — the way
@@ -432,18 +431,28 @@ An empty list has no spot to protect, so its arrivals land at once.
   count. Ranking by size meant that every fetch, and every read mark under the
   Unread filter, could move the section being read somewhere else; a section
   that grows or shrinks now stays where it is.
-- **The viewport is anchored to a row.** When rows are inserted above the
-  viewport, the list is put back on the entry that was under its top edge, so
-  the text being read does not slide down the screen. At the very top the new
-  rows push in as expected instead.
-- **Arrivals wait for the reader to move.** A fetch brings rows older than the
-  newest ones on screen — feeds that were quiet for an hour deliver an hour's
-  worth — so a new row lands *inside* the band being read, not only at its top,
-  and inserting it pushes every row below it down. The fade meant to soften
-  that read as the page blinking. Held rows are counted but not listed; they
-  land when the reader returns to the top of the list, changes the scope, or
-  asks for a refresh. Rows that arrive where the reader is *not* looking still
-  fade in where they belong (`gf-row-in`), and a quiet poll changes nothing.
+- **The viewport is anchored to a row.** When the list is rebuilt under a live
+  viewport, the list is put back on the entry that was under its top edge —
+  from the entries the last paint drew and the scroll offset the scroll handler
+  recorded, before paint — so the text being read does not slide down the
+  screen. If that entry is gone, the nearest entry that survived keeps the
+  place the edge had.
+- **Arrivals wait for the reader.** A fetch brings rows older than the newest
+  ones on screen — feeds that were quiet for an hour deliver an hour's worth —
+  so a new row lands *inside* the band being read, not only at its top, and
+  inserting it pushes every row below it down. The fade meant to soften that
+  read as the page blinking. Held rows are counted but not listed, at the top
+  as much as in the middle; the bar says how many there are and offers them as
+  `N new`. They also land when the reader leaves the top and comes back,
+  changes the scope, or asks for a refresh/pull/sync. A released row fades in
+  where it belongs (`gf-row-in`), and a quiet poll changes nothing. The first
+  frame a surface receives — a page load, a reconnect — is a baseline, not a
+  change to hold back.
+- **The band is derived, never stored.** A painted frame draws the entries it
+  was handed at the scroll offset it was handed, and a rebuild is applied
+  before paint, so the list never shows one frame of the list it replaced. The
+  browser's own scroll anchoring is off for the list, so there is exactly one
+  owner of the scroll position. See [list-state.md](docs/list-state.md).
 - **Ties are broken by id**, on the Host (`compareItems`), so two items that
   share a timestamp cannot swap places between reloads.
 

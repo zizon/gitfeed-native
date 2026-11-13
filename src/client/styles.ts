@@ -289,13 +289,38 @@ export const CSS = `
   border-bottom: 0.5px solid var(--dsw-alias-border-l1);
 }
 .gf-count-label { flex: 1; color: var(--dsw-alias-label-tertiary); font-size: 11px; line-height: 16px; }
+/* A refresh's held rows, asked for from the bar that already counts them: a
+   control, not a badge. It sits where the reader looks for the list's state. */
+.gf-newitems {
+  flex: none;
+  height: 22px;
+  padding: 0 8px;
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-state-business-primary);
+  font: inherit;
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.gf-newitems:focus-visible {
+  outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: 0;
+}
+@media (hover: hover) {
+  .gf-newitems:hover { background: var(--dsw-alias-interactive-bg-hover); }
+}
 /* The list's first paint: the rows it is about to draw, as their own height
    and the theme's skeleton wash, so the page does not jump when it lands. */
 .gf-skel { flex: 1 1 auto; min-height: 0; overflow: hidden; padding: 4px 12px; }
 .gf-skel-row { display: flex; flex-direction: column; justify-content: center; gap: 6px; }
 .gf-skel-line { height: 10px; border-radius: var(--dsw-radius-xs); background: var(--dsw-alias-bg-skeleton); }
 .gf-scrollwrap { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; position: relative; }
-.gf-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; position: relative; }
+/* The list owns the scroll position: a rebuild sets it before the frame is
+   painted, so the browser's own anchoring must not move it somewhere else. */
+.gf-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; position: relative; overflow-anchor: none; }
 .gf-listpane .gf-scroll { padding-bottom: 52px; }
 /* One viewport of scroll past the last row: the rows the list ends on have to
    be able to leave the viewport to be read, and this is where the reader

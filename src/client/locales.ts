@@ -100,6 +100,8 @@ export const EN = {
   'repo.hintLocal': 'local copy — clone your fork here to sync',
   'items.count': '{n} items',
   'list.end': 'No more items',
+  'list.newItems': '{n} new',
+  'list.newHint': 'Show the rows that arrived while you were reading',
   'feed.all': 'All items',
   'feed.uncategorized': 'Uncategorized',
 } as const
@@ -204,6 +206,8 @@ export const ZH: Record<keyof typeof EN, string> = {
   'repo.hintLocal': '本地副本 — 克隆你的 fork 到这里即可同步',
   'items.count': '{n} 条',
   'list.end': '没有更多条目',
+  'list.newItems': '{n} 条新内容',
+  'list.newHint': '显示阅读期间新到的条目',
   'feed.all': '全部条目',
   'feed.uncategorized': '未分类',
 }
