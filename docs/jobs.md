@@ -13,7 +13,7 @@ where marked.
 
 | # | behaviour |
 |---|---|
-| C1 | each job owns its cadence: a run that produced something returns to base, a quiet or failing run doubles, capped; the runner stores what the job reports |
+| C1 | each job owns its cadence: a run that produced something returns to base, a quiet run doubles, and a failed feed retries at base (only a run of failures backs off), all capped; the runner stores what the job reports |
 | C2 | the Refresh job keeps one clock per feed and runs when the earliest is due |
 | C3 | Refresh pauses after `idleMinutes` without a reader request |
 | C4 | local marks reach the remote about 20 s after the last one, and never later than the cap into a burst |
@@ -37,7 +37,7 @@ jobs, and no timer the runner keeps for itself.
 
 **The runner has no backoff policy.** A run reports `nextAt` and `intervalMin`;
 the runner stores those, wakes at the deadline, and renders the status line.
-The doubling rule lives with the job (per feed for Refresh, one interval for
+The cadence rule lives with the job (per feed for Refresh, one interval for
 Sync), which is also why the stored row is four fields and not seven.
 
 **Six verbs, and none of them a lifecycle.** Two belong to the runner (`add`,

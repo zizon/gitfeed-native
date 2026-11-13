@@ -3,9 +3,12 @@
 // The scheduler gives the fetch job one job-level interval, but a reader
 // subscribes to feeds that publish at very different rates. Each feed
 // therefore carries its own `nextAt`: a feed that keeps producing items stays
-// at the base interval, while a quiet or failing feed doubles its interval up
-// to the ceiling. The fetch job stores these clocks in its own payload inside
-// `.local/schedule.json`; they are machine-local and never committed.
+// at the base interval, while a quiet feed doubles its interval up to the
+// ceiling. A failure is not the same thing as quiet — it usually says the
+// network missed, not that the feed is slow — so a failed feed comes back to
+// the base interval and only a run of failures backs it off. The fetch job
+// stores these clocks in its own payload inside `.local/schedule.json`; they
+// are machine-local and never committed.
 
 /** One feed's place in the fetch schedule. */
 export interface FeedScheduleEntry {
@@ -13,6 +16,8 @@ export interface FeedScheduleEntry {
   intervalMin: number
   /** Epoch milliseconds of the next fetch. */
   nextAt: number
+  /** Consecutive failed runs; cleared by the next run that reaches the feed. */
+  failures?: number
 }
 
 export type FeedClocks = Record<string, FeedScheduleEntry | undefined>
@@ -58,10 +63,13 @@ export function nextDueAt(clocks: FeedClocks, feedIds: string[], nowMs: number):
 /**
  * Fold one run's outcome into the per-feed clocks.
  *
- * A feed that produced items returns to the base interval; one that was
- * unchanged, not modified, or failed doubles its current interval. Feeds move
- * on independent clocks, which is what keeps a rarely updated source from
- * being polled on every run.
+ * A feed that produced items returns to the base interval; one that answered
+ * but had nothing new doubles its current interval. A failure is treated as a
+ * miss, not as slowness: the next attempt is at the base interval, and only
+ * consecutive failures back that off, so a feed that was parked at the
+ * ceiling still retries within minutes of coming back. Feeds move on
+ * independent clocks, which is what keeps a rarely updated source from being
+ * polled on every run.
  * @param clocks the fetch job's per-feed clocks, updated in place.
  * @param outcomes per-feed results of the run.
  * @param options clock and interval bounds, all in minutes except `nowMs`.
@@ -77,6 +85,16 @@ export function applyRun(
     const outcome = outcomes[id]
     const prev = clocks[id]
     const current = prev && prev.intervalMin > 0 ? prev.intervalMin : base
+    if (outcome.failed === true) {
+      const failures = (prev && prev.failures ? prev.failures : 0) + 1
+      const intervalMin = Math.min(max, Math.max(base, base * 2 ** (failures - 1)))
+      clocks[id] = {
+        intervalMin: intervalMin,
+        nextAt: options.nowMs + intervalMin * 60000,
+        failures: failures,
+      }
+      continue
+    }
     const fresh = outcome.added > 0
     const intervalMin = fresh ? base : Math.min(max, Math.max(base, current * 2))
     clocks[id] = {
