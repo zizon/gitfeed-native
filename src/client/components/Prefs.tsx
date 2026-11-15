@@ -23,6 +23,7 @@ export function DisplayPrefs({ state, controller, t }: {
   const hideEmpty = state.hideEmpty === null ? state.reader.hideEmptyFeeds : state.hideEmpty
   const markOnScroll = state.markOnScroll === null ? state.reader.markReadOnScroll : state.markOnScroll
   const showDigest = state.showDigest === null ? true : state.showDigest
+  const interestOrder = state.interestOrder === null ? true : state.interestOrder
   const modes: Array<[string, string]> = [
     ['none', 'pref.none'],
     ['folder', 'pref.folder'],
@@ -51,6 +52,13 @@ export function DisplayPrefs({ state, controller, t }: {
             checked={showDigest}
             label={t('pref.showDigest')}
             onChange={function (value) { controller.setShowDigest(value) }}
+          />
+        ))}
+        {prefRow(t('pref.interestOrder'), (
+          <Switch
+            checked={interestOrder}
+            label={t('pref.interestOrder')}
+            onChange={function (value) { controller.setInterestOrder(value) }}
           />
         ))}
       </div>

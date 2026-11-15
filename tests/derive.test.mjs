@@ -37,6 +37,8 @@ if (esbuild === undefined) {
       groupKey,
       listOf,
       markCountsOf,
+      railGroups,
+      sourceOrder,
     } = await import(pathToFileURL(bundle).href)
 
     const feeds = new Map([
@@ -166,6 +168,52 @@ if (esbuild === undefined) {
       exhaustedGroups(entriesOf(items, 'none', 10, 10, titleOf, folderOf), new Set(['a1', 'a2']), 'unread').length === 0,
       'an ungrouped list has no section to finish',
     )
+
+    // --- the order over sources: what the reader reads, then the names ---
+    const orderFeeds = [
+      { id: 'f-c', url: null, title: 'Cedar', folder: 'Daily' },
+      { id: 'f-a', url: null, title: 'Alder', folder: 'Daily' },
+      { id: 'f-b', url: null, title: 'Birch', folder: 'Weekly' },
+      { id: 'f-d', url: null, title: 'Dogwood', folder: 'Weekly' },
+    ]
+    const byName = sourceOrder(orderFeeds, null, 'Uncategorized')
+    ok(byName.rank.get('f-a') === 0 && byName.rank.get('f-b') === 1 && byName.rank.get('f-c') === 2,
+      'with no attention the order is the names', Object.fromEntries(byName.rank))
+    ok(byName.folders.get('Daily') === 0 && byName.folders.get('Weekly') === 1, 'and a folder takes its first source place', Object.fromEntries(byName.folders))
+    ok(byName.next === 4, 'an unknown source would sort after every one of them', byName.next)
+
+    const scores = new Map([['f-d', 5], ['f-c', 2]])
+    const byReading = sourceOrder(orderFeeds, scores, 'Uncategorized')
+    ok(byReading.rank.get('f-d') === 0 && byReading.rank.get('f-c') === 1 && byReading.rank.get('f-a') === 2 && byReading.rank.get('f-b') === 3,
+      'the sources the reader reads come first, by score', Object.fromEntries(byReading.rank))
+    ok(byReading.folders.get('Weekly') === 0 && byReading.folders.get('Daily') === 1,
+      'so the folder holding the best source leads, not the one that sorts first', Object.fromEntries(byReading.folders))
+
+    const rail = railGroups(orderFeeds, byReading, 'Uncategorized')
+    ok(rail.map((group) => group.name).join(',') === 'Weekly,Daily', 'the rail lists the folders in that order', rail.map((group) => group.name))
+    ok(rail[0].feeds.map((feed) => feed.id).join(',') === 'f-d,f-b', 'and each folder its sources in that order', rail[0].feeds.map((feed) => feed.id))
+
+    const unrankedRail = railGroups(orderFeeds, byName, 'Uncategorized')
+    ok(unrankedRail.map((group) => group.name).join(',') === 'Daily,Weekly', 'without attention the rail keeps the name order', unrankedRail.map((group) => group.name))
+
+    // The same rule over the two sources the fixture's rows belong to: Beta is
+    // the one read, so both groupings must start with it.
+    const itemFeeds = [
+      { id: 'feed-a', url: null, title: 'Alpha Notes', folder: 'Daily' },
+      { id: 'feed-b', url: null, title: 'Beta Notes', folder: null },
+    ]
+    const read = sourceOrder(itemFeeds, new Map([['feed-b', 5]]), 'Uncategorized')
+    const rankedSections = entriesOf(items, 'folder', 10, 10, titleOf, folderOf,
+      (key) => (read.folders.get(key) === undefined ? read.next : read.folders.get(key)))
+    ok(rankedSections[0].kind === 'group' && rankedSections[0].group.key === 'Uncategorized',
+      'the grouped list follows the same order as the rail', rankedSections.map((entry) => entry.kind === 'group' ? entry.group.key : '-'))
+    const byFeed = entriesOf(items, 'feed', 10, 10, titleOf, folderOf,
+      (key) => (read.rank.get(key) === undefined ? read.next : read.rank.get(key)))
+    ok(byFeed[0].kind === 'group' && byFeed[0].group.key === 'feed-b',
+      'and so do source sections, by the score their source earned', byFeed.map((entry) => entry.kind === 'group' ? entry.group.key : '-'))
+    const alphabetically = entriesOf(items, 'feed', 10, 10, titleOf, folderOf)
+    ok(alphabetically[0].group.key === 'feed-a',
+      'a list with no order to apply still reads by name', alphabetically.map((entry) => entry.kind === 'group' ? entry.group.key : '-'))
 
     // The folder picker writes into feeds.json, so its rows are the stored
     // names — never the label the list groups a folderless source under, which

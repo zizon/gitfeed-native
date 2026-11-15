@@ -163,7 +163,7 @@ export async function sync(root: string): Promise<GitActionResult> {
       // sync run rebases for a change it will never commit. Each path is staged
       // only when it exists, because a pathspec that matches nothing is fatal
       // and a hand-made root need not carry every file.
-      const targets = ['data/read.ndjson', 'data/starred.ndjson', 'feeds.json', 'config.json']
+      const targets = ['data/read.ndjson', 'data/starred.ndjson', 'data/interest.ndjson', 'feeds.json', 'config.json']
         .filter(function (rel) { return existsSync(path.join(root, rel)) })
       if (hasShards(path.join(root, 'data', 'items'))) targets.unshift('data/items')
       if (targets.length) await runGit(root, ['add', '--'].concat(targets))

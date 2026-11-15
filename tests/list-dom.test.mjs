@@ -39,6 +39,11 @@ if (esbuild === undefined || !existsSync(reactDir) || !existsSync(domDir) || !ex
       "  title: props.title, 'aria-label': props['aria-label'], onClick: props.onClick,",
       "}, props.children)",
       "export const Button = button",
+      "export const Input = (props) => React.createElement('input', {",
+      "  className: props.className, type: props.type, value: props.value,",
+      "  placeholder: props.placeholder, onChange: props.onChange, disabled: props.disabled,",
+      "  'aria-label': props['aria-label'], autoComplete: props.autoComplete,",
+      "})",
       "export const MenuItemButton = button",
       "export const Menu = (props) => props.open",
       "  ? React.createElement('div', { className: props.className }, props.children)",
@@ -49,6 +54,9 @@ if (esbuild === undefined || !existsSync(reactDir) || !existsSync(domDir) || !ex
       "export const IconChevronDownOutlineRegular = glyph('down')",
       "export const IconChevronRightOutlineRegular = glyph('right')",
       "export const IconPlusOutlineRegular = glyph('plus')",
+      "export const IconCheckOutlineRegular = glyph('check')",
+      "export const IconCloseOutlineRegular = glyph('close')",
+      "export const IconWarningOutlineRegular = glyph('warning')",
       '',
     ].join('\n'))
 
@@ -313,6 +321,76 @@ if (esbuild === undefined || !existsSync(reactDir) || !existsSync(domDir) || !ex
     ok(container.querySelector('.gf-scroll') === null, 'the empty view has no list on screen', container.querySelector('.gf-scroll'))
     ok(empty.db.hold === false, 'so a list with no rows protects nothing', empty.db.hold)
     await act(async function () { root.unmount() })
+    // --- the rail draws the reader's order, not the alphabet ---
+    // The list and the rail share one order: the sources the reader reads come
+    // first, then the rest by name. Rendering it is the acceptance test — a
+    // rail that still shows A, B, C means the scores never reached it.
+    const railBundle = path.join(out, 'rail.mjs')
+    execFileSync(esbuild, [
+      path.join(repoRoot, 'src', 'client', 'components', 'FeedRail.tsx'),
+      '--bundle',
+      '--format=esm',
+      '--platform=node',
+      '--jsx=automatic',
+      '--external:react',
+      '--external:react/jsx-runtime',
+      '--external:react-dom',
+      `--alias:@deepseek-ai/dsh-client-ui-primitives=${stub}`,
+      `--outfile=${railBundle}`,
+      '--log-level=warning',
+    ])
+    const { FeedRail } = await import(pathToFileURL(railBundle).href)
+    const railFeeds = [
+      { id: 'f-a', url: null, title: 'Alder', folder: 'Daily', siteUrl: null, error: null, checkedAt: null },
+      { id: 'f-b', url: null, title: 'Birch', folder: 'Daily', siteUrl: null, error: null, checkedAt: null },
+      { id: 'f-c', url: null, title: 'Cedar', folder: 'Weekly', siteUrl: null, error: null, checkedAt: null },
+    ]
+    function railEnv(patch) {
+      const state = Object.assign({
+        items: [], feeds: railFeeds, read: new Set(), ranks: new Map(),
+        filter: 'unread', feedId: null, hideEmpty: false, folderOpen: { Daily: true, Weekly: true },
+        interestOrder: null, busy: {},
+        reader: { hideEmptyFeeds: true, markReadOnScroll: true, groupBy: 'none' },
+      }, patch)
+      const controller = {
+        selectFeed() {},
+        removeFeed() { return Promise.resolve(true) },
+        setFeedFolder() { return Promise.resolve(true) },
+        addFeed() { return Promise.resolve(true) },
+      }
+      return { state: state, controller: controller }
+    }
+    async function renderRail(env) {
+      container.innerHTML = ''
+      const host = document.createElement('div')
+      container.appendChild(host)
+      const railRoot = createRoot(host)
+      await act(async function () {
+        railRoot.render(React.createElement(FeedRail, { state: env.state, controller: env.controller, t: t }))
+      })
+      // Folders and sources in the order they are drawn; the first two rows are
+      // the fixed "All" and "Add feed" entries every rail has.
+      const names = [...host.querySelectorAll('.gf-folder-name, .gf-feed .name')].map((el) => el.textContent)
+      await act(async function () { railRoot.unmount() })
+      return names
+    }
+
+    const alphabetical = await renderRail(railEnv({}))
+    ok(JSON.stringify(alphabetical.slice(2)) === JSON.stringify(['Daily', 'Alder', 'Birch', 'Weekly', 'Cedar']),
+      'the rail lists folders and sources by name when nothing is known', alphabetical)
+
+    const readOrder = await renderRail(railEnv({
+      ranks: new Map([['f-c', 4], ['f-b', 1.5]]),
+    }))
+    ok(JSON.stringify(readOrder.slice(2)) === JSON.stringify(['Weekly', 'Cedar', 'Daily', 'Birch', 'Alder']),
+      'and by what the reader reads when the load carries scores', readOrder)
+
+    const switchedOff = await renderRail(railEnv({
+      ranks: new Map([['f-c', 4], ['f-b', 1.5]]),
+      interestOrder: false,
+    }))
+    ok(JSON.stringify(switchedOff.slice(2)) === JSON.stringify(['Daily', 'Alder', 'Birch', 'Weekly', 'Cedar']),
+      'the preference turns the order back to the names', switchedOff)
   } finally {
     rmSync(out, { recursive: true, force: true })
   }

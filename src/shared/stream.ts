@@ -82,6 +82,13 @@ export interface StreamWelcome {
   schedule: ScheduleJobInfo[]
   repo: string
   allowGit: boolean
+  /**
+   * The sources the reader has shown attention to, scored and already decayed
+   * to the moment the Host built them. Only the first frame carries it: the
+   * order it describes is settled when the surface loads, so a delta has no
+   * reason to move it. Absent from a Host that predates the attention log.
+   */
+  interest?: Record<string, number>
 }
 
 /** A stream-level failure the surface should report and recover from. */

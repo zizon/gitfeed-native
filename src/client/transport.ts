@@ -78,6 +78,12 @@ export interface Transport {
    */
   mark: (ids: string[], value: boolean, shown: ReadonlySet<string> | null) => Promise<void>
   star: (id: string, on: boolean) => Promise<void>
+  /**
+   * Tell the Host the reader opened or starred a row. The order that log feeds
+   * is a convenience, not the reader's state: a lost act costs a day of
+   * ranking, and a failure here is not worth a banner over the article.
+   */
+  attention: (kind: 'open' | 'star', item: string, feed: string) => void
   addFeed: (url: string, folder: string) => Promise<boolean>
   removeFeed: (id: string) => Promise<boolean>
   setFeedFolder: (id: string, folder: string) => Promise<boolean>
@@ -208,6 +214,8 @@ export function createTransport(ports: TransportPorts): Transport {
       starred?: string[]
       feeds?: Feed[]
       reader?: ReaderPrefs
+      /** Attention scores from the Host; absent from a Host before the log. */
+      interest?: Record<string, number>
       git?: GitInfo | null
       schedule?: ScheduleJobInfo[]
       version?: string | null
@@ -254,6 +262,7 @@ export function createTransport(ports: TransportPorts): Transport {
       feedMap: feedMap,
       read: read,
       starred: starred,
+      ranks: payload.interest ? new Map(Object.entries(payload.interest)) : before.ranks,
       reader: payload.reader || before.reader,
       git: payload.git === undefined ? before.git : payload.git,
       schedule: Array.isArray(payload.schedule) ? payload.schedule : before.schedule,
@@ -608,6 +617,14 @@ export function createTransport(ports: TransportPorts): Transport {
     return request('/star', { ids: [id], star: on }).then(function () { /* the frame settles it */ })
   }
 
+  function attention(kind: 'open' | 'star', item: string, feed: string): void {
+    if (!item || !feed) return
+    request('/attention', { kind: kind, item: item, feed: feed }).catch(function () {
+      // The order is built from what the Host kept; nothing here is the
+      // reader's to fix, and a toast over the article would only be noise.
+    })
+  }
+
   async function addFeed(url: string, folder: string): Promise<boolean> {
     if (ui().busy.add) return false
     ports.setBusy('add', true)
@@ -732,6 +749,7 @@ export function createTransport(ports: TransportPorts): Transport {
     body: body,
     mark: mark,
     star: star,
+    attention: attention,
     addFeed: addFeed,
     removeFeed: removeFeed,
     setFeedFolder: setFeedFolder,

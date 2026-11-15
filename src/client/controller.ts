@@ -56,6 +56,7 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     starred: new Set(),
     feeds: [],
     feedMap: new Map(),
+    ranks: new Map(),
     reader: { hideEmptyFeeds: true, markReadOnScroll: true, groupBy: 'none' },
     git: null,
     schedule: [],
@@ -73,6 +74,7 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     hideEmpty: saved.hideEmpty,
     markOnScroll: saved.markOnScroll,
     showDigest: saved.showDigest,
+    interestOrder: saved.interestOrder,
     folderOpen: saved.folderOpen,
     railW: clamp(saved.railW, RAIL_MIN, RAIL_MAX),
     listW: clamp(saved.listW, LIST_MIN, LIST_MAX),
@@ -402,6 +404,28 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     })
   }
 
+  /**
+   * The acts already told to the Host, so a j/k sweep through a list logs each
+   * row once rather than once per visit.
+   */
+  const attentionSent = new Set<string>()
+
+  /**
+   * Tell the Host which rows the reader is actually reading. Opening a row and
+   * starring one are the two signals the source order is built from; a read
+   * mark is not one, because scrolling and bulk marking saturate it.
+   * @param kind - `open` for a selected row, `star` for an explicit one.
+   * @param id - the row.
+   */
+  function recordAttention(kind: 'open' | 'star', id: string): void {
+    const item = data.byId.get(id)
+    if (!item) return
+    const key = `${kind}\u0000${id}`
+    if (attentionSent.has(key)) return
+    attentionSent.add(key)
+    transport.attention(kind, id, item.feed)
+  }
+
   function select(id: string | null): void {
     if (!id) {
       setUi({ current: null })
@@ -410,6 +434,7 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     if (!data.byId.has(id)) return
     setUi({ current: id })
     ensureBody(id)
+    recordAttention('open', id)
     if (!data.read.has(id)) void mark([id], true, true)
   }
 
@@ -474,6 +499,7 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     if (on) starred.add(target)
     else starred.delete(target)
     setData({ starred: starred })
+    if (on) recordAttention('star', target)
     // Under the Starred filter the star is what membership *is*, so that is
     // the one view that has to rebuild its rows; in the others the glyph
     // updates in place and the list stays where the reader left it.
@@ -595,6 +621,11 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     setUi({ showDigest: value })
   }
 
+  function setInterestOrder(value: boolean): void {
+    prefs.update(function (draft) { draft.interestOrder = value })
+    setUi({ interestOrder: value })
+  }
+
   function setFolderOpen(name: string, open: boolean): void {
     prefs.update(function (draft) { draft.folderOpen[name] = open })
     setUi({ folderOpen: Object.assign({}, prefs.getSnapshot().folderOpen) })
@@ -659,6 +690,7 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     setHideEmpty: setHideEmpty,
     setMarkOnScroll: setMarkOnScroll,
     setShowDigest: setShowDigest,
+    setInterestOrder: setInterestOrder,
     digest: digestOf,
     releaseSticky: releaseSticky,
     trimSticky: trimSticky,

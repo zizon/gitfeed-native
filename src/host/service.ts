@@ -13,11 +13,13 @@ import type { JobRunner, JobTimers } from './runner.js'
 import { pathsFor, readRepoConfig } from './settings.js'
 import { CUSTOM_FEED_TEMPLATE, declarationOf, kindOf, runCustom, scaffoldPath, scriptFile } from './custom.js'
 import { createLiveState } from './live.js'
+import { interestOf, recordAttention, seedFromStars } from './interest.js'
 import type { LiveSnapshot } from './live.js'
 import { appendNdjson, listShards, readJson, readNdjson, updateNdjson } from './store.js'
 import type { FetchResult, GitActionResult, Logger, ReaderStateData, ReadyState, RepoConfig } from './types.js'
 import type { FeedDefinition } from './types.js'
 import type { GitInfo, Feed, Item, SourceKind } from '../shared/types.js'
+import type { InterestEvent } from '../shared/interest.js'
 import type { StreamFrame } from '../shared/stream.js'
 import { PROBE_MS, PROTOCOL } from '../shared/stream.js'
 import { InputError, messageOf } from '../shared/errors.js'
@@ -221,6 +223,7 @@ export function createGitfeed(options: GitfeedOptions) {
       starred: data.starred,
       feeds: data.feeds,
       reader: data.reader,
+      interest: data.interest,
       git: await currentGit(recomputeGit),
       schedule: await runner.status(),
       repo: root,
@@ -354,6 +357,14 @@ export function createGitfeed(options: GitfeedOptions) {
     return (await listShards(paths.items)).concat(await listShards(paths.localItems))
   }
 
+  /**
+   * The state's fingerprint: every file a surface draws from.
+   *
+   * The attention log is deliberately absent. It is read on every build — a
+   * surface that loads gets the scores of that read — but it is not something a
+   * loaded surface draws, so an act must not wake every other surface to tell
+   * it that nothing it holds moved.
+   */
   async function fileVersion(): Promise<string> {
     const files = [paths.config, paths.feeds, paths.meta, paths.read, paths.starred, paths.localMeta]
     let feedsExists = true
@@ -598,12 +609,20 @@ export function createGitfeed(options: GitfeedOptions) {
     const subscribed = await readFeeds(root)
     const feeds = subscribed.map(function (f) { return snapshotFeed(f, meta[f.id] || {}) })
 
+    // The acts that say which sources the reader reads, decayed to now. The
+    // first build of a root that predates the log seeds it from the stars, which
+    // are the one explicit interest the archive already holds.
+    const now = Date.now()
+    await seedFromStars(paths.interest, starred, items, now)
+    const interest = await interestOf(paths.interest, now)
+
     const data: ReaderStateData = {
       items: items,
       read: read,
       starred: starred,
       feeds: feeds,
       reader: cfg.reader,
+      interest: interest,
       repo: root,
       allowGit: allowGit,
     }
@@ -669,6 +688,7 @@ export function createGitfeed(options: GitfeedOptions) {
       starred: data.starred,
       feeds: data.feeds,
       reader: data.reader,
+      interest: data.interest,
       git: base.git,
       schedule: base.schedule,
       repo: root,
@@ -751,6 +771,34 @@ export function createGitfeed(options: GitfeedOptions) {
     live.star(clean, starred)
     if (changed > 0) syncJob.nudge(AUTO_SYNC_DEBOUNCE_MS, AUTO_SYNC_MAX_WAIT_MS)
     return { ok: true, changed: changed, version: await fileVersion() }
+  }
+
+  /**
+   * Record that the reader opened or starred a row: attention, not state.
+   *
+   * The log is committed reader state, so it rides Sync with the marks; what it
+   * does not do is move the state version, which is why ordering a surface
+   * already holds never re-ranks under it. A bad kind is the caller's error;
+   * the rest is deduplicated rather than rejected, because recording attention
+   * twice is not something the reader should ever see a failure for.
+   * @param kind `open` or `star`.
+   * @param item the row.
+   * @param feed the source it belongs to.
+   * @returns whether the log grew.
+   */
+  async function attention(kind: unknown, item: unknown, feed: unknown): Promise<{ ok: boolean; recorded: boolean }> {
+    touch()
+    if (kind !== 'open' && kind !== 'star') throw new InputError('attention: kind must be open or star')
+    const id = typeof item === 'string' ? item.trim() : ''
+    const source = typeof feed === 'string' ? feed.trim() : ''
+    if (!id || id.length >= 64) throw new InputError('attention: item id is required')
+    if (!source || source.length >= 200) throw new InputError('attention: feed id is required')
+    const event: InterestEvent = { kind: kind, feed: source, item: id, at: new Date().toISOString() }
+    const recorded = await recordAttention(paths.interest, event)
+    // The log is committed reader state like a mark, so an act arms the same
+    // sync; the debounce coalesces a sweep of selection into one commit.
+    if (recorded) syncJob.nudge(AUTO_SYNC_DEBOUNCE_MS, AUTO_SYNC_MAX_WAIT_MS)
+    return { ok: true, recorded: recorded }
   }
 
   async function ensureLocalMeta(): Promise<void> {
@@ -1206,6 +1254,7 @@ export function createGitfeed(options: GitfeedOptions) {
     getState: getState,
     mark: mark,
     star: star,
+    attention: attention,
     addFeed: addFeed,
     removeFeed: removeFeed,
     setFeedFolder: setFeedFolder,

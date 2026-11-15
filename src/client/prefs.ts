@@ -15,6 +15,12 @@ export interface Prefs {
   hideEmpty: boolean | null
   markOnScroll: boolean | null
   showDigest: boolean | null
+  /**
+   * Order the rail and the grouped list by the sources the reader reads. Null
+   * is the default, which is on: with no attention logged the order is the same
+   * alphabetical one, so the switch only ever changes a list with evidence.
+   */
+  interestOrder: boolean | null
   /** Folder disclosure by name: a folder the reader opened or closed by hand. */
   folderOpen: Record<string, boolean>
   railW: number
@@ -41,6 +47,7 @@ function defaults(): Prefs {
     hideEmpty: null,
     markOnScroll: null,
     showDigest: null,
+    interestOrder: null,
     folderOpen: {},
     railW: DEFAULT_RAIL,
     listW: DEFAULT_LIST,
@@ -93,6 +100,9 @@ function legacy(): { prefs: Prefs; keys: string[] } | null {
       hideEmpty: asBool(read(LEGACY.hideEmpty)),
       markOnScroll: asBool(read(LEGACY.markOnScroll)),
       showDigest: asBool(read(LEGACY.showDigest)),
+      // The attention order arrived after the snapshot did: a legacy reader
+      // has no entry for it, and the default is the behaviour it wants.
+      interestOrder: null,
       folderOpen: asFolders(read(LEGACY.folderOpen)),
       railW: asWidth(read(LEGACY.railW), DEFAULT_RAIL),
       listW: asWidth(read(LEGACY.listW), DEFAULT_LIST),

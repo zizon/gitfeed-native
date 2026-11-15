@@ -54,6 +54,7 @@ if (engine === undefined || esbuild === undefined) {
         hideEmpty: false,
         markOnScroll: true,
         showDigest: false,
+        interestOrder: null,
         folderOpen: { Daily: true },
         railW: 260,
         listW: 480,

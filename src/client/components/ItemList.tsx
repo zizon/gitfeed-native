@@ -9,7 +9,7 @@ import {
   MenuItemButton,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { AT_TOP, GROUP_H, ROW_H, ROW_H_PLAIN } from '../constants.js'
-import { entriesOf, exhaustedGroups, folderNames } from '../derive.js'
+import { entriesOf, exhaustedGroups, folderNames, sourceOrder } from '../derive.js'
 import type { Entry, GroupEntry } from '../derive.js'
 import { groupFloorOf, offsetIndex, scrollAfterRebuild, scrollReads, settledAbove, windowOf } from '../window.js'
 import type { ItemListProps, MarkScope } from '../types.js'
@@ -101,6 +101,15 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
     return controller.markCounts()
   }, [state.items, state.read, state.version, state.listEpoch, state.feedId, state.query, state.filter, controller])
 
+  // Sections follow the rail's order over sources: the sources the reader
+  // reads first. It is fixed for this load, which is what keeps a fetch or a
+  // mark from moving the section being read.
+  const interestOrder = state.interestOrder === null ? true : state.interestOrder
+  const order = useMemo(function () {
+    const scores = interestOrder ? state.ranks : null
+    return sourceOrder(state.feeds, scores, t('feed.uncategorized'))
+  }, [state.feeds, state.ranks, interestOrder, t])
+
   const entries = useMemo<Entry[]>(function () {
     return entriesOf(
       list,
@@ -109,8 +118,12 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
       GROUP_H,
       function (id) { return controller.feedTitle(id) },
       function (id) { return controller.feedFolder(id) },
+      function (key) {
+        const rank = groupBy === 'feed' ? order.rank.get(key) : order.folders.get(key)
+        return rank === undefined ? order.next : rank
+      },
     )
-  }, [list, groupBy, controller, rowH])
+  }, [list, groupBy, controller, rowH, order])
 
   const offsets = useMemo(function () {
     return offsetIndex(entries)

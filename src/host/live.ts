@@ -29,6 +29,12 @@ export interface LiveSnapshot {
   starred: readonly string[]
   feeds: Feed[]
   reader: ReaderPrefs
+  /**
+   * Attention scores per source, computed when the state was built. They ride
+   * the welcome only: the order they describe belongs to the load, and a delta
+   * that carried them would re-rank the list under the reader.
+   */
+  interest: Record<string, number>
   git: GitInfo | null
   schedule: ScheduleJobInfo[]
   repo: string
@@ -97,6 +103,7 @@ interface Held {
   starred: Set<string>
   feeds: Feed[]
   reader: ReaderPrefs
+  interest: Record<string, number>
   git: GitInfo | null
   schedule: ScheduleJobInfo[]
   repo: string
@@ -224,6 +231,7 @@ export function createLiveState(): LiveState {
       starred: Array.from(held.starred),
       feeds: held.feeds,
       reader: held.reader,
+      interest: held.interest,
       git: held.git,
       schedule: held.schedule,
       repo: held.repo,
@@ -314,6 +322,7 @@ export function createLiveState(): LiveState {
       starred: new Set(next.starred),
       feeds: next.feeds,
       reader: next.reader,
+      interest: next.interest,
       git: next.git,
       schedule: next.schedule,
       repo: next.repo,

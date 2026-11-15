@@ -30,6 +30,8 @@ const GITATTRIBUTES = [
   '# machines marking different items read can never conflict.',
   'data/read.ndjson merge=union',
   'data/starred.ndjson merge=union',
+  '# The attention log is append-only (one act per line).',
+  'data/interest.ndjson merge=union',
   '# Item shards are appended to by fetches; union keeps a',
   '# racing push from colliding.',
   'data/items/*.ndjson merge=union',
@@ -55,6 +57,7 @@ const STARTER_FILES: Array<[string, string]> = [
   ['data/meta.json', '{}\n'],
   ['data/read.ndjson', ''],
   ['data/starred.ndjson', ''],
+  ['data/interest.ndjson', ''],
   ['.gitattributes', GITATTRIBUTES],
   ['.gitignore', GITIGNORE],
 ]

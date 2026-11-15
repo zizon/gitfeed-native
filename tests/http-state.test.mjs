@@ -100,6 +100,22 @@ ok(Array.isArray(marked.body.read) && marked.body.read.length > 0, 'the read set
 console.log(`     ${(full.bytes / 1e3).toFixed(1)} KB with rows, ${(marked.bytes / 1e3).toFixed(1)} KB without`)
 ok(marked.bytes < full.bytes, 'the rowless payload is smaller')
 
+// Attention: an act, not a mark. It is recorded against the source the order
+// is built from and it does not move the state version, so a surface that has
+// loaded keeps the order it drew.
+const shown = full.body.items[0]
+const act = await post('/gitfeed/api/attention', { kind: 'open', item: shown.id, feed: shown.feed })
+ok(act.status === 200 && act.body.recorded === true, 'an open is recorded', act.body)
+const again = await post('/gitfeed/api/attention', { kind: 'open', item: shown.id, feed: shown.feed })
+ok(again.status === 200 && again.body.recorded === false, 'the same row is one act, answered ok', again.body)
+const notAnAct = await post('/gitfeed/api/attention', { kind: 'shrug', item: shown.id, feed: shown.feed })
+ok(notAnAct.status === 400, 'an act that is not one is the caller\'s error', notAnAct.status)
+const scored = await get('/gitfeed/api/state')
+ok(scored.body.interest[shown.feed] === 1, 'the state carries the point the open earned', scored.body.interest)
+ok(Object.keys(scored.body.interest).length === 1, 'and only for the source that earned it', scored.body.interest)
+ok(readFileSync(path.join(root, '.gitattributes'), 'utf8').includes('data/interest.ndjson merge=union'),
+  'the data root is told to merge the log, not conflict on it')
+
 const stale = await get('/gitfeed/api/state?version=nope&itemsVersion=some-older-model')
 ok(Array.isArray(stale.body.items), 'a stale item model always gets rows back')
 

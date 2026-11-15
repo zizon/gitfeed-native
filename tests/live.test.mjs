@@ -33,6 +33,7 @@ function snapshot(overrides) {
     starred: [],
     feeds: feeds,
     reader: { hideEmptyFeeds: true, markReadOnScroll: true, groupBy: 'none' },
+    interest: { 'feed-a': 2.5 },
     git: null,
     schedule: [],
     repo: '/tmp/gitfeed-root',
@@ -61,6 +62,7 @@ ok(live.info().rev === 1 && live.info().version === 'v1', 'as revision one, so a
 const welcome = live.framesAfter(0)
 ok(welcome.length === 1 && welcome[0].t === 'welcome', 'a surface with no revision gets the whole state', welcome.map((frame) => frame.t))
 ok(welcome[0].items.length === 2 && welcome[0].read.join() === 'b', 'with the rows and marks it needs', welcome[0].read)
+ok(welcome[0].interest['feed-a'] === 2.5, 'and the attention the order is built from', welcome[0].interest)
 
 // --- a read that finds nothing new is not a revision ---
 ok(live.apply(first) === null, 're-reading the same state sends nothing')
@@ -117,6 +119,12 @@ const unmarkFrame = live.mark(['a'], false)
 ok(unmarkFrame.read.remove.join() === 'a', 'unmarking is the other direction', unmarkFrame && unmarkFrame.read)
 const starFrame = live.star(['a'], true)
 ok(starFrame.starred.add.join() === 'a', 'a star travels the same way', starFrame && starFrame.starred)
+
+// --- attention is not drawn, so it never rides a delta ---
+// A new score is kept for the next welcome and wakes nobody: the order a
+// surface holds was settled when it loaded, and nothing it does may move it.
+live.apply(snapshot({ version: 'v5', items: [], interest: { 'feed-b': 4 } }))
+ok(live.welcome().interest['feed-b'] === 4, 'a later read updates the attention the next welcome carries', live.welcome().interest)
 
 // --- a surface that holds a revision gets only what it missed ---
 const missed = live.framesAfter(1)

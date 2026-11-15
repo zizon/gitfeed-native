@@ -88,6 +88,8 @@ if (engine === undefined || esbuild === undefined) {
       starred: [],
       marks: [],
       stars: [],
+      attention: [],
+      interest: {},
       queries: [],
       searchSignals: [],
     }
@@ -109,6 +111,10 @@ if (engine === undefined || esbuild === undefined) {
         if (body.read) for (const id of body.ids) if (host.read.indexOf(id) === -1) host.read.push(id)
         else host.read = host.read.filter((id) => body.ids.indexOf(id) === -1)
         return { ok: true, status: 200, json: async function () { return { ok: true, changed: body.ids.length } } }
+      }
+      if (target.indexOf('/attention') !== -1) {
+        host.attention.push({ kind: body.kind, item: body.item, feed: body.feed })
+        return { ok: true, status: 200, json: async function () { return { ok: true, recorded: true } } }
       }
       if (target.indexOf('/star') !== -1) {
         host.stars.push({ ids: body.ids, star: body.star })
@@ -151,6 +157,7 @@ if (engine === undefined || esbuild === undefined) {
         read: host.read.slice(),
         starred: host.starred.slice(),
         reader: { hideEmptyFeeds: true, markReadOnScroll: true, groupBy: 'none' },
+        interest: host.interest,
         repo: '/tmp/gitfeed-root',
         allowGit: false,
         git: null,
@@ -395,6 +402,49 @@ if (engine === undefined || esbuild === undefined) {
       'a failed fetch is reported once, through the same path', refusing.get().toast)
     refusing.dispose()
     globalThis.fetch = originalFetch
+
+    // --- attention: what the reader reads, recorded where the order comes from ---
+    // The welcome is the only frame that carries the scores, and it sets the
+    // order for the whole load: a source the reader reads comes first, and a
+    // delta cannot move it.
+    const attentive = createController(t, createPrefs())
+    host.items = [item('o1', 'One'), item('o2', 'Two')]
+    host.read = []
+    host.starred = []
+    host.interest = { f1: 2.5 }
+    // Earlier sections selected and starred rows too; this section counts its own.
+    host.attention = []
+    await loaded(attentive)
+    ok(attentive.get().ranks.get('f1') === 2.5, 'the welcome carries the order the rail will draw', Array.from(attentive.get().ranks.entries()))
+
+    attentive.select('o1')
+    await sleep(0)
+    ok(host.attention.length === 1 && host.attention[0].kind === 'open' && host.attention[0].item === 'o1' && host.attention[0].feed === 'f1',
+      'opening a row is recorded against its source', host.attention)
+    attentive.select('o1')
+    await sleep(0)
+    ok(host.attention.length === 1, 'and opening it again in the same session is not a second act', host.attention)
+    attentive.toggleStar('o2')
+    await sleep(10)
+    ok(host.attention.some((act) => act.kind === 'star' && act.item === 'o2'), 'starring a row is a second one', host.attention)
+
+    const source = streams.get(attentive)
+    source.fire('delta', {
+      t: 'delta',
+      protocol: 1,
+      rev: Date.now() + 10,
+      version: 'v-next',
+      itemsVersion: 'm-next',
+      interest: { f1: 99 },
+    })
+    await sleep(0)
+    ok(attentive.get().ranks.get('f1') === 2.5, 'a delta carrying newer scores leaves the order where the load put it', Array.from(attentive.get().ranks.entries()))
+
+    attentive.setInterestOrder(false)
+    ok(attentive.get().interestOrder === false, 'the switch turns the order off')
+    ok(JSON.parse(storage.get('gitfeed.prefs')).interestOrder === false, 'and the choice is the browser remembers', storage.get('gitfeed.prefs'))
+    attentive.dispose()
+    host.attention = []
 
     // --- a queued mark is sent before the surface goes ---
     const before = host.marks.length

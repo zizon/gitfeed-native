@@ -91,6 +91,7 @@ export function pathsFor(root: string): Record<string, string> {
     meta: path.join(root, 'data', 'meta.json'),
     read: path.join(root, 'data', 'read.ndjson'),
     starred: path.join(root, 'data', 'starred.ndjson'),
+    interest: path.join(root, 'data', 'interest.ndjson'),
     local: path.join(root, '.local'),
     localItems: path.join(root, '.local', 'items'),
     localMeta: path.join(root, '.local', 'meta.json'),

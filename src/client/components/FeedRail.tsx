@@ -11,9 +11,8 @@ import {
   Input,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { Chevron, IconFolder } from '../icons.js'
-import { folderNames } from '../derive.js'
+import { folderNames, railGroups, sourceOrder } from '../derive.js'
 import { FolderMenu } from './FolderMenu.js'
-import type { Feed } from '../../shared/types.js'
 import type { FeedRailProps } from '../types.js'
 import { EmptyState, IconButton } from './Controls.js'
 
@@ -33,6 +32,15 @@ export function FeedRail({ state, controller, t, compact, onPick }: FeedRailProp
     if (creatingId) nameRef.current?.focus()
   }, [creatingId])
 
+  // The order over sources is the one the load settled: the sources the reader
+  // reads first, the rest by name. It is not recomputed from the read set, so
+  // reading a source cannot re-rank the rail under the pointer.
+  const interestOrder = state.interestOrder === null ? true : state.interestOrder
+  const order = useMemo(function () {
+    const scores = interestOrder ? state.ranks : null
+    return sourceOrder(state.feeds, scores, t('feed.uncategorized'))
+  }, [state.feeds, state.ranks, interestOrder, t])
+
   const grouped = useMemo(function () {
     const counts = new Map<string, number>()
     let total = 0
@@ -41,22 +49,12 @@ export function FeedRail({ state, controller, t, compact, onPick }: FeedRailProp
       counts.set(item.feed, (counts.get(item.feed) || 0) + 1)
       total += 1
     }
-    const groups = new Map<string, Feed[]>()
-    for (const feed of state.feeds) {
-      const key = feed.folder || t('feed.uncategorized')
-      const bucket = groups.get(key)
-      if (bucket) bucket.push(feed)
-      else groups.set(key, [feed])
-    }
-    for (const list of groups.values()) {
-      list.sort(function (a, b) { return a.title.localeCompare(b.title) })
-    }
     return {
       counts: counts,
       total: total,
-      groups: Array.from(groups.entries()).sort(function (a, b) { return a[0].localeCompare(b[0]) }),
+      groups: railGroups(state.feeds, order, t('feed.uncategorized')),
     }
-  }, [state.items, state.feeds, state.read, t])
+  }, [state.items, state.feeds, state.read, order, t])
 
   const hideEmpty = state.hideEmpty === null ? state.reader.hideEmptyFeeds : state.hideEmpty
   const hiding = hideEmpty && state.filter === 'unread'
@@ -175,8 +173,8 @@ export function FeedRail({ state, controller, t, compact, onPick }: FeedRailProp
   }
 
   for (const entry of grouped.groups) {
-    const name = entry[0]
-    const feeds = entry[1]
+    const name = entry.name
+    const feeds = entry.feeds
     let unread = 0
     for (const feed of feeds) unread += grouped.counts.get(feed.id) || 0
     if (hiding && unread === 0 && !seen.folders.has(name)) continue

@@ -18,6 +18,10 @@ interface ApiBody {
   type?: string
   script?: string
   options?: unknown
+  /** The attention act: `open` or `star`, its row, and its source. */
+  kind?: unknown
+  item?: unknown
+  feed?: unknown
 }
 
 const PREFIX = '/gitfeed/api'
@@ -99,7 +103,7 @@ export function createHandler(service: GitfeedService) {
       }
       const route = url.pathname.slice(PREFIX.length) || '/'
       const method = req.method || 'GET'
-      const known = new Set(['/state', '/search', '/item', '/mark', '/star', '/feeds', '/feeds/remove', '/feeds/folder', '/fetch', '/pull', '/sync'])
+      const known = new Set(['/state', '/search', '/item', '/mark', '/star', '/attention', '/feeds', '/feeds/remove', '/feeds/folder', '/fetch', '/pull', '/sync'])
       if (!known.has(route)) {
         sendJson(res, 404, { ok: false, error: 'no such endpoint' })
         return
@@ -146,6 +150,13 @@ export function createHandler(service: GitfeedService) {
       }
       if (route === '/star') {
         const result = await service.star(input.ids, input.star !== false)
+        sendJson(res, 200, result)
+        return
+      }
+      if (route === '/attention') {
+        // Attention, not a mark: answered ok even when the log already held the
+        // act, because the reader's hand does not need to be told twice.
+        const result = await service.attention(input.kind, input.item, input.feed)
         sendJson(res, 200, result)
         return
       }

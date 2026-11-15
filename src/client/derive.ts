@@ -42,6 +42,110 @@ export function folderNames(feeds: readonly Feed[]): string[] {
   return Array.from(names).sort(function (a, b) { return a.localeCompare(b) })
 }
 
+/**
+ * The reader's order over its sources: the ones it actually reads first, the
+ * rest by name.
+ *
+ * A source earns a place in the ranked part only when the attention log gave it
+ * a score (the theory is in `shared/interest.ts`). Everything else keeps the
+ * alphabetical order it always had, so an untried source is never buried below
+ * a familiar one — it is simply not preferred. A folder takes the place of its
+ * best source, so the top of the rail is the feed the reader reads rather than
+ * whichever folder's name sorts first.
+ */
+export interface SourceOrder {
+  /** Position of each source the caller passed. */
+  rank: Map<string, number>
+  /** Position of each folder, by its best-ranked source. */
+  folders: Map<string, number>
+  /** The position of a source the order has no entry for: after all of them. */
+  next: number
+}
+
+/**
+ * Build the order the rail and the grouped list both draw from.
+ * @param feeds - the subscriptions.
+ * @param scores - the sources that earned a place, from the Host; null or empty
+ *   is the plain name order.
+ * @param uncategorized - the label a folderless source groups under.
+ * @returns one order, shared by every surface that lists sources.
+ */
+export function sourceOrder(
+  feeds: readonly Feed[],
+  scores: ReadonlyMap<string, number> | null,
+  uncategorized: string,
+): SourceOrder {
+  const ranked: Feed[] = []
+  const rest: Feed[] = []
+  for (const feed of feeds) {
+    if (scores !== null && scores.has(feed.id)) ranked.push(feed)
+    else rest.push(feed)
+  }
+  ranked.sort(function (a, b) {
+    const sa = scores === null ? 0 : scores.get(a.id) || 0
+    const sb = scores === null ? 0 : scores.get(b.id) || 0
+    return sb - sa || a.title.localeCompare(b.title) || a.id.localeCompare(b.id)
+  })
+  rest.sort(function (a, b) { return a.title.localeCompare(b.title) || a.id.localeCompare(b.id) })
+  const rank = new Map<string, number>()
+  const folders = new Map<string, number>()
+  let index = 0
+  for (const feed of ranked.concat(rest)) {
+    rank.set(feed.id, index)
+    const name = feed.folder || uncategorized
+    const held = folders.get(name)
+    // The first source of a folder to appear is its best-ranked one.
+    if (held === undefined) folders.set(name, index)
+    index += 1
+  }
+  return { rank: rank, folders: folders, next: index }
+}
+
+/** One folder's row in the rail. */
+export interface RailGroup {
+  name: string
+  feeds: Feed[]
+}
+
+/**
+ * The rail's folders and sources, in the reader's order.
+ * @param feeds - the subscriptions.
+ * @param order - the order the rail shares with the list.
+ * @param uncategorized - the label a folderless source groups under.
+ * @returns the groups, each with its sources in order.
+ */
+export function railGroups(
+  feeds: readonly Feed[],
+  order: SourceOrder,
+  uncategorized: string,
+): RailGroup[] {
+  const byName = new Map<string, Feed[]>()
+  for (const feed of feeds) {
+    const name = feed.folder || uncategorized
+    const bucket = byName.get(name)
+    if (bucket) bucket.push(feed)
+    else byName.set(name, [feed])
+  }
+  const groups: RailGroup[] = Array.from(byName.entries()).map(function (entry) {
+    return { name: entry[0], feeds: entry[1] }
+  })
+  for (const group of groups) {
+    group.feeds.sort(function (a, b) {
+      const ra = order.rank.get(a.id)
+      const rb = order.rank.get(b.id)
+      return (ra === undefined ? order.next : ra) - (rb === undefined ? order.next : rb)
+        || a.title.localeCompare(b.title) || a.id.localeCompare(b.id)
+    })
+  }
+  groups.sort(function (a, b) {
+    const ra = order.folders.get(a.name)
+    const rb = order.folders.get(b.name)
+    return (ra === undefined ? order.next : ra) - (rb === undefined ? order.next : rb)
+      || a.name.localeCompare(b.name)
+  })
+  return groups
+}
+
 /** The section one row belongs to under the current grouping. */
 export function groupKey(
   item: Item,
@@ -128,6 +232,8 @@ export type Entry = RowEntry | GroupEntry
  * @param groupHeight - one section header's height.
  * @param titleOf - a source's display name.
  * @param folderOf - the folder a source groups under.
+ * @param rankOf - a section's place in the reader's source order; omitted, the
+ *   sections keep the name order.
  * @returns the flattened entries the viewport windows over.
  */
 export function entriesOf(
@@ -137,6 +243,7 @@ export function entriesOf(
   groupHeight: number,
   titleOf: (feedId: string) => string,
   folderOf: (feedId: string) => string,
+  rankOf?: (key: string) => number,
 ): Entry[] {
   if (groupBy === 'none') {
     return list.map(function (item) { return { kind: 'row', key: item.id, item: item, h: rowHeight } })
@@ -148,11 +255,13 @@ export function entriesOf(
     if (bucket) bucket.items.push(item)
     else groups.set(key, { key: key, label: groupBy === 'feed' ? titleOf(item.feed) : key, items: [item] })
   }
-  // Sections hold one order: by name, the way the rail lists folders and feeds.
-  // Ordering by size re-ranked every section whenever a fetch landed, so the
-  // section being read could move somewhere else under the pointer.
+  // Sections hold one order: the reader's order over sources, the same one the
+  // rail lists folders and feeds in. It is settled when the surface loads, so a
+  // fetch or a mark cannot move the section being read. (Ranking by size did:
+  // every fetch re-ranked the list under the pointer.)
+  const rank = rankOf || function () { return 0 }
   const ordered = Array.from(groups.values()).sort(function (a, b) {
-    return a.label.localeCompare(b.label) || a.key.localeCompare(b.key)
+    return rank(a.key) - rank(b.key) || a.label.localeCompare(b.label) || a.key.localeCompare(b.key)
   })
   const out: Entry[] = []
   for (const group of ordered) {

@@ -161,6 +161,8 @@ export interface ReaderStateData {
   starred: string[]
   feeds: import('../shared/types.js').Feed[]
   reader: ReaderPrefs
+  /** Decayed attention score per source the reader actually reads; see shared/interest.ts. */
+  interest: Record<string, number>
   repo: string
   allowGit: boolean
 }

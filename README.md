@@ -181,7 +181,8 @@ config.json            fetch/reader defaults
 data/meta.json         {}
 data/read.ndjson       (empty)
 data/starred.ndjson    (empty)
-.gitattributes         union-merge rules for read/starred/item lines
+data/interest.ndjson   (empty — the attention log; see "The order of the sources")
+.gitattributes         union-merge rules for read/starred/interest/item lines
 .gitignore             .local/ and friends
 ```
 
@@ -192,8 +193,8 @@ data/starred.ndjson    (empty)
   nothing to push to.
 - **A git checkout** with an `origin`: `Pull` fetches items and read state from
   the remote; `Sync reads` commits `feeds.json`, `config.json`, `data/items/`,
-  `data/read.ndjson`, `data/starred.ndjson`, `.gitattributes`, and
-  `.gitignore`, rebases, and pushes. The very first `Sync reads` of a freshly
+  `data/read.ndjson`, `data/starred.ndjson`, `data/interest.ndjson`,
+  `.gitattributes`, and `.gitignore`, rebases, and pushes. The very first `Sync reads` of a freshly
   `git init`-ed directory commits the whole tree as the baseline and pushes
   with `-u origin HEAD` when no upstream exists yet.
 
@@ -432,8 +433,9 @@ not carry its own theme setting.
   room for a labelled bar, so its refresh button and its ⋯ menu carry the same
   split: Refresh first, and Pull/Sync reads under **Read state**.
 - **Display preferences**: hide feeds with nothing unread, mark read on scroll,
-  group by none/folder/source. Per-browser, in one `localStorage` snapshot
-  (`gitfeed.prefs`) held by the shared store engine; the values in
+  group by none/folder/source, and order the rail and grouped list by what the
+  reader reads (see below) or by name. Per-browser, in one `localStorage`
+  snapshot (`gitfeed.prefs`) held by the shared store engine; the values in
   `config.json` are the defaults.
 - **Keyboard**: `j`/`k` move, `m` toggle read, `s` star, `o` open original,
   `/` search, `u` unread, `a` all, `Esc` close article then clear search/feed.
@@ -459,11 +461,11 @@ times a second while scrolling. And a refresh holds its new rows back while a
 surface shows a list: the count says they are there, and the bar offers them.
 An empty list has no spot to protect, so its arrivals land at once.
 
-- **Sections hold one order.** Grouped sections are ordered by name — the way
-  the rail lists folders and sources — instead of being re-ranked by item
-  count. Ranking by size meant that every fetch, and every read mark under the
-  Unread filter, could move the section being read somewhere else; a section
-  that grows or shrinks now stays where it is.
+- **Sections hold one order.** Grouped sections follow the rail's order over
+  sources (below) instead of being re-ranked by item count. Ranking by size
+  meant that every fetch, and every read mark under the Unread filter, could
+  move the section being read somewhere else; the order now changes only when
+  the surface loads, so a section that grows or shrinks stays where it is.
 - **The viewport is anchored to a row.** When the list is rebuilt under a live
   viewport, the list is put back on the entry that was under its top edge —
   from the entries the last paint drew and the scroll offset the scroll handler
@@ -488,6 +490,42 @@ An empty list has no spot to protect, so its arrivals land at once.
   owner of the scroll position. See [list-state.md](docs/list-state.md).
 - **Ties are broken by id**, on the Host (`compareItems`), so two items that
   share a timestamp cannot swap places between reloads.
+
+### The order of the sources
+
+The rail and a grouped list draw one order: the sources the reader actually
+reads first, then everything else by name. Alphabetical order costs time on
+every visit — the top of a 377-subscription rail is whichever names sort first,
+punctuation and digits before A, not the sources the reader opens — and the
+reader's own acts are the only honest evidence of which is which.
+
+Two acts count. **Opening a row** (clicking it, or moving to it with `j`/`k`) is
+the reader reading that article; **starring one** is the reader saying so on
+purpose, and weighs as three opens. The read mark deliberately does not count:
+scrolling past the band and bulk marking saturate it, so every source ends up
+equally read and the marks that were a choice cannot be told apart from traffic.
+
+An act weighs half as much a month later, and a source needs half an open to keep
+a place in the ranked part — about one article opened in the last month. Under
+that bar it is not ranked at all: it returns to the name order, among the sources
+the reader has never opened, rather than sinking below them. An untried source is
+never buried; it is simply not preferred. A folder takes the place of its best
+source, so the top of the rail is where the reading is.
+
+The order is settled when the surface loads (a page load, a reconnect). Reading a
+source does not re-rank the rail under the pointer, for the same reason a fetch
+does not re-rank the sections: a list must not move while it is being used. What
+the reader reads now is what the next load draws. The Display preferences carry
+the switch — **Order sources by what you read**, on by default; it re-applies the
+order of the current load rather than re-learning it, and with no acts logged it
+draws exactly the alphabetical list it always did.
+
+The acts live in `data/interest.ndjson`: append-only, committed with the read
+state, pulled with it, so another machine draws the same order. The first read of
+a root from before the log seeds it from the stars the archive already holds —
+the one explicit interest that was recorded before there was anywhere to record
+it. Nothing else is inferred: an act is a row that was opened or starred, never
+a guess about why the reader did not open it.
 
 The stream is pulled. The route asks the Host for the next frame, writes it, and
 only then asks for another, so a surface that is slow to read stops the producer
@@ -752,11 +790,12 @@ Read and star state are append-only id sets with `merge=union`:
 ```
 data/read.ndjson merge=union
 data/starred.ndjson merge=union
+data/interest.ndjson merge=union
 data/items/*.ndjson merge=union
 ```
 
 A fetch only ever appends item shards, and the reader only ever appends read/star
-state; unsubscribing is the one operation that rewrites a shard in place, which
+state and attention; unsubscribing is the one operation that rewrites a shard in place, which
 is why `Sync` stages `data/items/`.
 
 ### Custom feeds
@@ -1034,7 +1073,12 @@ not in this tree. `.gitignore` covers the local files that carry them.
   `text/event-stream` breaks it. Update and restart together.
 - **The right Sidebar needs a session.** The main-panel page works without one.
 - **Item history is pruned** to `fetch.keepMonths` (6) to keep the data repo
-  small.
+  small. The attention log is not pruned: it accrues one short row per opened or
+  starred article, and only its last couple of months move the order.
+- **The source order is a habit, not a setting per row.** It is learned from
+  opened and starred rows only: a reader who reads the digests and never opens an
+  article gives it nothing to learn from, and the rail stays alphabetical. There
+  is no per-source pin; the switch turns the whole order off.
 - **Feed health is manual.** Dead feeds show red in the rail and in
   `data/meta.json`; nothing emails you. An unreachable *network* is not a dead
   feed: those runs judge no source and only the status line reports them.

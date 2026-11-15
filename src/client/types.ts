@@ -33,6 +33,12 @@ export interface ReaderData {
   starred: Set<string>
   feeds: Feed[]
   feedMap: Map<string, Feed>
+  /**
+   * The sources the reader actually reads, scored by the Host when this load
+   * began. The order is settled here and never recomputed: a rail that re-ranks
+   * itself as the reader reads is the list that moves under the pointer.
+   */
+  ranks: Map<string, number>
   reader: ReaderPrefs
   git: GitInfo | null
   schedule: ScheduleJobInfo[]
@@ -57,6 +63,8 @@ export interface ReaderUi {
   hideEmpty: boolean | null
   markOnScroll: boolean | null
   showDigest: boolean | null
+  /** Order sources by what the reader reads; null means the default (on). */
+  interestOrder: boolean | null
   folderOpen: Record<string, boolean>
   railW: number
   listW: number
@@ -126,6 +134,7 @@ export interface Controller {
   setHideEmpty(value: boolean): void
   setMarkOnScroll(value: boolean): void
   setShowDigest(value: boolean): void
+  setInterestOrder(value: boolean): void
   digest(item: Item): string
   setFolderOpen(name: string, open: boolean): void
   setWidths(patch: { railW?: number; listW?: number }): void
