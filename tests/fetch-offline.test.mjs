@@ -23,18 +23,14 @@ const RSS = `<?xml version="1.0" encoding="utf-8"?>
 <pubDate>${new Date().toUTCString()}</pubDate><description>body</description></item>
 </channel></rss>`
 
-/** Answer every request with one feed body, except the urls in `broken`. */
-function stubFetch(options) {
-  const calls = []
+/** Answer each url according to `plan`: a status code, `offline`, or the feed. */
+function stubFetch(plan) {
   globalThis.fetch = async function (url) {
-    const key = String(url)
-    calls.push(key)
-    const mode = options[key]
+    const mode = plan[String(url)]
     if (mode === 'offline') throw new TypeError('fetch failed')
     if (typeof mode === 'number') return new Response('nope', { status: mode })
     return new Response(RSS, { status: 200, headers: { 'content-type': 'application/xml' } })
   }
-  return calls
 }
 
 function meta(root) {
