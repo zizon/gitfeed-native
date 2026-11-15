@@ -62,8 +62,8 @@ reader uses.
 1. Clone the data repository to `~/gitfeed` (or let the plugin write a starter
    root on first activation).
 2. Install the bundle (see **Install**).
-3. Open the **Feeds** card, subscribe, **Fetch**, read. If the root is a
-   checkout, **Sync** pushes subscriptions and read state.
+3. Open the **Feeds** card, subscribe, **Refresh**, read. If the root is a
+   checkout, **Sync reads** pushes subscriptions and read state.
 
 Each item row shows the title, its feed and age, and a one-line plain-text
 digest of the summary, so a list can be skimmed and skipped without opening
@@ -86,11 +86,12 @@ exists, and the library-wide entry needs a second, differently placed click.
 The toast that follows carries **Undo**. No key marks in bulk.
 
 Background refresh: the rail's second bar ends with the age of the last run
-(`2m`; it shows `…` while a run is in flight and the Fetch button spins then).
+(`2m`; it shows `…` while a run is in flight and the Refresh button spins then).
 The ⋯ menu's **Refresh** block shows the interval and the last result
-(`0 new · 35 failed`), and its **Sync** block shows the auto-sync interval,
-the next run, and the last result. The main page's status line carries the
-refresh interval beside the branch, with the same detail in its tooltip.
+(`0 new · 35 failed`), and its **Read state** block carries the two manual
+actions and the auto-sync interval, the next run, and the last result. The main
+page's status line carries the refresh interval beside the branch, with the
+same detail in its tooltip.
 
 ## Where it lives in the Harness UI
 
@@ -187,14 +188,14 @@ data/starred.ndjson    (empty)
 ### A local copy vs a checkout
 
 - **No git repository** (the starter root): everything works — subscribe, fetch,
-  read, star — but `Pull` and `Sync` are disabled, because there is nothing to
-  push to.
+  read, star — but `Pull` and `Sync reads` are disabled, because there is
+  nothing to push to.
 - **A git checkout** with an `origin`: `Pull` fetches items and read state from
-  the remote; `Sync` commits `feeds.json`, `config.json`, `data/items/`,
+  the remote; `Sync reads` commits `feeds.json`, `config.json`, `data/items/`,
   `data/read.ndjson`, `data/starred.ndjson`, `.gitattributes`, and
-  `.gitignore`, rebases, and pushes. The very first `Sync` of a freshly `git init`-ed directory commits the
-  whole tree as the baseline and pushes with `-u origin HEAD` when no upstream
-  exists yet.
+  `.gitignore`, rebases, and pushes. The very first `Sync reads` of a freshly
+  `git init`-ed directory commits the whole tree as the baseline and pushes
+  with `-u origin HEAD` when no upstream exists yet.
 
 To sync, create (or clone) your own data repository and point the plugin at it:
 
@@ -233,8 +234,10 @@ Either way the data root is untouched.
 
 The Host plugin owns one job runner for every periodic thing the reader does.
 Each job owns its cadence: a run that produced something (items fetched, state
-committed or pulled) returns to the base interval, while a quiet or failing run
-doubles it, up to the ceiling — per feed for Refresh, one interval for Sync.
+committed or pulled) returns to the base interval, while a quiet run doubles it,
+up to the ceiling — per feed for Refresh, one interval for Sync. A failure is
+not quietness: it leaves the cadence alone and only schedules the next attempt,
+because "this feed did not answer" says nothing about how often it publishes.
 The runner stores what the job reports (`nextAt`, `intervalMin`), arms that
 job's own timer, and renders the status line; it has no backoff policy of its
 own.
@@ -248,11 +251,30 @@ Two jobs are registered today. A new one implements `available`, `due`, and
   (default 1440, once a day);
 - only while the reader made a request in the last `idleMinutes` (default 15),
   so a forgotten panel does not hammer feeds overnight;
-- each run fetches only the feeds whose own clock is due. A feed that keeps
-  producing items stays on the base interval; a feed that answers 304,
-  produces nothing, or fails doubles its interval on every quiet run, up to
-  the ceiling, and drops back the moment it produces an item. That is what
-  keeps a barely-updated blog from being polled every five minutes;
+- each run fetches only the feeds whose own clock is due. One record per feed
+  holds two things: the **cadence** it earned by answering, and the **next
+  attempt**. A feed that keeps producing items stays on the base interval; one
+  that answers 304 or produces nothing doubles its cadence on every quiet run,
+  up to the ceiling, and drops back the moment it produces an item. That is
+  what keeps a barely-updated blog from being polled every five minutes;
+- a failure moves only the next attempt: retry at the base interval, doubling
+  per consecutive failure up to the ceiling, while the cadence stays where the
+  feed earned it. So a bad afternoon cannot park an active feed for a day, and
+  the first success resumes the real cadence instead of the ladder;
+- a run in which **every attempted feed could not be reached** is the
+  connection, not the subscriptions. Such a run judges no feed (an error badge
+  means "this source is broken", not "the network was away"), advances no
+  failure streak, leaves every cadence alone, and looks again in one base
+  interval — so a laptop that wakes up, or a tunnel that ends, is back within
+  minutes instead of on the ladder the outage built. The status line reports
+  it as `the network is unreachable (N feeds)` rather than as N failed feeds.
+  Three attempted feeds is the floor: one or two dead hosts are still just dead
+  hosts;
+- an answered feed that fails (`HTTP 4xx`, a body that is not XML) *is* a
+  broken subscription: it retries on its ladder and its row carries the error
+  until it answers again. A failure that got no answer at all — DNS, connect,
+  or the per-feed deadline — counts toward the outage rule instead, because
+  from the reader's side a dead server and a dead connection look alike;
 - never into the committed `data/` tree, so a refresh cannot race a commit.
 
 **Sync** publishes and repairs read state:
@@ -264,8 +286,12 @@ Two jobs are registered today. A new one implements `available`, `due`, and
   pulls, which is how a second device's marks arrive without pressing Pull;
 - it waits `syncMinutes` (default 10) before its first run, so a plugin
   update does not push on its first second; that first run publishes any read
-  state that was already waiting for a manual Sync; `syncMinutes: 0` disables
-  auto-sync while Pull and Sync stay manual;
+  state that was already waiting for a manual Sync reads; `syncMinutes: 0`
+  disables auto-sync while Pull and Sync reads stay manual;
+- a remote that cannot be reached is retried at the base interval rather than
+  backed off — the repository is fine, the connection is not — while a refusal
+  (`Authentication failed`, a rejected push) backs off, because retrying it
+  sooner changes nothing;
 - it needs `allowGit`, a git working tree, and an `origin` remote; otherwise
   the job reports why it is off, using the repository facts the status line
   already caches rather than shelling out per tick.
@@ -273,7 +299,7 @@ Two jobs are registered today. A new one implements `available`, `due`, and
 Set `adaptive: false` to fetch every feed on every run. The job clocks and the
 per-feed clocks live in `.local/schedule.json` — machine-local, never
 committed, version 2; a version-1 file (the fetch-only format) is read as the
-Refresh job's state. **Fetch** in the reader still fetches everything.
+Refresh job's state. **Refresh** in the reader still fetches everything.
 
 The cadence policy is the jobs'; the clock is the Harness's. The plugin
 declares `inject: ['timer']` and takes each job's wake-up from `ctx.timeout`
@@ -393,11 +419,18 @@ not carry its own theme setting.
   mark unread, open original.
   Past the opening of a piece a **Next →** control appears at the bottom of the
   pane, so moving on does not mean scrolling back up.
-- **Pull / Fetch / Sync** in the top bar, drawn alike: Fetch reads the feeds,
-  Pull takes the data root's commits from its remote, Sync commits the reader's
-  marks and pushes them. Pull and Sync are disabled when the plugin `allowGit`
-  switch is false, or when the data root is a local copy with no git
-  repository; the rail menu then shows why.
+- **Two groups in the top bar**, separated where the object changes.
+  **Refresh** reads the feeds — it fetches every subscription now, and the
+  refresh age beside the branch is how stale that is. **Pull** and **Sync
+  reads** move the git-backed archive: Pull takes the data root's commits from
+  its remote (items another machine fetched and marks it made), Sync reads
+  commits this machine's marks and pushes them. Their tooltips say the object
+  in words: `Fetch every feed now`, `Download items and read state from the
+  remote`, `Commit and push your read state`. Pull and Sync reads are disabled
+  when the plugin `allowGit` switch is false, or when the data root is a local
+  copy with no git repository; the rail menu then shows why. The rail has no
+  room for a labelled bar, so its refresh button and its ⋯ menu carry the same
+  split: Refresh first, and Pull/Sync reads under **Read state**.
 - **Display preferences**: hide feeds with nothing unread, mark read on scroll,
   group by none/folder/source. Per-browser, in one `localStorage` snapshot
   (`gitfeed.prefs`) held by the shared store engine; the values in
@@ -991,7 +1024,9 @@ not in this tree. `.gitignore` covers the local files that carry them.
 - **Not offline.** Images are hotlinked from the origin.
 - **Fetching needs a fetcher somewhere.** The Host does it while it runs, and a
   cron entry on an always-on machine covers the rest. If nothing is running,
-  items wait.
+  items wait; a machine that sleeps fetches again on its next wake-up, and a
+  connection that comes back is retried within one base interval (5m by
+  default), not on the ladder the outage would have built.
 - **Loopback only.** The API is served by the Harness web server and refuses
   cross-origin requests; it is not designed to be exposed publicly.
 - **The reader needs its Host's event stream.** There is no polling fallback: a
@@ -1001,7 +1036,8 @@ not in this tree. `.gitignore` covers the local files that carry them.
 - **Item history is pruned** to `fetch.keepMonths` (6) to keep the data repo
   small.
 - **Feed health is manual.** Dead feeds show red in the rail and in
-  `data/meta.json`; nothing emails you.
+  `data/meta.json`; nothing emails you. An unreachable *network* is not a dead
+  feed: those runs judge no source and only the status line reports them.
 - **The installed copy is a build artifact.** Editing the profile's
   `node_modules/gitfeed-native` is overwritten by the next install; edit this
   checkout and reinstall.

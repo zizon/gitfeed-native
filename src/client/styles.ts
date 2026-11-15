@@ -49,6 +49,9 @@ export const CSS = `
 /* Page-toolbar actions keep the Harness page bar's control height and type
    size rather than the menu-sized 28px capsule. */
 .gf-actbtn { height: 32px; padding: 0 12px; border-radius: var(--dsw-radius-md); font-size: 13px; line-height: 20px; }
+/* The two things the bar acts on: the feeds' contents, and the git-backed
+   archive that carries items and read state between machines. */
+.gf-actionsep { width: 1px; align-self: stretch; margin: 6px 0; background: var(--dsw-alias-border-l1); }
 @container gf-pagebar (max-width: 1140px) {
   .gf-actbtn { width: 32px; min-width: 32px; padding: 0; }
   .gf-actbtn-label { display: none; }

@@ -17,9 +17,18 @@ import { feedIdFor, slug } from './feeds.js'
 import { appendNdjson, ensureDir, listShards, readJson, readNdjson, updateNdjson, writeJson } from './store.js'
 import type { FeedDefinition, FetchFeedOutcome, FetchResult, RepoConfig } from './types.js'
 import type { FeedEntry, Item } from '../shared/types.js'
-import { messageOf } from '../shared/errors.js'
+import { looksUnreachable, messageOf } from '../shared/errors.js'
 
 const UA = 'gitfeed/2.0 (+https://github.com; personal RSS reader)'
+
+/**
+ * How many feeds a run has to attempt before all of them missing means the
+ * network, not the subscriptions. One or two broken feeds are a broken feed; a
+ * whole run that reached nothing is the way out of the house being down. The
+ * floor keeps a run whose due set happens to be one dead host from being read
+ * as an outage.
+ */
+const OFFLINE_MIN_FEEDS = 3
 
 interface FeedMeta {
   title?: string | null
@@ -413,7 +422,7 @@ export async function runFetch(options: FetchOptions): Promise<FetchResult> {
     log(message)
     return {
       code: 1, logs: logs, summary: message, feeds: 0, fresh: 0, unchanged: 0, expired: 0, failed: 0, repaired: 0,
-      perFeed: {},
+      unreachable: 0, offline: false, perFeed: {},
     }
   }
 
@@ -470,13 +479,17 @@ export async function runFetch(options: FetchOptions): Promise<FetchResult> {
   const fresh: Item[] = []
   const repairs = new Map<string, { month: string; summary: string }>()
   const perFeed: Record<string, FetchFeedOutcome> = {}
+  /** A failed feed's new error, held until the whole run has been judged. */
+  const missed: Array<{ id: string; error: string; previous: string | null }> = []
   let failed = 0
+  let unreachable = 0
   let unchanged = 0
   let expired = 0
   let repaired = 0
   for (const r of results) {
     if ('error' in r) {
       failed++
+      if (looksUnreachable(r.error)) unreachable++
       perFeed[r.feed.id] = { added: 0, failed: true, notModified: false }
       log(`  err  ${r.feed.id.padEnd(18)} ${r.error}`)
       const prevMeta = meta[r.feed.id] || {}
@@ -484,9 +497,9 @@ export async function runFetch(options: FetchOptions): Promise<FetchResult> {
         title: prevMeta.title || r.feed.title || r.feed.id,
         folder: r.feed.folder || prevMeta.folder || null,
         url: r.feed.url,
-        lastError: r.error,
         checkedAt: now.toISOString(),
       })
+      missed.push({ id: r.feed.id, error: r.error, previous: prevMeta.lastError ?? null })
       continue
     }
     meta[r.feed.id] = Object.assign({ url: r.feed.url, folder: r.feed.folder || null }, r.meta)
@@ -523,6 +536,18 @@ export async function runFetch(options: FetchOptions): Promise<FetchResult> {
     perFeed[r.feed.id] = { added: added, failed: false, notModified: false }
     log(`  ok   ${r.feed.id.padEnd(18)} +${added} (${(r.items ?? []).length} seen)`)
   }
+
+  // A run that reached none of its feeds says nothing about any of them: the
+  // machine was off the network. Such a run leaves each feed's health as it
+  // found it — an error means "this source is broken", and "the train tunnel
+  // had no signal" is not that — and the job retries at its base cadence
+  // instead of parking the feeds for the morning.
+  const offline = feeds.length >= OFFLINE_MIN_FEEDS && failed === feeds.length && unreachable === failed
+  for (const miss of missed) {
+    const entry = meta[miss.id]
+    if (entry) entry.lastError = offline ? miss.previous : miss.error
+  }
+  if (offline) log(`  the network was unreachable: ${failed} feed(s) not judged`)
 
   if (fresh.length > 0 && !dryRun) {
     const byMonth = new Map<string, Item[]>()
@@ -584,7 +609,9 @@ export async function runFetch(options: FetchOptions): Promise<FetchResult> {
   }
 
   const repairedNote = repaired > 0 ? `, ${repaired} repaired` : ''
-  const counts = `${unchanged} unchanged, ${expired} past retention, ${failed} failed${repairedNote}`
+  const counts = offline
+    ? `no feed reachable (${unreachable} unreachable)`
+    : `${unchanged} unchanged, ${expired} past retention, ${failed} failed${repairedNote}`
   const summary = `${dryRun ? 'dry-run: ' : ''}${fresh.length} new item(s), ${counts}`
   log(summary)
   return {
@@ -597,6 +624,8 @@ export async function runFetch(options: FetchOptions): Promise<FetchResult> {
     expired: expired,
     failed: failed,
     repaired: repaired,
+    unreachable: unreachable,
+    offline: offline,
     perFeed: perFeed,
   }
 }

@@ -136,6 +136,14 @@ export interface FetchResult {
   failed: number
   /** Archived items whose body a feed re-served longer than we had it. */
   repaired: number
+  /** Feeds whose request never got an answer from the network. */
+  unreachable: number
+  /**
+   * Every attempted feed was unreachable, and there were enough of them to say
+   * so: the connection, not the subscriptions, was the failure. Such a run
+   * judges no feed and its rows are due again at the base cadence.
+   */
+  offline: boolean
   perFeed: Record<string, FetchFeedOutcome>
 }
 

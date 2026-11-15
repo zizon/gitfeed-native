@@ -11,6 +11,7 @@
 
 import type { FeedDefinition, FetchResult, GitActionResult } from './types.js'
 import type { GitInfo } from '../shared/types.js'
+import { looksUnreachable } from '../shared/errors.js'
 import type { JobOutcome, Job } from './runner.js'
 import type { FeedClocks } from './schedule.js'
 import { applyRun, dueFeeds, nextDueAt, pruneSchedule } from './schedule.js'
@@ -117,11 +118,15 @@ export function createFetchJob(options: FetchJobOptions): Job {
       }
       const result = await options.fetch(scope.only ? { only: scope.only } : { feeds: wanted })
       pruneSchedule(data.feeds, ids)
+      // A run that reached no feed is the connection, not the subscriptions:
+      // the fetcher says which, and the clocks keep their cadences and streaks.
+      const offline = result.offline
       if (options.adaptive) {
         applyRun(data.feeds, result.perFeed, {
           nowMs: context.now,
           baseMin: baseMin,
           maxMin: maxMin,
+          offline: offline,
         })
       }
       const next = options.adaptive ? nextRun(data.feeds, ids, context.now, baseMin) : context.now + baseMin * 60000
@@ -129,7 +134,12 @@ export function createFetchJob(options: FetchJobOptions): Job {
         fresh: result.fresh > 0,
         failed: result.code !== 0,
         summary: result.summary,
-        detail: { added: result.fresh, failed: result.failed, feeds: result.feeds },
+        detail: {
+          added: result.fresh,
+          failed: result.failed,
+          feeds: result.feeds,
+          unreachable: offline ? result.unreachable : 0,
+        },
         intervalMin: baseMin,
         nextAt: next,
         value: result,
@@ -212,12 +222,19 @@ export function createSyncJob(options: SyncJobOptions): Job {
       else if (info.dirty || ahead > 0) result = await options.sync()
       else result = await options.pull()
       if (!result.ok) {
-        data.intervalMin = backoff
+        // A remote that could not be reached is the same fact the fetcher
+        // reports: the job failed, nothing is wrong with the repository, and
+        // the retry should be the base cadence rather than the ceiling — a
+        // laptop that wakes up should not wait an hour to publish its marks.
+        const unreachable = looksUnreachable(result.error || '')
+        const retryMin = unreachable ? baseMin : backoff
+        data.intervalMin = retryMin
         return {
           failed: true,
           summary: result.error || `${result.action} failed`,
-          intervalMin: backoff,
-          nextAt: context.now + backoff * 60000,
+          detail: { unreachable: unreachable ? 1 : 0 },
+          intervalMin: retryMin,
+          nextAt: context.now + retryMin * 60000,
           value: result,
         }
       }

@@ -1,4 +1,4 @@
-// Contract C1-C9 for the Host scheduler (docs/jobs.md), driven by a fake
+// Contract C1-C10 for the Host scheduler (docs/jobs.md), driven by a fake
 // clock whose timer surface is the same one the plugin gets from ctx.timer:
 // time advances, deadlines fire, and each pass arms the next one.
 import { execFileSync } from 'node:child_process'
@@ -261,3 +261,94 @@ const minimal = await sync(workG)
 ok(minimal.ok === true, 'a root without the state files still syncs', minimal.error)
 
 finish()
+
+// ---------- C1: a run that reached nothing is a retry, not a cadence ----------
+// A laptop that wakes up offline must find the feeds one base interval away,
+// not on the ladder the missed connections built, and must find the cadence
+// each feed earned by answering exactly where it left it.
+const rootH = mkdtempSync(path.join(tmpdir(), 'gitfeed-outage-'))
+let network = false
+const outageJob = createFetchJob({
+  refreshMinutes: 1, maxIntervalMinutes: 4, adaptive: true, idleMinutes: 0,
+  loadFeeds: async () => [{ id: 'a', url: 'x', title: null, folder: null }],
+  fetch: async () => {
+    if (network) {
+      return {
+        code: 1, logs: [], summary: '0 new item(s), no feed reachable (1 unreachable)',
+        feeds: 1, fresh: 0, unchanged: 0, expired: 0, failed: 1, repaired: 0,
+        unreachable: 1, offline: true,
+        perFeed: { a: { added: 0, failed: true, notModified: false } },
+      }
+    }
+    return {
+      code: 0, logs: [], summary: '0 new item(s), 1 unchanged', feeds: 1, fresh: 0, unchanged: 1,
+      expired: 0, failed: 0, repaired: 0, unreachable: 0, offline: false,
+      perFeed: { a: { added: 0, failed: false, notModified: true } },
+    }
+  },
+})
+const schedH = createJobRunner({ timers: clock.timers, root: rootH, logger: log, idleMinutes: 0, now: clock.now })
+schedH.add(outageJob)
+await clock.advance(0)
+let outageStatus = await schedH.status()
+ok(Date.parse(outageStatus[0].nextDueAt) === clock.now() + 120000, 'one quiet answer puts the feed on a two-minute cadence', outageStatus[0].nextDueAt)
+
+network = true
+let due = Date.parse(outageStatus[0].nextDueAt)
+await clock.advanceTo(due + 1000)
+outageStatus = await schedH.status()
+ok(outageStatus[0].last.ok === false, 'the outage is recorded as a failed run')
+ok(outageStatus[0].last.detail.unreachable === 1, 'and the status line knows it was the network', outageStatus[0].last.detail)
+ok(Date.parse(outageStatus[0].nextDueAt) === due + 60000, 'the next attempt is one base interval away', outageStatus[0].nextDueAt)
+const outageFile = JSON.parse(readFileSync(path.join(rootH, '.local', 'schedule.json'), 'utf8'))
+const outageClock = outageFile.jobs.fetch.data.feeds.a
+ok(outageClock.intervalMin === 2, 'the cadence the feed earned is still there', outageClock)
+ok(outageClock.failures === undefined, 'and the outage did not count against the feed', outageClock)
+
+for (let i = 0; i < 20; i++) {
+  due = Date.parse(outageStatus[0].nextDueAt)
+  await clock.advanceTo(due + 1000)
+  outageStatus = await schedH.status()
+}
+ok(Date.parse(outageStatus[0].nextDueAt) === due + 60000,
+  'twenty attempts later the connection is still retried every base interval, not every day')
+
+network = false
+await clock.advanceTo(Date.parse(outageStatus[0].nextDueAt) + 1000)
+outageStatus = await schedH.status()
+ok(outageStatus[0].last.ok === true, 'the first run after the connection returns succeeds')
+ok(outageStatus[0].intervalMs === 60000, 'the status line is back on the base interval')
+const recovered = JSON.parse(readFileSync(path.join(rootH, '.local', 'schedule.json'), 'utf8')).jobs.fetch.data.feeds.a
+ok(recovered.intervalMin === 4, 'and the quiet cadence resumes from where it was (2 → 4), not from base', recovered)
+
+// ---------- the sync job tells an unreachable remote from a refusal ----------
+const away = { ok: false, action: 'pull', error: "fatal: unable to access 'https://github.com/x/y.git/': Could not resolve host: github.com" }
+const refused = { ok: false, action: 'pull', error: 'fatal: Authentication failed for https://github.com/x/y.git/' }
+const gitInfoIdle = async () => ({ repo: true, branch: 'main', dirty: false, remotes: ['origin'], ahead: 0, behind: 0 })
+const rootI = mkdtempSync(path.join(tmpdir(), 'gitfeed-away-'))
+const schedI = createJobRunner({ timers: clock.timers, root: rootI, logger: log, idleMinutes: 15, now: clock.now })
+schedI.add(createSyncJob({
+  allowGit: true, syncMinutes: 1, maxIntervalMinutes: 8,
+  gitInfo: gitInfoIdle,
+  pull: async () => away,
+  sync: async () => away,
+  version: async () => 'v1',
+}))
+await clock.advance(60000)
+const awayStatus = await schedI.status()
+ok(awayStatus[0].last.ok === false, 'an unreachable remote is a failed run')
+ok(Date.parse(awayStatus[0].nextDueAt) === clock.now() + 60000, 'and it retries at the base cadence, not the ceiling')
+
+const rootJ = mkdtempSync(path.join(tmpdir(), 'gitfeed-refused-'))
+const schedJ = createJobRunner({ timers: clock.timers, root: rootJ, logger: log, idleMinutes: 15, now: clock.now })
+schedJ.add(createSyncJob({
+  allowGit: true, syncMinutes: 1, maxIntervalMinutes: 8,
+  gitInfo: gitInfoIdle,
+  pull: async () => refused,
+  sync: async () => refused,
+  version: async () => 'v1',
+}))
+await clock.advance(60000)
+const refusedStatus = await schedJ.status()
+ok(refusedStatus[0].last.ok === false, 'a refusal is a failed run too')
+ok(Date.parse(refusedStatus[0].nextDueAt) === clock.now() + 120000, 'but it backs off: retrying a refusal is not the fix')

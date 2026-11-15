@@ -8,20 +8,22 @@ reviewed against behaviour instead of against the previous implementation.
 ## Contract
 
 These are the behaviours the reader depends on. They are asserted by
-`tests/runner.test.mjs` (C1–C9) and by the item-model and `/state` suites
-where marked.
+`tests/runner.test.mjs` (C1–C10), `tests/schedule.test.mjs` (the per-feed
+clocks behind C1 and C10), `tests/fetch-offline.test.mjs` (what a run tells
+apart), and by the item-model and `/state` suites where marked.
 
 | # | behaviour |
 |---|---|
-| C1 | each job owns its cadence: a run that produced something returns to base, a quiet run doubles, and a failed feed retries at base (only a run of failures backs off), all capped; the runner stores what the job reports |
+| C1 | each job owns its cadence: a run that produced something returns to base, a quiet run doubles, and a failure leaves the cadence alone and only schedules the retry at base, doubling per consecutive failure (capped); the runner stores what the job reports |
 | C2 | the Refresh job keeps one clock per feed and runs when the earliest is due |
 | C3 | Refresh pauses after `idleMinutes` without a reader request |
 | C4 | local marks reach the remote about 20 s after the last one, and never later than the cap into a burst |
 | C5 | a failing job backs off and is not retried early by a change of state |
-| C6 | `Fetch`/`Sync`/`Pull` run now, serialized with any background run |
+| C6 | `Refresh`/`Sync reads`/`Pull` run now, serialized with any background run |
 | C7 | deadlines survive a restart; the file is machine-local and never committed; version 1 is still read |
 | C8 | the status line reports interval, next due, last run, last result, and running |
 | C9 | a failing run is a warning, not a crash |
+| C10 | a run that reached no feed is the connection, not the subscriptions: it judges no feed, advances no failure streak, and is due again in one base interval |
 
 ## Boundary
 
@@ -39,6 +41,28 @@ jobs, and no timer the runner keeps for itself.
 the runner stores those, wakes at the deadline, and renders the status line.
 The cadence rule lives with the job (per feed for Refresh, one interval for
 Sync), which is also why the stored row is four fields and not seven.
+
+**A failure is a retry, not a cadence.** The two are different facts and the
+Refresh job keeps them in different fields: `intervalMin` is what a feed earned
+by answering, `nextAt` is when it is attempted next. A miss (or an
+unreachable host, or a `500`) moves only `nextAt`, along a ladder that doubles
+per consecutive failure up to the ceiling; the cadence waits. This is what a
+laptop that sleeps or loses its connection needs — the retry is what gets
+short again, and the cadence comes back exactly where it was. It also means a
+genuinely broken source still decays to a daily attempt without teaching the
+reader that an active source is quiet.
+
+**A run that reached nothing is the network, not the feeds.** When every
+attempted feed fails *without an answer* — no DNS, no route, a connection that
+never opened, its own deadline aborted — and there are at least three of them,
+the fetcher reports `offline`. Such a run judged no feed: it does not write a
+per-feed error (an error badge says "this source is broken", not "the network
+was away"), the job advances no failure streak and changes no cadence, and
+every attempted feed is due again in one base interval. So a period without a
+connection costs the reader minutes when it ends, not the hours the ladder had
+built. The floor of three keeps a run whose due set happens to be one dead
+host from being read as an outage; a single feed with a dead server keeps its
+own error and its own ladder.
 
 **Six verbs, and none of them a lifecycle.** Two belong to the runner (`add`,
 `touch`), two to the handle a job keeps (`runNow`, `nudge`), and the last two
@@ -107,6 +131,12 @@ does not disturb the backoff.
 asks to rerun immediately still waits a beat, so a nextAt in the past cannot
 spin the reader. It never computes an interval itself — that is the job's last
 word (`outcome.intervalMin`).
+
+The same distinction the fetcher draws for feeds is drawn for the sync job: a
+run that failed because the remote could not be reached retries at the base
+interval (`Could not resolve host`, `Failed to connect`, a connection reset),
+while a refusal (`Authentication failed`, a rejected push) backs off — retrying
+a refusal sooner changes nothing.
 
 ## Deliberate behaviour changes from the hand-rolled clock
 

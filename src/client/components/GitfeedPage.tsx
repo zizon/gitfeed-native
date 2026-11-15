@@ -61,15 +61,17 @@ export function GitfeedPage({ controller, t, useReader }: GitfeedPageProps) {
     }
   }
 
-  // What each action would say if its label is collapsed away: the verb, and
-  // the state that makes it the one worth pressing.
+  // What each control would say if its label is collapsed away: the verb, and
+  // the state that makes it the one worth pressing. The hint always names the
+  // object, because the bar has two: Refresh reads the feeds, Pull and Sync
+  // reads move the git-backed archive.
   const pullTip = state.git && state.git.behind
     ? `${t('action.pull')} · ${t('status.behind', { n: state.git.behind })}`
-    : t('action.pull')
-  const fetchTip = state.busy.fetch ? t('status.running') : t('action.fetch')
+    : t('action.pullHint')
+  const fetchTip = state.busy.fetch ? t('status.running') : t('action.fetchHint')
   const syncTip = state.git && state.git.dirty
     ? `${t('action.sync')} · ${t('status.dirty')}`
-    : t('action.sync')
+    : t('action.syncHint')
 
   if (state.status === 'error' && !state.items.length) {
     return (
@@ -123,19 +125,6 @@ export function GitfeedPage({ controller, t, useReader }: GitfeedPageProps) {
               )
               : null}
           </div>
-          <Tooltip label={pullTip} side="bottom" delayMs={500} portal>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="gf-actbtn"
-              icon={<IconDownloadOutlineRegular size={13} />}
-              aria-label={pullTip}
-              disabled={state.busy.pull || !state.allowGit || !state.git || !state.git.repo}
-              onClick={function () { void controller.runAction('pull') }}
-            >
-              <span className="gf-actbtn-label">{t('action.pull')}</span>
-            </Button>
-          </Tooltip>
           <Tooltip label={fetchTip} side="bottom" delayMs={500} portal>
             <Button
               variant="ghost"
@@ -147,6 +136,22 @@ export function GitfeedPage({ controller, t, useReader }: GitfeedPageProps) {
               onClick={function () { void controller.runAction('fetch') }}
             >
               <span className="gf-actbtn-label">{state.busy.fetch ? t('status.running') : t('action.fetch')}</span>
+            </Button>
+          </Tooltip>
+          {/* Reading the feeds and moving the archive are two different jobs;
+              the divider is where the bar says so, not only the words. */}
+          <span className="gf-actionsep" role="separator" aria-orientation="vertical" />
+          <Tooltip label={pullTip} side="bottom" delayMs={500} portal>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="gf-actbtn"
+              icon={<IconDownloadOutlineRegular size={13} />}
+              aria-label={pullTip}
+              disabled={state.busy.pull || !state.allowGit || !state.git || !state.git.repo}
+              onClick={function () { void controller.runAction('pull') }}
+            >
+              <span className="gf-actbtn-label">{t('action.pull')}</span>
             </Button>
           </Tooltip>
           <Tooltip label={syncTip} side="bottom" delayMs={500} portal>

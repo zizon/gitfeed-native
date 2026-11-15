@@ -22,7 +22,8 @@ import { IconButton } from './Controls.js'
 import { FilterTabs, SearchBox } from './FilterBar.js'
 import { ErrorState } from './Placeholders.js'
 import { DisplayPrefs } from './Prefs.js'
-import { jobOf, jobWords, RefreshState } from './Status.js'
+import { jobOf, RefreshState } from './Status.js'
+import { jobWords } from '../jobWords.js'
 import { Toasts } from './Toasts.js'
 
 function RailMenu({ state, controller, t, onClose }: {
@@ -63,7 +64,16 @@ function RailMenu({ state, controller, t, onClose }: {
     <MenuSurface ref={ref} className="gf-popover gf-rail-menu">
       <DisplayPrefs state={state} controller={controller} t={t} />
       <div className="gf-menu-sep" />
-      <div className="gf-menu-label">{t('menu.actions')}</div>
+      <div className="gf-menu-label">{t('menu.refresh')}</div>
+      <div className="gf-menu-info">
+        {fetchJob && fetchJob.enabled ? [fetch.cadence, fetch.next].filter(Boolean).join(' · ') : t('status.autoOff')}
+      </div>
+      {fetchJob ? <div className="gf-menu-info">{fetchInfo}</div> : null}
+      <div className="gf-menu-sep" />
+      {/* The two manual actions sit under the object they move, not in a
+          generic "Actions" section: this is the read-state half of the reader,
+          and Refresh above is the feeds half. */}
+      <div className="gf-menu-label">{t('menu.sync')}</div>
       {actionRow(
         t('action.pull'),
         state.busy.pull || !state.allowGit || !state.git || !state.git.repo,
@@ -74,14 +84,6 @@ function RailMenu({ state, controller, t, onClose }: {
         state.busy.sync || !state.allowGit || !state.git || !state.git.repo,
         function () { void controller.runAction('sync') },
       )}
-      <div className="gf-menu-sep" />
-      <div className="gf-menu-label">{t('menu.refresh')}</div>
-      <div className="gf-menu-info">
-        {fetchJob && fetchJob.enabled ? [fetch.cadence, fetch.next].filter(Boolean).join(' · ') : t('status.autoOff')}
-      </div>
-      {fetchJob ? <div className="gf-menu-info">{fetchInfo}</div> : null}
-      <div className="gf-menu-sep" />
-      <div className="gf-menu-label">{t('menu.sync')}</div>
       <div className="gf-menu-info" title={syncJob?.error ?? undefined}>
         {syncJob && syncJob.enabled ? [sync.cadence, sync.next].filter(Boolean).join(' · ') : t('status.autoSyncOff')}
       </div>
@@ -153,7 +155,7 @@ export function GitfeedRail({ controller, t, useReader, useTabInfo }: GitfeedRai
         </button>
         <IconButton
           icon={<IconRefreshOutlineRegular size={16} />}
-          label={fetchRunning ? t('status.running') : t('action.fetch')}
+          label={fetchRunning ? t('status.running') : t('action.fetchHint')}
           spin={fetchRunning}
           disabled={state.busy.fetch || fetchRunning}
           onClick={function () { void controller.runAction('fetch') }}
