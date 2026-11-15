@@ -25,6 +25,7 @@ import type { Logger } from './types.js'
 import type { StreamFrame } from '../shared/stream.js'
 import { PROTOCOL } from '../shared/stream.js'
 import { messageOf } from '../shared/errors.js'
+import { sameOrigin } from './http.js'
 
 /** What the handler needs from the reader: a pull of frames from a revision. */
 export interface StreamSource {
@@ -40,6 +41,42 @@ export interface StreamSource {
 
 /** Keeps the connection warm across a proxy that idles quiet sockets out. */
 const HEARTBEAT_MS = 20000
+
+/**
+ * What a Harness's `connection` service offers for admitting one HTTP request.
+ *
+ * The plugin runs inside the user's Harness, which moves under it: DSH before
+ * 0.2.2 answered its browser check as `requestRejection`, and 0.2.2 moved
+ * admission into the web server — every route is authenticated before its
+ * handler is called — and removed the method. The shape is declared structurally
+ * so either generation is a value this module can ask.
+ */
+export interface StreamConnection {
+  /** The browser check an older Harness offers; absent from a newer one. */
+  requestRejection?(request: IncomingMessage): 401 | 403 | undefined
+}
+
+/**
+ * The admission a stream route uses: the Harness's own browser check when its
+ * Connection service still offers one, and the origin fence otherwise.
+ *
+ * The newer Harness has already authenticated the request by the time the
+ * handler runs, so the fence is the only check left to make here. Calling a
+ * method the service no longer carries threw before the response's first byte,
+ * which reads to the page as a reader with no state at all.
+ * @param connection - `ctx.get('connection')`, when the profile provides one.
+ * @param request - the stream request.
+ * @returns 401/403 to refuse, undefined to serve.
+ */
+export function streamAdmission(
+  connection: StreamConnection | undefined | null,
+  request: IncomingMessage,
+): 401 | 403 | undefined {
+  if (connection && typeof connection.requestRejection === 'function') {
+    return connection.requestRejection(request)
+  }
+  return sameOrigin(request) ? undefined : 403
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise(function (resolve) {

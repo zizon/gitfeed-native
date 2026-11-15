@@ -229,6 +229,26 @@ remove the source and add it again). The new commit rebuilds through the same
 
 Either way the data root is untouched.
 
+### Harness compatibility
+
+The plugin runs inside the user's Harness, and the two move separately. Where
+the plugin has to ask the Harness a question at request time, it asks what the
+running generation actually offers instead of assuming one release's shape:
+
+- **Stream admission.** Before Harness 0.2.2, a route admitted its own request
+  through Connection's `requestRejection`; from 0.2.2 the web server
+  authenticates every route before dispatch and Connection no longer carries
+  the method. The stream route calls the check when it exists and falls back to
+  its own origin fence otherwise ([events.ts](src/host/events.ts),
+  `streamAdmission`), so a Host restart on either generation serves the reader.
+  Calling the removed method made every stream request fail before its first
+  byte, which the page could only show as a reader with no state.
+- **The Connection service is looked up per request**, not captured at load, so
+  a profile that loads it after this plugin still gets the check applied.
+
+A Harness upgrade is picked up by the next `dsh web` restart; a plugin update
+needs only a page reload unless its Host half changed.
+
 ## Fetching and syncing
 
 ### Adaptive jobs

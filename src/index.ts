@@ -19,8 +19,9 @@
  */
 
 import { registerBrief } from './host/brief.js'
-import { createEventsHandler } from './host/events.js'
-import { createHandler, sameOrigin } from './host/http.js'
+import { createEventsHandler, streamAdmission } from './host/events.js'
+import type { StreamConnection } from './host/events.js'
+import { createHandler } from './host/http.js'
 import { scaffoldData } from './host/scaffold.js'
 import { resolveRoot } from './host/settings.js'
 import { createGitfeed } from './host/service.js'
@@ -116,11 +117,12 @@ export function apply(ctx: PluginContext, config?: GitfeedConfig) {
    * Connection after this plugin working.
    */
   const admitStream = function (req: import('node:http').IncomingMessage): 401 | 403 | undefined {
+    // A profile may load Connection after this plugin, so the service is read
+    // per request; which checks it offers is the Harness generation's business.
     const connection = typeof ctx.get === 'function'
-      ? ctx.get('connection') as { requestRejection(request: import('node:http').IncomingMessage): 401 | 403 | undefined } | undefined
+      ? ctx.get('connection') as StreamConnection | undefined
       : undefined
-    if (connection) return connection.requestRejection(req)
-    return sameOrigin(req) ? undefined : 403
+    return streamAdmission(connection, req)
   }
   ctx.effect(
     () => ctx.webServer.register({
