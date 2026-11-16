@@ -68,7 +68,10 @@ reader uses.
 Each item row shows the title, its feed and age, and a one-line plain-text
 digest of the summary, so a list can be skimmed and skipped without opening
 every article. Display prefs turn the digest off (rows then use the shorter
-two-line height); the choice is stored per browser.
+two-line height); the choice is stored per browser. An item whose feed gave no
+summary keeps its digest line empty rather than dropping it: the row is a fixed
+grid and the star sits on the title's line, so a missing summary must not move
+the star, the title, or the ages on the rows around it.
 
 Both actions a reader wants *while reading a feed* live on that feed's section
 row in the list: `Open Source Security  [Unsubscribe] [Mark 16 read]`. The

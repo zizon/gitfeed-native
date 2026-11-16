@@ -235,6 +235,17 @@ if (esbuild === undefined || !existsSync(reactDir) || !existsSync(domDir) || !ex
     ok(scroller().scrollTop === 0, 'at the top of the scroll', scroller().scrollTop)
     ok(first.db.hold === true, 'and it tells the transport a list is on screen', first.db.hold)
 
+    // --- a row holds the digest's line even when the entry has no summary ---
+    // The row is a fixed three-line grid, and the star is pinned to the row's
+    // top inset — on the title's line. This stand-in digests every row to
+    // nothing, which is the case the live library had: a row that dropped the
+    // empty line centred two lines instead and left the star 10px above its
+    // own title. jsdom has no layout, so the guard is the row's shape.
+    const rowCount = container.querySelectorAll('.gf-row').length
+    const digestLines = container.querySelectorAll('.gf-row .gf-row-digest')
+    ok(digestLines.length === rowCount, 'every row keeps its digest line, summary or not', [digestLines.length, rowCount])
+    ok([...digestLines].every(function (node) { return node.textContent === '' }), 'and here the line is empty')
+
     // --- an arrival at the top is held, counted, and offered ---
     first.db.items.unshift({
       id: 'new0', feed: 'f1', title: 'new0', link: 'https://example.com/new0',

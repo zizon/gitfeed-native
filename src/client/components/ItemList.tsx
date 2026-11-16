@@ -515,7 +515,10 @@ export function ItemList({ state, controller, t, wide }: ItemListProps) {
             {groupBy === 'feed' ? null : <span className="feed-name">{controller.feedTitle(item.feed)}</span>}
             <span className="when">{fmtTime(item.date)}</span>
           </span>
-          {digest ? <span className="gf-row-digest">{digest}</span> : null}
+          {/* The digest line is part of the row's shape: an entry with no
+              summary keeps an empty line there, so a row without a preview is
+              the same three lines as the rest rather than a shorter variant. */}
+          {showDigest ? <span className="gf-row-digest">{digest}</span> : null}
         </button>
         {/* The star is an action on the row, not a way into it: it sits on
             every row so an item can be kept without opening the article, and

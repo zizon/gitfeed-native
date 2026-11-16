@@ -388,16 +388,17 @@ export const CSS = `
   cursor: pointer;
   user-select: none;
 }
-/* The row's target: title, meta and digest, with the star beside it. The
-   content is centred in the row, and the star's 20px box starts at the same
-   4px the title line does, so the two stay on one line. */
+/* The row's target: title, meta and digest, with the star beside it. The lines
+   start at the row's own 4px inset — where the star's 20px box starts — so the
+   star sits on the title's line instead of floating above it. Rows are a fixed
+   height because the list computes its offsets from it. */
 .gf-row-main {
   flex: 1 1 auto;
   min-width: 0;
   height: 100%;
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 2px;
   padding: 0 0 0 12px;
   border: 0;
@@ -458,6 +459,9 @@ export const CSS = `
 .gf-row-meta .when { flex: none; margin-left: auto; font-variant-numeric: tabular-nums; }
 .gf-row-digest {
   min-width: 0;
+  /* The line it holds, empty or not: the digest is one line of the row's
+     shape, and the list's row height counts it. */
+  height: 17px;
   font-size: 12px;
   line-height: 17px;
   color: var(--dsw-alias-label-tertiary);
