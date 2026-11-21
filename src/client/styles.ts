@@ -456,6 +456,10 @@ export const CSS = `
   height: 66px;
   display: flex;
   align-items: flex-start;
+  /* The star is laid over the row's right edge rather than taking a column of
+     its own: it then shares the right alignment line with the age under it,
+     where the earlier 20px column of its own put it a box to the right. */
+  position: relative;
   padding: 4px 12px 4px 0;
   cursor: pointer;
   user-select: none;
@@ -503,7 +507,10 @@ export const CSS = `
 @media (hover: hover) {
   .gf-row:hover { background: var(--dsw-alias-interactive-bg-hover); }
 }
-.gf-row-title { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 13px; line-height: 20px; color: var(--dsw-alias-label-secondary); }
+/* The title stops where the star's box begins; the age and the digest below it
+   run to the row's own edge, so the star sits on the same vertical line as
+   they end on. */
+.gf-row-title { display: flex; align-items: center; gap: 6px; min-width: 0; padding-right: 20px; font-size: 13px; line-height: 20px; color: var(--dsw-alias-label-secondary); }
 .gf-row.unread .gf-row-title { color: var(--dsw-alias-label-primary); }
 .gf-row.unread .gf-row-title .t { font-weight: 500; }
 .gf-row-title .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -518,7 +525,15 @@ export const CSS = `
 /* The row's star: always there, holding its space, and shown on the row the
    pointer or the keyboard is on. A starred row shows its mark outright, and a
    device with no hover has no other way to reach the control. */
-.gf-row-actions { flex: none; display: inline-flex; visibility: hidden; }
+/* On the title's line, at the row's right edge: the age's right alignment
+   lands on the same line, and the star's 13px glyph centres over it. */
+.gf-row-actions {
+  position: absolute;
+  top: 4px;
+  right: 12px;
+  display: inline-flex;
+  visibility: hidden;
+}
 /* Rows have fixed heights the list computes offsets from, so the control is
    sized to the title line rather than to the 24px small control it is. */
 .gf-row-actions .gf-iconbtn.sm { width: 20px; height: 20px; }

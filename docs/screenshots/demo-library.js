@@ -4,8 +4,12 @@
  * A public README must not picture somebody's real subscriptions, items, or
  * reading history, so the captures are of the plugin running against this
  * fixture instead: injected as an init script, it answers the reader's own
- * `/gitfeed/api/state` route with a demo library and accepts every mutation
- * without writing anything. Nothing here talks to a real data root.
+ * state stream with a demo library and accepts every mutation without writing
+ * anything. Nothing here talks to a real data root.
+ *
+ * The reader's state arrives on the event stream, so the fixture stands in for
+ * `EventSource` as well as for the `/gitfeed/api/*` routes: one `welcome` frame
+ * with the whole library, and no deltas after it.
  *
  * To retake the images: open the plugin page with this file as the document's
  * init script, then open an item and the folder picker.
@@ -142,6 +146,65 @@
     repo: '~/gitfeed',
     allowGit: true,
   }
+
+  // The whole state as the stream's first frame carries it. The reader holds no
+  // revision to extend, so the fixture never needs to send a delta.
+  const welcome = {
+    t: 'welcome',
+    protocol: 1,
+    rev: 1,
+    version: state.version,
+    itemsVersion: state.itemsVersion,
+    items: state.items,
+    read: state.read,
+    starred: state.starred,
+    feeds: state.feeds,
+    reader: state.reader,
+    git: state.git,
+    schedule: state.schedule,
+    repo: state.repo,
+    allowGit: state.allowGit,
+  }
+
+  const RealEventSource = window.EventSource
+  function DemoEventSource(url) {
+    if (String(url).indexOf('/gitfeed/events') === -1) return new RealEventSource(url)
+    this.url = String(url)
+    this.readyState = 0
+    this.onopen = null
+    this.onerror = null
+    this.onmessage = null
+    this.listeners = {}
+    const self = this
+    setTimeout(function () {
+      self.readyState = 1
+      self.emit('open', new Event('open'))
+      self.emit('welcome', new MessageEvent('welcome', { data: JSON.stringify(welcome) }))
+    }, 0)
+  }
+  DemoEventSource.prototype.addEventListener = function (type, listener) {
+    if (!this.listeners[type]) this.listeners[type] = []
+    this.listeners[type].push(listener)
+  }
+  DemoEventSource.prototype.removeEventListener = function (type, listener) {
+    const list = this.listeners[type]
+    if (!list) return
+    const index = list.indexOf(listener)
+    if (index !== -1) list.splice(index, 1)
+  }
+  DemoEventSource.prototype.emit = function (type, event) {
+    const handler = this['on' + type]
+    if (typeof handler === 'function') handler.call(this, event)
+    const list = this.listeners[type] || []
+    for (const listener of list.slice()) listener.call(this, event)
+  }
+  DemoEventSource.prototype.close = function () {
+    this.readyState = 2
+  }
+  DemoEventSource.CONNECTING = 0
+  DemoEventSource.OPEN = 1
+  DemoEventSource.CLOSED = 2
+  window.EventSource = DemoEventSource
 
   const realFetch = window.fetch.bind(window)
   window.fetch = function (input, init) {

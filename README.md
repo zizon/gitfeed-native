@@ -25,7 +25,7 @@ its own actions — move it to a folder, mark the source read, unsubscribe — a
 the star sits on the item row, so keeping something does not mean opening it
 first.
 
-![The gitfeed page: feed folders and their unread counts, the item list with digests, and an open article](https://raw.githubusercontent.com/zizon/gitfeed-native/main/docs/screenshots/panel.png)
+![The gitfeed page: feed folders and their unread counts, the item list with digests, an open article, and the source list's panel toggle in its header](https://raw.githubusercontent.com/zizon/gitfeed-native/main/docs/screenshots/panel.png)
 
 The same reader in the right Sidebar, beside whatever session is open:
 
