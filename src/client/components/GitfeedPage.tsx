@@ -1,6 +1,6 @@
 /** The full three-pane reader in the central main panel. */
 
-import { useRef, useState } from '../react.js'
+import { useEffect, useRef, useState } from '../react.js'
 import type { CSSProperties } from '../react.js'
 import {
   Button,
@@ -11,6 +11,7 @@ import {
   IconSlidersTwoOutlineRegular,
   MenuSurface,
   Tooltip,
+  focusWithoutRing,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { DEFAULT_LIST, DEFAULT_RAIL, LIST_MAX, LIST_MIN, RAIL_MAX, RAIL_MIN } from '../constants.js'
 import { useKeyboard, useMount, useOutsideClose } from '../hooks.js'
@@ -30,15 +31,51 @@ import { Toasts } from './Toasts.js'
 /** The whole snapshot: one list, one article pane, one source list. */
 const wholeState = function (state: ClientState) { return state }
 
+/**
+ * How long the folded rail's content fades before it leaves the DOM. The pane's
+ * own track eases for `--ds-transition-duration-slow` (300ms); this is the half
+ * the app's sidebar spends fading out before its rail layout takes over, and
+ * the spine arrives when it is done.
+ */
+const FOLD_SETTLE_MS = 150
+
 export function GitfeedPage({ controller, t, useReader }: GitfeedPageProps) {
   const state = useReader(wholeState)
   const rootRef = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
   const [prefsOpen, setPrefsOpen] = useState(false)
   const prefsRef = useRef<HTMLDivElement>(null)
+  const spineRef = useRef<HTMLDivElement>(null)
+  /** Whether the fold's fade has finished, so the rail content may leave. */
+  const [foldSettled, setFoldSettled] = useState(state.railHidden)
+  /** A rail drag writes widths at pointer cadence; the pane must not ease them. */
+  const [dragging, setDragging] = useState(false)
   useMount(controller)
   useKeyboard(controller, searchRef, rootRef)
   useOutsideClose(prefsRef, prefsOpen, function () { setPrefsOpen(false) })
+
+  // The rail leaves the DOM only after its fade: folding first lets the content
+  // fade in place while the pane clips it, then unmounts it and hands the spot
+  // to the spine. Unfolding mounts the rail again at once — it fades back in as
+  // the pane opens.
+  useEffect(function () {
+    if (!state.railHidden) {
+      setFoldSettled(false)
+      return
+    }
+    const timer = setTimeout(function () { setFoldSettled(true) }, FOLD_SETTLE_MS)
+    return function () { clearTimeout(timer) }
+  }, [state.railHidden])
+
+  // The control the reader pressed was inside the content that just left the
+  // DOM, so focus follows it to the spine's toggle rather than falling to the
+  // page. A reader who was elsewhere keeps their place.
+  useEffect(function () {
+    if (!state.railHidden || !foldSettled) return
+    const active = document.activeElement
+    const opener = spineRef.current ? spineRef.current.querySelector('button') : null
+    if (opener && (active === null || active === document.body)) focusWithoutRing(opener, { preventScroll: true })
+  }, [state.railHidden, foldSettled])
 
   function startResize(which: 'rail' | 'list') {
     return function (event: React.PointerEvent) {
@@ -49,6 +86,7 @@ export function GitfeedPage({ controller, t, useReader }: GitfeedPageProps) {
       // A hidden rail occupies nothing, so the list may grow by its width; the
       // pane's own width is kept for when it comes back.
       const rail = state.railHidden ? 0 : state.railW
+      if (which === 'rail') setDragging(true)
       function move(moveEvent: PointerEvent) {
         const delta = moveEvent.clientX - startX
         if (which === 'rail') {
@@ -60,6 +98,7 @@ export function GitfeedPage({ controller, t, useReader }: GitfeedPageProps) {
       function up() {
         window.removeEventListener('pointermove', move)
         window.removeEventListener('pointerup', up)
+        if (which === 'rail') setDragging(false)
       }
       window.addEventListener('pointermove', move)
       window.addEventListener('pointerup', up)
@@ -94,6 +133,7 @@ export function GitfeedPage({ controller, t, useReader }: GitfeedPageProps) {
         '--gf-rail': `${state.railW}px`,
         '--gf-list': `${state.listW}px`,
       } as CSSProperties}
+      data-dragging={dragging || undefined}
     >
       <header className="gf-toolbar">
         {/* The list's own controls already state the figures that matter; the
@@ -178,33 +218,46 @@ export function GitfeedPage({ controller, t, useReader }: GitfeedPageProps) {
         ? <div className="gf-banner">{t('status.banner', { error: state.loadError })}</div>
         : null}
       <div className="gf-body">
-        {state.railHidden
-          ? (
-            /* The folded list leaves a spine where its header was, and the
-               chevron that reopens it sits at that header's corner: folding
-               moves the control down the pane's edge, not across the page. */
-            <div className="gf-spine">
-              <IconButton
-                icon={<IconPanelLeftOutlineRegular size={16} />}
-                label={t('action.expandSources')}
-                small
-                onClick={function () { controller.setRailHidden(false) }}
-              />
-            </div>
-          )
-          : (
-            <>
-              <FeedRail state={state} controller={controller} t={t} />
-              <div
-                className="gf-splitter"
-                role="separator"
-                aria-orientation="vertical"
-                title={t('action.resize')}
-                onPointerDown={startResize('rail')}
-                onDoubleClick={function () { controller.setWidths({ railW: DEFAULT_RAIL }) }}
-              />
-            </>
-          )}
+        {/* The rail and the divider that resizes it are one pane: folding eases
+            the pane's own track while its content keeps the width it was laid
+            out at and is clipped, so nothing reflows on the way. When the fade
+            is done the content leaves and the spine takes the spot. */}
+        <div
+          className={`gf-sourcepane${state.railHidden ? ' folded' : ''}${state.railHidden && !foldSettled ? ' fading' : ''}`}
+        >
+          {state.railHidden && foldSettled
+            ? null
+            : (
+              <>
+                <div className="gf-sourceclip">
+                  <FeedRail state={state} controller={controller} t={t} />
+                </div>
+                <div
+                  className="gf-splitter"
+                  role="separator"
+                  aria-orientation="vertical"
+                  title={t('action.resize')}
+                  onPointerDown={startResize('rail')}
+                  onDoubleClick={function () { controller.setWidths({ railW: DEFAULT_RAIL }) }}
+                />
+              </>
+            )}
+          {state.railHidden && foldSettled
+            ? (
+              /* The folded list leaves a spine where its header was, and the
+                 toggle that reopens it sits at that header's corner: folding
+                 moves the control down the pane's edge, not across the page. */
+              <div className="gf-spine" ref={spineRef}>
+                <IconButton
+                  icon={<IconPanelLeftOutlineRegular size={16} />}
+                  label={t('action.expandSources')}
+                  small
+                  onClick={function () { controller.setRailHidden(false) }}
+                />
+              </div>
+            )
+            : null}
+        </div>
         <ItemList state={state} controller={controller} t={t} wide={!state.current} />
         {state.current
           ? (

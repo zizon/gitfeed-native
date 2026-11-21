@@ -17,10 +17,13 @@ The panel: folders on the left, one line per item with its digest, and the
 article beside them. The folder list is a panel of the page, not the page
 itself: the panel toggle in its own header folds it, the rows and the article
 take the width it gives up, and folded it leaves a 32px spine with the same
-toggle at the top — the shape the app's own sidebar uses, one level down. A
-feed row carries its own actions — move it to a folder, mark the source read,
-unsubscribe — and the star sits on the item row, so keeping something does not
-mean opening it first.
+toggle at the top — the shape the app's own sidebar uses, one level down. The
+fold eases on the app's own curve: the list keeps the width it was laid out at
+while the pane clips it and fades it out, the spine arrives when that fade is
+done, and the way back fades the list in as the pane opens. A feed row carries
+its own actions — move it to a folder, mark the source read, unsubscribe — and
+the star sits on the item row, so keeping something does not mean opening it
+first.
 
 ![The gitfeed page: feed folders and their unread counts, the item list with digests, and an open article](https://raw.githubusercontent.com/zizon/gitfeed-native/main/docs/screenshots/panel.png)
 
@@ -465,6 +468,8 @@ not carry its own theme setting.
   panel toggle in its header (folded, the toggle waits on the 32px spine). The
   toggle is the page's, not the app's, but it speaks the app's language: the
   same panel glyph as the sidebar's own, and its label says which way it goes.
+  The fold's easing comes from the theme's own motion tokens; dragging the
+  divider is never eased, and `prefers-reduced-motion` turns the animation off.
   Per-browser, in one `localStorage` snapshot (`gitfeed.prefs`) held by the
   shared store engine; the values in `config.json` are the defaults.
 - **Keyboard**: `j`/`k` move, `m` toggle read, `s` star, `o` open original,

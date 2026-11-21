@@ -110,6 +110,52 @@ export const CSS = `
 @keyframes gf-spin { to { transform: rotate(360deg); } }
 
 .gf-body { flex: 1 1 auto; display: flex; min-width: 0; min-height: 0; }
+/* The source list and its divider are one pane, so folding eases a single
+   track — the app's own sidebar does this with the frame's grid track and its
+   slow/ease-in-out pair. The content inside is laid out at its expanded width
+   and clipped, so the edge moves and nothing reflows behind it. */
+.gf-sourcepane {
+  position: relative;
+  flex: 0 0 calc(var(--gf-rail, 220px) + 5px);
+  display: flex;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--dsw-specific-sidebar-fill);
+  transition: flex-basis var(--ds-transition-duration-slow, 300ms) var(--ds-ease-in-out, cubic-bezier(0.4, 0, 0.2, 1));
+}
+.gf-sourcepane.folded { flex: 0 0 32px; }
+/* Dragging the divider writes the width at pointer cadence; easing it would
+   detach the edge from the pointer (the app's own frames drop easing while a
+   column is dragged). */
+.gf-page[data-dragging] .gf-sourcepane { transition: none; }
+.gf-sourceclip {
+  flex: none;
+  display: flex;
+  width: var(--gf-rail, 220px);
+  height: 100%;
+  min-width: 0;
+  animation: gf-source-in 200ms var(--ds-ease-in-out, cubic-bezier(0.4, 0, 0.2, 1)) both;
+}
+@keyframes gf-source-in {
+  from { opacity: 0; }
+}
+/* The first half of the fold: the content fades where it stands. When the fade
+   is done it leaves the DOM and the spine arrives. */
+.gf-sourcepane.fading .gf-sourceclip,
+.gf-sourcepane.fading .gf-splitter {
+  opacity: 0;
+  transition: opacity 150ms var(--ds-ease-in-out, cubic-bezier(0.4, 0, 0.2, 1));
+}
+/* The divider's handle rides the pane's edge, so it stays on the border while
+   the pane moves. */
+.gf-sourcepane .gf-splitter {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 5px;
+}
+.gf-sourcepane.folded .gf-splitter { pointer-events: none; }
 .gf-feedrail {
   flex: 0 0 var(--gf-rail, 220px);
   display: flex;
@@ -168,18 +214,24 @@ export const CSS = `
    rows use for their own actions. */
 .gf-rail-head .gf-iconbtn,
 .gf-spine .gf-iconbtn { width: 20px; height: 20px; }
-/* The folded source list: a spine where its header was, carrying the chevron
-   that reopens it at that header's corner. The rail's fold control lives in
-   this header, so folding moves it down the pane's edge rather than into the
-   page bar, where the app's own sidebar toggle already is. */
+/* The folded source list: a spine where its header was, carrying the panel
+   toggle that reopens it at that header's corner. It arrives at the fold's
+   settle, from the edge the content was clipped at — the second half of the
+   animation, as the pane finishes closing. */
 .gf-spine {
-  flex: 0 0 32px;
+  position: absolute;
+  inset: 0 auto 0 0;
   display: flex;
   flex-direction: column;
   align-items: center;
+  width: 32px;
   padding: 6px 0;
   border-right: 0.5px solid var(--dsw-alias-border-l1);
   background: var(--dsw-specific-sidebar-fill);
+  animation: gf-spine-in 150ms var(--ds-ease-in-out, cubic-bezier(0.4, 0, 0.2, 1)) both;
+}
+@keyframes gf-spine-in {
+  from { opacity: 0; transform: translateX(-6px); }
 }
 .gf-rail-title {
   flex: 1;
@@ -439,6 +491,12 @@ export const CSS = `
   .gf-row.gf-row-in { animation: none; }
   /* The section still leaves, it just does not fade on the way out. */
   .gf-fade { transition: none; }
+  /* The fold happens, it just lands at once. */
+  .gf-sourcepane,
+  .gf-sourcepane.fading .gf-sourceclip,
+  .gf-sourcepane.fading .gf-splitter,
+  .gf-sourceclip,
+  .gf-spine { transition: none; animation: none; }
 }
 @media (hover: hover) {
   .gf-row:hover { background: var(--dsw-alias-interactive-bg-hover); }

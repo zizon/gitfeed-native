@@ -191,6 +191,12 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
   export const IconBranchOutlineRegular: Icon
   export const IconSlidersTwoOutlineRegular: Icon
   export const IconTrashOutlineRegular: Icon
+  /**
+   * Focus a control that was chosen for the reader rather than by them, without
+   * the focus ring until they navigate. The app uses it whenever it moves focus
+   * to an opener after the opened-from control leaves.
+   */
+  export function focusWithoutRing(element: HTMLElement, options?: FocusOptions): void
   /** The app's panel toggle: a column with its leading rail marked. */
   export const IconPanelLeftOutlineRegular: Icon
 }

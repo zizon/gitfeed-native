@@ -61,6 +61,7 @@ function primitivesStub() {
     'export const MenuSurface = (props) => React.createElement(\'div\', { className: props.className }, props.children)',
     'export const Tooltip = (props) => React.createElement(React.Fragment, null, props.children)',
     'export const Toast = () => null',
+    'export function focusWithoutRing(element) { if (element && element.focus) element.focus() }',
     ...Object.entries(glyphs).map(([name, key]) => (
       `export const ${name} = () => React.createElement('svg', { 'data-glyph': ${JSON.stringify(key)} })`
     )),
@@ -118,6 +119,7 @@ if (esbuild === undefined || !existsSync(reactDir) || !existsSync(domDir) || !ex
     const { GitfeedPage } = await import(pathToFileURL(bundle).href)
 
     const t = (key, params) => (params ? `${key}:${JSON.stringify(params)}` : key)
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
     const calls = { railHidden: [], widths: [], feeds: 0, actions: [] }
 
     // The command surface the page and its panes reach for. Only what they
@@ -222,24 +224,57 @@ if (esbuild === undefined || !existsSync(reactDir) || !existsSync(domDir) || !ex
     ok(calls.railHidden.length === 1 && calls.railHidden[0] === true,
       'pressing it asks for the list to be folded', calls.railHidden)
 
-    // The state that comes back is the page's: the rail is gone, and a spine
-    // where its header was carries the way back.
+    // The pane's easing is off while the divider is dragged: the edge has to
+    // follow the pointer rather than chase it (the app's frames do the same for
+    // their columns).
+    const splitter = container.querySelector('.gf-sourcepane .gf-splitter')
+    await act(async function () {
+      splitter.dispatchEvent(new window.MouseEvent('pointerdown', { bubbles: true, clientX: 300 }))
+    })
+    ok(container.querySelector('.gf-page').hasAttribute('data-dragging'), 'a drag turns the pane\'s easing off')
+    await act(async function () {
+      window.dispatchEvent(new window.MouseEvent('pointerup', { bubbles: true }))
+    })
+    ok(!container.querySelector('.gf-page').hasAttribute('data-dragging'), 'and letting go turns it back on')
+
+    // Folding first fades the content in place while the pane clips it; only
+    // when that fade is over does the rail leave and the spine arrive.
     state = Object.assign({}, base, { railHidden: true })
     await render()
-    ok(container.querySelector('.gf-feedrail') === null, 'a folded list is not rendered')
+    const pane = container.querySelector('.gf-sourcepane')
+    ok(pane !== null && pane.className.includes('folded') && pane.className.includes('fading'),
+      'the pane starts folding and its content fades where it stands', pane && pane.className)
+    ok(container.querySelector('.gf-sourceclip .gf-feedrail') !== null,
+      'the content is still mounted while it fades')
+    ok(container.querySelector('.gf-spine') === null, 'and the spine has not arrived yet')
+    ok(container.querySelector('.gf-listpane') !== null, 'the rows keep the width it gave up')
+
+    // Past the fade the content leaves and the spine takes the spot: the control
+    // the reader pressed went with it, so focus follows it there.
+    await act(async function () { await sleep(220) })
+    ok(container.querySelector('.gf-feedrail') === null, 'after the fade the folded list is gone')
     ok(container.querySelectorAll('.gf-splitter').length === 0,
       'nor is the drag handle that only resizes it', container.querySelectorAll('.gf-splitter').length)
     ok(container.querySelector('.gf-spine') !== null, 'a spine stands where the list was')
-    ok(container.querySelector('.gf-listpane') !== null, 'the rows keep the width it gave up')
     const reopen = container.querySelector('.gf-spine button[aria-label]')
     ok(reopen !== null && reopen.getAttribute('aria-label') === 'action.expandSources',
       "and the spine's toggle offers to open the list again", reopen && reopen.getAttribute('aria-label'))
+    ok(document.activeElement === reopen,
+      'focus followed the control that left the DOM', document.activeElement && document.activeElement.getAttribute('aria-label'))
 
+    // Unfolding mounts the content again at once — it fades in as the pane opens.
     await act(async function () {
       reopen.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
     })
     ok(calls.railHidden.length === 2 && calls.railHidden[1] === false,
-      'which brings the list back', calls.railHidden)
+      'which asks for the list back', calls.railHidden)
+    state = Object.assign({}, base, { railHidden: false })
+    await render()
+    const opening = container.querySelector('.gf-sourcepane')
+    ok(opening !== null && !opening.className.includes('folded'),
+      'the pane opens', opening && opening.className)
+    ok(container.querySelector('.gf-feedrail') !== null, 'with its content mounted at once')
+    ok(container.querySelector('.gf-spine') === null, 'and the spine gone')
 
     await act(async function () { root.unmount() })
   } finally {
