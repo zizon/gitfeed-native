@@ -134,7 +134,9 @@ export const CSS = `
   width: var(--gf-rail, 220px);
   height: 100%;
   min-width: 0;
-  animation: gf-source-in 200ms var(--ds-ease-in-out, cubic-bezier(0.4, 0, 0.2, 1)) both;
+  /* Backwards fill only: a finished entrance must not keep asserting its final
+     opacity, or the fold's fade-out would be overridden by it. */
+  animation: gf-source-in 200ms var(--ds-ease-in-out, cubic-bezier(0.4, 0, 0.2, 1)) backwards;
 }
 @keyframes gf-source-in {
   from { opacity: 0; }
