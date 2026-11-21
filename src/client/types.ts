@@ -68,6 +68,8 @@ export interface ReaderUi {
   folderOpen: Record<string, boolean>
   railW: number
   listW: number
+  /** Whether the source list is collapsed; its width is kept for when it isn't. */
+  railHidden: boolean
   listEpoch: number
   busy: Record<string, boolean>
   toast: Toast | null
@@ -138,6 +140,8 @@ export interface Controller {
   digest(item: Item): string
   setFolderOpen(name: string, open: boolean): void
   setWidths(patch: { railW?: number; listW?: number }): void
+  /** Collapse or show the source list; the choice is a preference. */
+  setRailHidden(hidden: boolean): void
   addFeed(url: string, folder: string): Promise<boolean>
   removeFeed(id: string): Promise<boolean>
   setFeedFolder(id: string, folder: string): Promise<boolean>

@@ -43,6 +43,9 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
   const savedGroupBy: GroupBy | null = saved.groupBy === 'none' || saved.groupBy === 'folder' || saved.groupBy === 'feed'
     ? saved.groupBy
     : null
+  // Likewise for a panel that had no preference when the snapshot was written:
+  // a stored value that is not a boolean means the reader never hid it.
+  const savedRailHidden = (saved.railHidden as boolean | undefined) === true
   let data: ReaderData = {
     status: 'idle',
     error: null,
@@ -78,6 +81,7 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     folderOpen: saved.folderOpen,
     railW: clamp(saved.railW, RAIL_MIN, RAIL_MAX),
     listW: clamp(saved.listW, LIST_MIN, LIST_MAX),
+    railHidden: savedRailHidden,
     listEpoch: 0,
     busy: {},
     toast: null,
@@ -646,6 +650,11 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     if (Object.keys(next).length) setUi(next)
   }
 
+  function setRailHidden(hidden: boolean): void {
+    prefs.update(function (draft) { draft.railHidden = hidden })
+    setUi({ railHidden: hidden })
+  }
+
   /** The mount refcount the transport polls on while any surface is on screen. */
   function mount(): void {
     transport.mount()
@@ -700,6 +709,7 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     countInView: countInView,
     setFolderOpen: setFolderOpen,
     setWidths: setWidths,
+    setRailHidden: setRailHidden,
     addFeed: transport.addFeed,
     removeFeed: transport.removeFeed,
     setFeedFolder: transport.setFeedFolder,

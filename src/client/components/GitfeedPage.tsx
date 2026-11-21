@@ -6,6 +6,7 @@ import {
   Button,
   IconBranchOutlineRegular,
   IconDownloadOutlineRegular,
+  IconPanelLeftOutlineRegular,
   IconRefreshOutlineRegular,
   IconSlidersTwoOutlineRegular,
   MenuSurface,
@@ -20,6 +21,7 @@ import { Article } from './Article.js'
 import { FeedRail } from './FeedRail.js'
 import { ItemList } from './ItemList.js'
 import { FilterTabs, SearchBox } from './FilterBar.js'
+import { IconButton } from './Controls.js'
 import { ErrorState } from './Placeholders.js'
 import { DisplayPrefs } from './Prefs.js'
 import { GitStatus } from './Status.js'
@@ -44,12 +46,15 @@ export function GitfeedPage({ controller, t, useReader }: GitfeedPageProps) {
       const startX = event.clientX
       const start = which === 'rail' ? state.railW : state.listW
       const total = rootRef.current ? rootRef.current.clientWidth : 1200
+      // A hidden rail occupies nothing, so the list may grow by its width; the
+      // pane's own width is kept for when it comes back.
+      const rail = state.railHidden ? 0 : state.railW
       function move(moveEvent: PointerEvent) {
         const delta = moveEvent.clientX - startX
         if (which === 'rail') {
           controller.setWidths({ railW: clamp(start + delta, RAIL_MIN, Math.min(RAIL_MAX, total - 520)) })
         } else {
-          controller.setWidths({ listW: clamp(start + delta, LIST_MIN, Math.min(LIST_MAX, total - state.railW - 340)) })
+          controller.setWidths({ listW: clamp(start + delta, LIST_MIN, Math.min(LIST_MAX, total - rail - 340)) })
         }
       }
       function up() {
@@ -91,6 +96,15 @@ export function GitfeedPage({ controller, t, useReader }: GitfeedPageProps) {
       } as CSSProperties}
     >
       <header className="gf-toolbar">
+        {/* The source list is a panel of this page, not the page itself: the
+            reader hides it to give the rows and the article the width, and the
+            same control — the app's own panel glyph — brings it back. Its
+            width survives either way, because it is a separate preference. */}
+        <IconButton
+          icon={<IconPanelLeftOutlineRegular size={16} />}
+          label={state.railHidden ? t('action.showSources') : t('action.hideSources')}
+          onClick={function () { controller.setRailHidden(!state.railHidden) }}
+        />
         {/* The list's own controls already state the figures that matter; the
             brand stays a name. */}
         <div className="gf-brand">
@@ -173,15 +187,21 @@ export function GitfeedPage({ controller, t, useReader }: GitfeedPageProps) {
         ? <div className="gf-banner">{t('status.banner', { error: state.loadError })}</div>
         : null}
       <div className="gf-body">
-        <FeedRail state={state} controller={controller} t={t} />
-        <div
-          className="gf-splitter"
-          role="separator"
-          aria-orientation="vertical"
-          title={t('action.resize')}
-          onPointerDown={startResize('rail')}
-          onDoubleClick={function () { controller.setWidths({ railW: DEFAULT_RAIL }) }}
-        />
+        {state.railHidden
+          ? null
+          : (
+            <>
+              <FeedRail state={state} controller={controller} t={t} />
+              <div
+                className="gf-splitter"
+                role="separator"
+                aria-orientation="vertical"
+                title={t('action.resize')}
+                onPointerDown={startResize('rail')}
+                onDoubleClick={function () { controller.setWidths({ railW: DEFAULT_RAIL }) }}
+              />
+            </>
+          )}
         <ItemList state={state} controller={controller} t={t} wide={!state.current} />
         {state.current
           ? (

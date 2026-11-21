@@ -14,9 +14,11 @@ there is no server-side job to arm.
 ## What it looks like
 
 The panel: folders on the left, one line per item with its digest, and the
-article beside them. A feed row carries its own actions — move it to a folder,
-mark the source read, unsubscribe — and the star sits on the item row, so
-keeping something does not mean opening it first.
+article beside them. The folder list is a panel of the page, not the page
+itself: the toggle at the start of the bar collapses it, and the rows and the
+article take the width it gives up. A feed row carries its own actions — move
+it to a folder, mark the source read, unsubscribe — and the star sits on the
+item row, so keeping something does not mean opening it first.
 
 ![The gitfeed page: feed folders and their unread counts, the item list with digests, and an open article](https://raw.githubusercontent.com/zizon/gitfeed-native/main/docs/screenshots/panel.png)
 
@@ -456,15 +458,17 @@ not carry its own theme setting.
   room for a labelled bar, so its refresh button and its ⋯ menu carry the same
   split: Refresh first, and Pull/Sync reads under **Read state**.
 - **Display preferences**: hide feeds with nothing unread, mark read on scroll,
-  group by none/folder/source, and order the rail and grouped list by what the
-  reader reads (see below) or by name. Per-browser, in one `localStorage`
-  snapshot (`gitfeed.prefs`) held by the shared store engine; the values in
-  `config.json` are the defaults.
+  group by none/folder/source, order the rail and grouped list by what the
+  reader reads (see below) or by name, and collapse the source list with the
+  panel toggle in the bar, whose label says which way it goes. Per-browser, in
+  one `localStorage` snapshot (`gitfeed.prefs`) held by the shared store engine;
+  the values in `config.json` are the defaults.
 - **Keyboard**: `j`/`k` move, `m` toggle read, `s` star, `o` open original,
   `/` search, `u` unread, `a` all, `Esc` close article then clear search/feed.
   Bulk marking is deliberately not on a key.
 
-Pane widths and open folders are remembered per browser.
+Pane widths, the collapsed source list, and open folders are remembered per
+browser.
 
 ### A list that does not move
 

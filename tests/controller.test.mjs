@@ -186,6 +186,26 @@ if (engine === undefined || esbuild === undefined) {
     wide.dispose()
     storage.clear()
 
+    // --- the source list collapses as a preference, not a session flag ---
+    // A stored snapshot from before the panel could be hidden says nothing
+    // about it, and the panel starts shown.
+    storage.set('gitfeed.prefs', JSON.stringify({
+      groupBy: null, hideEmpty: null, markOnScroll: null, showDigest: null,
+      folderOpen: {}, railW: 300, listW: 430,
+    }))
+    const panel = createController(t, createPrefs())
+    ok(panel.get().railHidden === false, 'the source list starts shown', panel.get().railHidden)
+    panel.setRailHidden(true)
+    ok(panel.get().railHidden === true, 'the reader can hide it', panel.get().railHidden)
+    ok(panel.get().railW === 300, 'and its width is kept for when it comes back', panel.get().railW)
+    ok(JSON.parse(storage.get('gitfeed.prefs')).railHidden === true,
+      'the choice is stored for the next visit', storage.get('gitfeed.prefs'))
+    panel.setRailHidden(false)
+    ok(panel.get().railHidden === false && JSON.parse(storage.get('gitfeed.prefs')).railHidden === false,
+      'and bringing it back is stored as well', storage.get('gitfeed.prefs'))
+    panel.dispose()
+    storage.clear()
+
     // --- retained rows, the band trim, and the two scope changes ---
     const controller = createController(t, createPrefs())
     host.items = [item('a', 'Alpha'), item('b', 'Beta')]

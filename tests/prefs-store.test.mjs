@@ -58,6 +58,7 @@ if (engine === undefined || esbuild === undefined) {
         folderOpen: { Daily: true },
         railW: 260,
         listW: 480,
+        railHidden: false,
       }),
       'the per-key entries become one snapshot',
       seeded,
@@ -88,6 +89,15 @@ if (engine === undefined || esbuild === undefined) {
     ok(
       createPrefs().getSnapshot().hideEmpty === true,
       'a later change is durable too',
+      data.get('gitfeed.prefs'),
+    )
+
+    // The collapsed source list is a preference like the widths, so a reload
+    // keeps the reader's screen the way it was left.
+    live.update((draft) => { draft.railHidden = true })
+    ok(
+      createPrefs().getSnapshot().railHidden === true,
+      'a hidden source list is remembered across visits',
       data.get('gitfeed.prefs'),
     )
   } finally {

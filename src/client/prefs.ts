@@ -25,6 +25,11 @@ export interface Prefs {
   folderOpen: Record<string, boolean>
   railW: number
   listW: number
+  /**
+   * Whether the source list is collapsed. A hidden panel keeps `railW`, so
+   * bringing it back restores the width the reader chose.
+   */
+  railHidden: boolean
 }
 
 /** The one local-storage entry this snapshot persists under. */
@@ -51,6 +56,7 @@ function defaults(): Prefs {
     folderOpen: {},
     railW: DEFAULT_RAIL,
     listW: DEFAULT_LIST,
+    railHidden: false,
   }
 }
 
@@ -106,6 +112,9 @@ function legacy(): { prefs: Prefs; keys: string[] } | null {
       folderOpen: asFolders(read(LEGACY.folderOpen)),
       railW: asWidth(read(LEGACY.railW), DEFAULT_RAIL),
       listW: asWidth(read(LEGACY.listW), DEFAULT_LIST),
+      // The collapsed panel arrived with the snapshot: a legacy reader had no
+      // way to hide it, so it starts shown.
+      railHidden: false,
     },
     keys: written,
   }

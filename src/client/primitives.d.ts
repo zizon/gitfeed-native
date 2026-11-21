@@ -191,4 +191,6 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
   export const IconBranchOutlineRegular: Icon
   export const IconSlidersTwoOutlineRegular: Icon
   export const IconTrashOutlineRegular: Icon
+  /** The app's panel toggle: a column with its leading rail marked. */
+  export const IconPanelLeftOutlineRegular: Icon
 }
