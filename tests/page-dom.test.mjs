@@ -1,8 +1,8 @@
 // The page's own chrome, rendered: the source list is a panel *of the page*, so
-// the toolbar's toggle collapses it and the rows take the width. jsdom has no
-// layout, so what this holds is the structure the geometry follows — with the
-// panel hidden, the rail and its splitter are not rendered at all — and the
-// control that brings them back. The preference that remembers the choice is
+// its own header folds it and the rows take the width. jsdom has no layout, so
+// what this holds is the structure the geometry follows — folded, the rail and
+// its splitter are gone and a spine carries the way back — and that the control
+// is in the pane, not the page bar. The preference that remembers the choice is
 // covered by the controller and prefs-store suites.
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
@@ -205,36 +205,41 @@ if (esbuild === undefined || !existsSync(reactDir) || !existsSync(domDir) || !ex
     ok(shownRail !== null, 'the page draws the source list beside the rows')
     ok(container.querySelectorAll('.gf-splitter').length === 1,
       'and one splitter, the rail\'s, with no article open', container.querySelectorAll('.gf-splitter').length)
-    // The control is an action like the rail's own, so its label says what
-    // pressing it does; there is no separate pressed state to keep in step.
-    const toggle = container.querySelector('.gf-toolbar button[aria-label]')
-    ok(toggle !== null && toggle.getAttribute('aria-label') === 'action.hideSources',
-      'the bar offers to hide the panel', toggle && toggle.getAttribute('aria-label'))
+    // The control is the list's own, in its header corner — not the page bar,
+    // where the app's sidebar toggle already is. Its label says what pressing
+    // it does, like the app's own toggle.
+    const fold = container.querySelector('.gf-rail-head button[aria-label]')
+    ok(fold !== null && fold.getAttribute('aria-label') === 'action.collapseSources',
+      'the list folds from its own header', fold && fold.getAttribute('aria-label'))
+    ok(container.querySelector('.gf-toolbar button[aria-label="action.collapseSources"]') === null,
+      'and the page bar carries no second panel control')
     ok(container.querySelector('.gf-listpane') !== null, 'the rows are drawn next to it')
 
-    // The control collapses the panel: the page is told, not the DOM.
+    // The control folds the list: the page is told, not the DOM.
     await act(async function () {
-      toggle.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+      fold.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
     })
     ok(calls.railHidden.length === 1 && calls.railHidden[0] === true,
-      'pressing the toggle asks for the panel to be hidden', calls.railHidden)
+      'pressing it asks for the list to be folded', calls.railHidden)
 
-    // The state that comes back is the page's, and the rail is simply gone.
+    // The state that comes back is the page's: the rail is gone, and a spine
+    // where its header was carries the way back.
     state = Object.assign({}, base, { railHidden: true })
     await render()
-    ok(container.querySelector('.gf-feedrail') === null, 'a hidden panel is not rendered at all')
+    ok(container.querySelector('.gf-feedrail') === null, 'a folded list is not rendered')
     ok(container.querySelectorAll('.gf-splitter').length === 0,
       'nor is the drag handle that only resizes it', container.querySelectorAll('.gf-splitter').length)
+    ok(container.querySelector('.gf-spine') !== null, 'a spine stands where the list was')
     ok(container.querySelector('.gf-listpane') !== null, 'the rows keep the width it gave up')
-    const reopen = container.querySelector('.gf-toolbar button[aria-label]')
-    ok(reopen !== null && reopen.getAttribute('aria-label') === 'action.showSources',
-      'and the same control now offers to show it', reopen && reopen.getAttribute('aria-label'))
+    const reopen = container.querySelector('.gf-spine button[aria-label]')
+    ok(reopen !== null && reopen.getAttribute('aria-label') === 'action.expandSources',
+      "and the spine's toggle offers to open the list again", reopen && reopen.getAttribute('aria-label'))
 
     await act(async function () {
       reopen.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
     })
     ok(calls.railHidden.length === 2 && calls.railHidden[1] === false,
-      'and brings the panel back', calls.railHidden)
+      'which brings the list back', calls.railHidden)
 
     await act(async function () { root.unmount() })
   } finally {

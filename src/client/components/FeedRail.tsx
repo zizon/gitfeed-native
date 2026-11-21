@@ -6,6 +6,7 @@ import {
   Button,
   IconCheckOutlineRegular,
   IconCloseOutlineRegular,
+  IconPanelLeftOutlineRegular,
   IconPlusOutlineRegular,
   IconWarningOutlineRegular,
   Input,
@@ -338,6 +339,19 @@ export function FeedRail({ state, controller, t, compact, onPick }: FeedRailProp
     <div className={`gf-feedrail${compact ? ' compact' : ''}`}>
       <div className="gf-rail-head">
         <span className="gf-rail-title">{t('rail.guideTitle')}</span>
+        {/* The list folds from its own corner. The compact rail lives inside the
+            Sidebar's own popover, where the page's panels are not its business,
+            so it carries no fold control. */}
+        {compact
+          ? null
+          : (
+            <IconButton
+              icon={<IconPanelLeftOutlineRegular size={16} />}
+              label={t('action.collapseSources')}
+              small
+              onClick={function () { controller.setRailHidden(true) }}
+            />
+          )}
       </div>
       <div className="gf-feedlist">{rows}</div>
       <datalist id={listId}>

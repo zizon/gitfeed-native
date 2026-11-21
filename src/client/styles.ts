@@ -161,7 +161,25 @@ export const CSS = `
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 8px 8px 4px 12px;
+  /* One band with the list's own bar beside it: 6 + 20 + 6. */
+  padding: 6px 8px 6px 12px;
+}
+/* The fold control in that band, sized to it rather than to the 24px the rail's
+   rows use for their own actions. */
+.gf-rail-head .gf-iconbtn,
+.gf-spine .gf-iconbtn { width: 20px; height: 20px; }
+/* The folded source list: a spine where its header was, carrying the chevron
+   that reopens it at that header's corner. The rail's fold control lives in
+   this header, so folding moves it down the pane's edge rather than into the
+   page bar, where the app's own sidebar toggle already is. */
+.gf-spine {
+  flex: 0 0 32px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 6px 0;
+  border-right: 0.5px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-specific-sidebar-fill);
 }
 .gf-rail-title {
   flex: 1;

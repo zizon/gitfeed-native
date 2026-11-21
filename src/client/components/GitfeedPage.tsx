@@ -96,15 +96,6 @@ export function GitfeedPage({ controller, t, useReader }: GitfeedPageProps) {
       } as CSSProperties}
     >
       <header className="gf-toolbar">
-        {/* The source list is a panel of this page, not the page itself: the
-            reader hides it to give the rows and the article the width, and the
-            same control — the app's own panel glyph — brings it back. Its
-            width survives either way, because it is a separate preference. */}
-        <IconButton
-          icon={<IconPanelLeftOutlineRegular size={16} />}
-          label={state.railHidden ? t('action.showSources') : t('action.hideSources')}
-          onClick={function () { controller.setRailHidden(!state.railHidden) }}
-        />
         {/* The list's own controls already state the figures that matter; the
             brand stays a name. */}
         <div className="gf-brand">
@@ -188,7 +179,19 @@ export function GitfeedPage({ controller, t, useReader }: GitfeedPageProps) {
         : null}
       <div className="gf-body">
         {state.railHidden
-          ? null
+          ? (
+            /* The folded list leaves a spine where its header was, and the
+               chevron that reopens it sits at that header's corner: folding
+               moves the control down the pane's edge, not across the page. */
+            <div className="gf-spine">
+              <IconButton
+                icon={<IconPanelLeftOutlineRegular size={16} />}
+                label={t('action.expandSources')}
+                small
+                onClick={function () { controller.setRailHidden(false) }}
+              />
+            </div>
+          )
           : (
             <>
               <FeedRail state={state} controller={controller} t={t} />

@@ -57,6 +57,7 @@ if (esbuild === undefined || !existsSync(reactDir) || !existsSync(domDir) || !ex
       "export const IconCheckOutlineRegular = glyph('check')",
       "export const IconCloseOutlineRegular = glyph('close')",
       "export const IconWarningOutlineRegular = glyph('warning')",
+      "export const IconPanelLeftOutlineRegular = glyph('panel-left')",
       '',
     ].join('\n'))
 
@@ -356,7 +357,7 @@ if (esbuild === undefined || !existsSync(reactDir) || !existsSync(domDir) || !ex
       { id: 'f-b', url: null, title: 'Birch', folder: 'Daily', siteUrl: null, error: null, checkedAt: null },
       { id: 'f-c', url: null, title: 'Cedar', folder: 'Weekly', siteUrl: null, error: null, checkedAt: null },
     ]
-    function railEnv(patch) {
+    function railEnv(patch, compact) {
       const state = Object.assign({
         items: [], feeds: railFeeds, read: new Set(), ranks: new Map(),
         filter: 'unread', feedId: null, hideEmpty: false, folderOpen: { Daily: true, Weekly: true },
@@ -368,8 +369,9 @@ if (esbuild === undefined || !existsSync(reactDir) || !existsSync(domDir) || !ex
         removeFeed() { return Promise.resolve(true) },
         setFeedFolder() { return Promise.resolve(true) },
         addFeed() { return Promise.resolve(true) },
+        setRailHidden() {},
       }
-      return { state: state, controller: controller }
+      return { state: state, controller: controller, compact: compact }
     }
     async function renderRail(env) {
       container.innerHTML = ''
@@ -377,29 +379,40 @@ if (esbuild === undefined || !existsSync(reactDir) || !existsSync(domDir) || !ex
       container.appendChild(host)
       const railRoot = createRoot(host)
       await act(async function () {
-        railRoot.render(React.createElement(FeedRail, { state: env.state, controller: env.controller, t: t }))
+        railRoot.render(React.createElement(FeedRail, {
+          state: env.state, controller: env.controller, t: t, compact: env.compact,
+        }))
       })
       // Folders and sources in the order they are drawn; the first two rows are
       // the fixed "All" and "Add feed" entries every rail has.
       const names = [...host.querySelectorAll('.gf-folder-name, .gf-feed .name')].map((el) => el.textContent)
+      // The fold control is the page rail's, at its header corner; the compact
+      // rail is the Sidebar's own popover, where the page's panels are not its
+      // business, so it must not carry one.
+      const fold = host.querySelector('.gf-rail-head button[aria-label="action.collapseSources"]') !== null
       await act(async function () { railRoot.unmount() })
-      return names
+      return { names: names, fold: fold }
     }
 
-    const alphabetical = await renderRail(railEnv({}))
+    const full = await renderRail(railEnv({}))
+    ok(full.fold, 'the full rail folds from its own header corner')
+    const compactRail = await renderRail(railEnv({}, true))
+    ok(!compactRail.fold, 'the compact rail carries no page fold')
+
+    const alphabetical = (await renderRail(railEnv({}))).names
     ok(JSON.stringify(alphabetical.slice(2)) === JSON.stringify(['Daily', 'Alder', 'Birch', 'Weekly', 'Cedar']),
       'the rail lists folders and sources by name when nothing is known', alphabetical)
 
-    const readOrder = await renderRail(railEnv({
+    const readOrder = (await renderRail(railEnv({
       ranks: new Map([['f-c', 4], ['f-b', 1.5]]),
-    }))
+    }))).names
     ok(JSON.stringify(readOrder.slice(2)) === JSON.stringify(['Weekly', 'Cedar', 'Daily', 'Birch', 'Alder']),
       'and by what the reader reads when the load carries scores', readOrder)
 
-    const switchedOff = await renderRail(railEnv({
+    const switchedOff = (await renderRail(railEnv({
       ranks: new Map([['f-c', 4], ['f-b', 1.5]]),
       interestOrder: false,
-    }))
+    }))).names
     ok(JSON.stringify(switchedOff.slice(2)) === JSON.stringify(['Daily', 'Alder', 'Birch', 'Weekly', 'Cedar']),
       'the preference turns the order back to the names', switchedOff)
   } finally {
