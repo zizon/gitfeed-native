@@ -412,6 +412,7 @@ export default async function (input) {
   ok(skill.name === 'custom-feeds' && skill.description.length > 40, 'the skill parses with a routable description', skill.name)
   ok(!!skill.whenToUse && skill.whenToUse.length > 10, 'and carries when-to-use guidance', skill.whenToUse)
   ok(skill.content.includes('gitfeed_custom_feed') && skill.content.includes('input.signal'), 'the body documents the tool and the interface')
+  ok(skill.source === 'runtime', 'the registration names the origin bucket the Harness validates on load', skill.source)
   const registered = []
   registerSkill({ skills: { register(value) { registered.push(value); return function () {} } } })
   ok(registered.length === 1 && registered[0].name === 'custom-feeds', 'the plugin registers the skill', registered.length)

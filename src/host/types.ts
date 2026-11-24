@@ -41,6 +41,12 @@ export interface SkillRegistration {
   description: string
   whenToUse?: string
   content: string
+  /**
+   * Origin bucket the Harness keeps on the skill and shows to discovery
+   * consumers. It is required: a registration that omits it is accepted by the
+   * catalog and then refused when the skill is loaded.
+   */
+  source: string
 }
 
 export interface Skills {

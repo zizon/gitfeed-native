@@ -33,6 +33,10 @@ export function parseSkill(raw: string): SkillRegistration {
     name: fields.name,
     description: fields.description,
     content: match[2].trim(),
+    // The Harness validates a loaded skill's source as a string and keeps it as
+    // the prompt-visible origin bucket; `runtime` is the bucket for a skill a
+    // plugin registers in memory rather than one a provider discovered.
+    source: 'runtime',
   }
   if (fields.whenToUse) skill.whenToUse = fields.whenToUse
   return skill
