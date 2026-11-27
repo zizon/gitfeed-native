@@ -9,7 +9,8 @@ The package is **code only**. The data it reads lives in a separate repository,
 so installing, updating, and sharing the plugin never touches subscriptions,
 items, or read state — it writes nothing into that repository and asks for no
 token. Fetching happens where the reader runs, on the Host's own job runner;
-there is no server-side job to arm.
+there is no server-side job to arm. The reference notes are in
+[`docs/`](docs/), listed under [Documentation](#documentation).
 
 ## What it looks like
 
@@ -118,20 +119,6 @@ The main panel is the three-pane layout. The right Sidebar page is a single
 pane until its tab is wide (680px or more, for example in fullscreen), where it
 splits into list and article: drag the divider between them to resize, and
 double-click it to reset. The width is stored with the main page's list width.
-
-## Bundle registration
-
-| surface | registration |
-| --- | --- |
-| right Sidebar page | `sidebarRightTabs` type `gitfeed` + `sidebar.right.pane.tab` body and title |
-| right Sidebar guide | one **Feeds** card in the guide |
-| session-header launcher | `conversation.session.header.utilities` |
-| main panel | `main` key `gitfeed` + `sidebar.panellist` icon |
-| agent tool | `ctx.tools.register({ name: 'gitfeed', ... })` |
-
-The API route is registered with `ctx.effect` and the scheduler takes its
-timers from `ctx.timeout`, so both disappear when the row unloads. `mark`/`star` responses carry the new state version, which
-lets the Client poll compactly after an optimistic update.
 
 ## Install
 
@@ -259,416 +246,51 @@ running generation actually offers instead of assuming one release's shape:
 A Harness upgrade is picked up by the next `dsh web` restart; a plugin update
 needs only a page reload unless its Host half changed.
 
+## Reading
+
+A tour; the full description, the list's model, the source order, and the design
+language are in [`docs/reading.md`](docs/reading.md).
+
+- **Filters**: Unread / All / Starred, with search over title, summary, and feed
+  title answered by the Host.
+- **Sources**: folders from the OPML import, collapsible, with unread counts and
+  error marks. Every feed row carries its actions in view — move to a folder,
+  mark the source read, unsubscribe — and the source list folds to a 32px spine
+  from the panel toggle in its own header.
+- **List**: one row per item — title, feed and age, one-line digest — grouped by
+  folder or source on request. The section header sticks while its section is in
+  view and carries that section's marks.
+- **Nothing moves under the pointer**: a row that was read stays listed, arrivals
+  from a refresh are held back while a list is on screen, and a rebuild puts the
+  list back on the row that was under its top edge.
+- **Reading**: sanitized feed HTML, star and mark-unread on the article, a
+  **Next →** control past the opening, and `j`/`k`/`m`/`s`/`o`/`/`/`Esc` on the
+  keyboard.
+- **Top bar**: **Refresh** fetches every feed now; **Pull** and **Sync reads**
+  move the git-backed archive and say why they are off when the root is a local
+  copy or `allowGit` is false.
+- **Preferences**: hide empty feeds, read-on-scroll, grouping, the source order,
+  and the folded rail are per browser in one `gitfeed.prefs` snapshot; the
+  values in `config.json` are the defaults.
+
 ## Fetching and syncing
 
-### Adaptive jobs
+The Host plugin runs two jobs on its own timer service, so there is no
+server-side job, no workflow to keep in sync, and no token to hand to CI.
 
-The Host plugin owns one job runner for every periodic thing the reader does.
-Each job owns its cadence: a run that produced something (items fetched, state
-committed or pulled) returns to the base interval, while a quiet run doubles it,
-up to the ceiling — per feed for Refresh, one interval for Sync. A failure is
-not quietness: it leaves the cadence alone and only schedules the next attempt,
-because "this feed did not answer" says nothing about how often it publishes.
-The runner stores what the job reports (`nextAt`, `intervalMin`), arms that
-job's own timer, and renders the status line; it has no backoff policy of its
-own.
-
-Two jobs are registered today. A new one implements `available`, `due`, and
-`run` and is added next to them in `src/host/service.ts`.
-
-**Refresh** refills the gitignored `.local/` cache:
-
-- base interval `refreshMinutes` (default 5), ceiling `maxIntervalMinutes`
-  (default 1440, once a day);
-- only while the reader made a request in the last `idleMinutes` (default 15),
-  so a forgotten panel does not hammer feeds overnight;
-- each run fetches only the feeds whose own clock is due. One record per feed
-  holds two things: the **cadence** it earned by answering, and the **next
-  attempt**. A feed that keeps producing items stays on the base interval; one
-  that answers 304 or produces nothing doubles its cadence on every quiet run,
-  up to the ceiling, and drops back the moment it produces an item. That is
-  what keeps a barely-updated blog from being polled every five minutes;
-- a failure moves only the next attempt: retry at the base interval, doubling
-  per consecutive failure up to the ceiling, while the cadence stays where the
-  feed earned it. So a bad afternoon cannot park an active feed for a day, and
-  the first success resumes the real cadence instead of the ladder;
-- a run in which **every attempted feed could not be reached** is the
-  connection, not the subscriptions. Such a run judges no feed (an error badge
-  means "this source is broken", not "the network was away"), advances no
-  failure streak, leaves every cadence alone, and looks again in one base
-  interval — so a laptop that wakes up, or a tunnel that ends, is back within
-  minutes instead of on the ladder the outage built. The status line reports
-  it as `the network is unreachable (N feeds)` rather than as N failed feeds.
-  Three attempted feeds is the floor: one or two dead hosts are still just dead
-  hosts;
-- an answered feed that fails (`HTTP 4xx`, a body that is not XML) *is* a
-  broken subscription: it retries on its ladder and its row carries the error
-  until it answers again. A failure that got no answer at all — DNS, connect,
-  or the per-feed deadline — counts toward the outage rule instead, because
-  from the reader's side a dead server and a dead connection look alike;
-- never into the committed `data/` tree, so a refresh cannot race a commit.
-
-**Sync** publishes and repairs read state:
-
-- local marks, stars, and subscription changes start a short debounce, so a
-  session's marks are committed, rebased, and pushed about twenty seconds
-  after the last change; a burst of scroll marks coalesces into one commit;
-- on a quiet machine it backs off to `syncMaxMinutes` (default 60) and only
-  pulls, which is how a second device's marks arrive without pressing Pull;
-- it waits `syncMinutes` (default 10) before its first run, so a plugin
-  update does not push on its first second; that first run publishes any read
-  state that was already waiting for a manual Sync reads; `syncMinutes: 0`
-  disables auto-sync while Pull and Sync reads stay manual;
-- a remote that cannot be reached is retried at the base interval rather than
-  backed off — the repository is fine, the connection is not — while a refusal
-  (`Authentication failed`, a rejected push) backs off, because retrying it
-  sooner changes nothing;
-- it needs `allowGit`, a git working tree, and an `origin` remote; otherwise
-  the job reports why it is off, using the repository facts the status line
-  already caches rather than shelling out per tick.
-
-Set `adaptive: false` to fetch every feed on every run. The job clocks and the
-per-feed clocks live in `.local/schedule.json` — machine-local, never
-committed, version 2; a version-1 file (the fetch-only format) is read as the
-Refresh job's state. **Refresh** in the reader still fetches everything.
-
-The cadence policy is the jobs'; the clock is the Harness's. The plugin
-declares `inject: ['timer']` and takes each job's wake-up from `ctx.timeout`
-(`@deepseek-ai/cordis-plugin-timer`, the mixin on the injected `timer` service,
-which is what `src/index.ts` calls) on the plugin's fiber:
-when a deadline moves, the old timer is disposed and a new one is armed, and a
-reload or dispose cancels whatever is pending with the rest of the plugin. What
-the timer service does not provide — per-feed backoff, the activity gate, the
-stored burst deadline — lives with the job that needs it.
-
-`ctx.timer.interval` is not used: the Refresh job's next run is the earliest
-per-feed clock, not a period. `ctx.timer.debounce` is not used either: it lives
-in memory, would be lost on reload, and cannot express the burst cap. The
-debounce here is therefore a stored deadline (`nextAt`), evaluated by the same
-pass as everything else. `ctx.schedule` (`@deepseek-ai/dsh-schedule`) is
-durable and knows Cron and RRULE, but every occurrence it delivers becomes an
-Agent turn in a Session, so using it would spend a model call per refresh.
-
-The full contract and the primitive-by-primitive rationale are in
-[`docs/jobs.md`](docs/jobs.md).
-
-### No server-side job
-
-Fetches run inside the Host, so there is nothing to deploy, no workflow to keep
-in sync, and no token to hand to CI. The job runner refetches the feeds that are
-due and the sync job pushes the result with whatever git credentials the
-checkout already uses.
-
-This package used to generate a GitHub Actions job for the data repository. It
-was removed in 3.0.0 because GitHub never dispatched its schedule on this
-account — with the evidence, the community reports behind it, and the restore
-recipe in [`docs/history/cloud-sync.md`](docs/history/cloud-sync.md).
-
-### CLI
-
-The package ships the `gitfeed` command; it runs the same `lib/host` modules the
-plugin uses:
-
-```bash
-gitfeed fetch                    # data root: --root, $GITFEED_REPO, else cwd
-gitfeed fetch --only=jvns-ca-atom-xml
-gitfeed fetch --dry-run
-gitfeed fetch --refresh          # ignore cached ETags; re-read every feed
-gitfeed import-opml ~/Downloads/feeds.opml
-gitfeed import-opml --replace ~/Downloads/feeds.opml
-gitfeed init ~/gitfeed           # write the starter data root
-gitfeed --help
-```
-
-From a checkout without installing global bin:
-
-```bash
-node bin/gitfeed.mjs fetch --root ~/gitfeed
-```
-
-### Cron
-
-The reader refreshes on its own while the Host runs. A machine that is always on
-can additionally keep the committed `data/` tree current without the reader
-open, by running the same fetcher from the installed CLI:
-
-```bash
-*/30 * * * * cd $HOME/gitfeed \
-  && git pull --rebase --autostash -q \
-  && node $HOME/gitfeed-native/bin/gitfeed.mjs fetch --root . \
-  && git add data \
-  && git commit -qm "feed: $(date -u +%FT%TZ)" \
-  && git push || true
-```
-
-## Reading UI
-
-The native page follows the Harness theme, including light/dark/auto. It does
-not carry its own theme setting.
-
-- **Filters**: Unread / All / Starred.
-- **Search** over title, summary, and feed title, answered by the Host.
-- **Feeds**: folders from the OPML import, collapsible; unread counts; error
-  marks; one "Add feed" row that opens the form. Every feed row carries its
-  actions in view — move it to another folder, mark the source read, and
-  unsubscribe (colored destructive on hover, confirmed on click), which removes
-  the subscription and that feed's items from both stores. That row is the only
-  unsubscribe entry.
-- **Moving a feed**: the folder control on a feed row opens a picker of the
-  folders already in use — the current one is marked and cannot be picked
-  again — so a move is one click and lands in a folder that exists.
-  `New folder…` is its own row and swaps the feed's row for a field to name one.
-  Nothing is re-fetched: the entry keeps its id, URL, title, and custom-feed
-  declaration, so only the tree above it changes. The picker opens from three
-  controls, one per place a source is in front of you: the feed row, the source
-  section header next to `Unsubscribe` (the same grammar its other source
-  actions use), and the article's action row — which is the only one reachable
-  while reading in the Sidebar, where the list and its header sit behind the
-  article.
-- **List**: one line per item, grouped by folder or source on request. A
-  section header sticks to the top while its section is in view and carries
-  that section's actions — `Mark {n} read`, plus `Move` and `Unsubscribe` when
-  the section is a source. Rows are virtualized at fixed heights.
-  A row that is marked read stays in the Unread list while it is still under
-  the pointer, so nothing shifts under it while reading; then it goes without
-  the list moving: a grouped section fades where it stands and leaves once
-  nothing in it is unread — except the section the open article is in, which
-  keeps its rows until the reader closes it or opens another — and a flat list
-  lets rows go in one batch as they scroll out of the mounted band. A feed or
-  folder that was on screen stays in the Feeds list for the same reason.
-- **Read on scroll**: a row counts as read once it has been on screen for a
-  moment and the viewport has moved off it, so a fling or a scrollbar drag
-  leaves everything it skipped unread. The list scrolls one screen past its
-  last row — an end screen that says so — so the rows it closes with leave the
-  viewport and are read like the rest.
-- **Starring**: the star sits on the row itself, so an item can be kept without
-  opening it; it holds its space and appears on the row the pointer or the
-  keyboard is on, and a starred row shows it outright. Under the Starred filter
-  the star *is* membership, so unstarring there drops the row at once.
-- **Article**: sanitized feed HTML (element allowlist, `href`/`src`/`alt`/
-  `title` only, http(s)/mailto URLs only), move its source to a folder, star,
-  mark unread, open original.
-  Past the opening of a piece a **Next →** control appears at the bottom of the
-  pane, so moving on does not mean scrolling back up.
-- **Two groups in the top bar**, separated where the object changes.
-  **Refresh** reads the feeds — it fetches every subscription now, and the
-  refresh age beside the branch is how stale that is. **Pull** and **Sync
-  reads** move the git-backed archive: Pull takes the data root's commits from
-  its remote (items another machine fetched and marks it made), Sync reads
-  commits this machine's marks and pushes them. Their tooltips say the object
-  in words: `Fetch every feed now`, `Download items and read state from the
-  remote`, `Commit and push your read state`. Pull and Sync reads are disabled
-  when the plugin `allowGit` switch is false, or when the data root is a local
-  copy with no git repository; the rail menu then shows why. The rail has no
-  room for a labelled bar, so its refresh button and its ⋯ menu carry the same
-  split: Refresh first, and Pull/Sync reads under **Read state**.
-- **Display preferences**: hide feeds with nothing unread, mark read on scroll,
-  group by none/folder/source, order the rail and grouped list by what the
-  reader reads (see below) or by name, and collapse the source list with the
-  panel toggle in its header (folded, the toggle waits on the 32px spine). The
-  toggle is the page's, not the app's, but it speaks the app's language: the
-  same panel glyph as the sidebar's own, and its label says which way it goes.
-  The fold's easing comes from the theme's own motion tokens; dragging the
-  divider is never eased, and `prefers-reduced-motion` turns the animation off.
-  Per-browser, in one `localStorage` snapshot (`gitfeed.prefs`) held by the
-  shared store engine; the values in `config.json` are the defaults.
-- **Keyboard**: `j`/`k` move, `m` toggle read, `s` star, `o` open original,
-  `/` search, `u` unread, `a` all, `Esc` close article then clear search/feed.
-  Bulk marking is deliberately not on a key.
-
-Pane widths, the collapsed source list, and open folders are remembered per
-browser.
-
-### A list that does not move
-
-A refresh lands while someone is reading, so the list is built to absorb one.
-The Sidebar has one pane, so an open article is drawn over the list rather than
-in place of it: the list stays mounted and closing an article returns to the
-same rows at the same scroll position.
-
-Three things follow from "nothing moves under the pointer". A row that has been
-read stays listed until something else rebuilds the list, so the header counts
-what the view **has** rather than what the list happens to hold: it is counted
-from the archive, which is why it falls as the reading does instead of in jumps
-when a rebuild finally releases those rows. A mark burst does not reload the
-state behind it — the reader already holds the change it sent, and refetching
-rebuilt the rows, the count, and the digest text under the pointer several
-times a second while scrolling. And a refresh holds its new rows back while a
-surface shows a list: the count says they are there, and the bar offers them.
-An empty list has no spot to protect, so its arrivals land at once.
-
-- **Sections hold one order.** Grouped sections follow the rail's order over
-  sources (below) instead of being re-ranked by item count. Ranking by size
-  meant that every fetch, and every read mark under the Unread filter, could
-  move the section being read somewhere else; the order now changes only when
-  the surface loads, so a section that grows or shrinks stays where it is.
-- **The viewport is anchored to a row.** When the list is rebuilt under a live
-  viewport, the list is put back on the entry that was under its top edge —
-  from the entries the last paint drew and the scroll offset the scroll handler
-  recorded, before paint — so the text being read does not slide down the
-  screen. If that entry is gone, the nearest entry that survived keeps the
-  place the edge had.
-- **Arrivals wait for the reader.** A fetch brings rows older than the newest
-  ones on screen — feeds that were quiet for an hour deliver an hour's worth —
-  so a new row lands *inside* the band being read, not only at its top, and
-  inserting it pushes every row below it down. The fade meant to soften that
-  read as the page blinking. Held rows are counted but not listed, at the top
-  as much as in the middle; the bar says how many there are and offers them as
-  `N new`. They also land when the reader leaves the top and comes back,
-  changes the scope, or asks for a refresh/pull/sync. A released row fades in
-  where it belongs (`gf-row-in`), and a quiet poll changes nothing. The first
-  frame a surface receives — a page load, a reconnect — is a baseline, not a
-  change to hold back.
-- **The band is derived, never stored.** A painted frame draws the entries it
-  was handed at the scroll offset it was handed, and a rebuild is applied
-  before paint, so the list never shows one frame of the list it replaced. The
-  browser's own scroll anchoring is off for the list, so there is exactly one
-  owner of the scroll position. See [list-state.md](docs/list-state.md).
-- **Ties are broken by id**, on the Host (`compareItems`), so two items that
-  share a timestamp cannot swap places between reloads.
-
-### The order of the sources
-
-The rail and a grouped list draw one order: the sources the reader actually
-reads first, then everything else by name. Alphabetical order costs time on
-every visit — the top of a 377-subscription rail is whichever names sort first,
-punctuation and digits before A, not the sources the reader opens — and the
-reader's own acts are the only honest evidence of which is which.
-
-Two acts count. **Opening a row** (clicking it, or moving to it with `j`/`k`) is
-the reader reading that article; **starring one** is the reader saying so on
-purpose, and weighs as three opens. The read mark deliberately does not count:
-scrolling past the band and bulk marking saturate it, so every source ends up
-equally read and the marks that were a choice cannot be told apart from traffic.
-
-An act weighs half as much a month later, and a source needs half an open to keep
-a place in the ranked part — about one article opened in the last month. Under
-that bar it is not ranked at all: it returns to the name order, among the sources
-the reader has never opened, rather than sinking below them. An untried source is
-never buried; it is simply not preferred. A folder takes the place of its best
-source, so the top of the rail is where the reading is.
-
-The order is settled when the surface loads (a page load, a reconnect). Reading a
-source does not re-rank the rail under the pointer, for the same reason a fetch
-does not re-rank the sections: a list must not move while it is being used. What
-the reader reads now is what the next load draws. The Display preferences carry
-the switch — **Order sources by what you read**, on by default; it re-applies the
-order of the current load rather than re-learning it, and with no acts logged it
-draws exactly the alphabetical list it always did.
-
-The acts live in `data/interest.ndjson`: append-only, committed with the read
-state, pulled with it, so another machine draws the same order. The first read of
-a root from before the log seeds it from the stars the archive already holds —
-the one explicit interest that was recorded before there was anywhere to record
-it. Nothing else is inferred: an act is a row that was opened or starred, never
-a guess about why the reader did not open it.
-
-The stream is pulled. The route asks the Host for the next frame, writes it, and
-only then asks for another, so a surface that is slow to read stops the producer
-at the source instead of filling a queue in the request handler; what it falls
-behind in is the revision cursor, and the kept history decides whether it is
-caught up by a delta or by the whole state.
-
-The wire carries a digest of a row: its body is cut to 400 characters and the
-row says how long the real one is. The list only ever draws a 240-character
-digest, and the text filter is answered by the Host, so nothing that needs the
-full text travels with the list; an article that opens reads the one row it
-shows, whole, over `/gitfeed/api/item`. The older `/state` route still answers
-with whole bodies, because a page from before this change may still poll it.
-
-The reader does not poll for its own state. Each surface opens one server-sent
-event stream at `/gitfeed/events` when it mounts, receives the whole archive
-once, and from then on only what changed: the rows a refresh added or repaired,
-and the marks that moved. The Host keeps a live copy of what it last read, diffs
-each new read against it, and sends the difference — a fetch that lands
-seventeen rows ships seventeen rows, a mark ships two ids, and a quiet minute
-ships nothing at all. A probe of the data root (twenty stats, well under a
-tenth of a millisecond) runs every few seconds while a surface is attached, so a
-fetch from the CLI, the agent tool, or a second Host reaches the reader too.
-
-Revisions are the cursor. Every delta carries the next number; a surface that
-reconnects asks from the last number it saw, and a gap the Host cannot explain
-(it restarted, or the surface fell further behind than the history kept) is
-answered with the whole state rather than a delta that would be wrong. Marks
-travel the same way in the other direction, so a row read on one device leaves
-the unread list on the other without either side asking.
-
-The stream replaces a 60-second poll with a full model behind it. On a personal
-library of 379 subscriptions and 3,860 items, an items write cost every open
-surface 26.9 MB of JSON, and the poll itself cost the Host five `git` spawns
-(190 ms) even when nothing had changed; a delta for the same write is about
-100 KB, and an idle surface costs a stat probe every few seconds. The first
-frame a surface receives is that model as digests — 25.7 MB before, 2.3 MB now
-(0.84 MB compressed).
-
-There is no second path. A surface that cannot open its stream — a page whose
-client bundle is newer than the running Host, a proxy that buffers event
-streams — says the Host cannot be reached and keeps trying, and the reader is
-empty until it can. Restart the Host after updating the plugin, then reload the
-page; that is the same restart a Host-side change needs anyway. The old `/state`
-route stays on the Host because an older page may still be polling it, but this
-client does not.
-
-The text filter is answered by the Host, which holds every body whole: a query
-travels as text and comes back as ids, and the surface keeps filtering by feed,
-filter, and read state itself. That is what lets the wire carry a digest of a
-row instead of its body — and what keeps a query matching text the list does not
-have.
-
-The first frame after a restart costs one read of the archive plus two git
-commands, not five: branch, divergence, and dirty state come from one
-`status --porcelain=v2 --branch`, started while the item model is being parsed
-rather than after it. On that library the first frame arrives in about 0.23 s
-instead of 0.38 s.
-
-The archive is not re-read to answer questions the Host already can. The item
-model keeps each shard's rows keyed by that shard's size and modification time,
-so a fetch that appends to one month's file re-reads one file instead of
-twenty-six megabytes; a fetch run takes the ids it already holds from that
-model instead of scanning the stores, and leaves the orphan sweep to the
-unsubscribe that already removed them. On the same library, one fetch run plus
-the reader catching up went from about 0.9 s of Host CPU to about 0.08 s. The
-git facts behind the status line are read on a change or every five minutes,
-not on every run, because a refresh writes only the ignored local cache.
-
-### Design language
-
-The reader is built from the Harness client's own components, not a private
-copy of them: the Client bundle requires
-`@deepseek-ai/dsh-client-ui-primitives` from the shared module table and marks
-it external, so the page gets the same buttons, inputs, menus, switches,
-toasts, and icons the rest of the GUI renders, plus any theme change that
-reaches them. Its own sheet covers only the surfaces kept custom below.
-
-- **Adopted**: `Button` for the toolbar and inline actions, `Pill` for the
-  filter and group-by chips, `Input` for search and the add-feed form,
-  `Menu` for the marking scope, `MenuSurface` for the preferences popover and
-  the rail menu, `Switch` for the display prefs, `Tooltip` for the actions
-  whose labels the page bar drops when it is narrow, `Toast` for transient
-  banners with an inline **Undo**, and the product `Icon*` set for the
-  chevrons, checks, close, refresh, plus, ellipsis, and open-original glyphs.
-- **Kept custom, deliberately**: feed and item rows, the section header (sticky
-  in flow, re-rendered as a pinned bar when its own row is above the mounted
-  band), the float that follows the list's scroll edge, the icon button (the
-  atom set has no square icon-only control), and the article's `Next →`
-  capsule — the atom set has no list-row, group-header, floating-bar, or
-  icon-only primitive, so these are a small token-styled sheet rather than
-  copies of a shared control. The RSS mark, the star, and the unread dot are
-  artwork the theme does not carry.
-- **Tokens**: hover and selected fills use
-  `--dsw-alias-interactive-bg-*`, text uses `--dsw-alias-label-*`, hairline
-  dividers are `0.5px` of `--dsw-alias-border-l*`, radii come from
-  `--dsw-radius-*`, and floating surfaces use
-  `--dsw-alias-button-floating-fill` with `--dsw-elevation-panel`. The blue
-  accent is `--dsw-alias-brand-primary-new-colorprimary-new-color`;
-  `--dsw-alias-brand-primary` is the near-black/near-white fill colour.
-
-Toasts are the shared banner, so they appear centred at the top of the page
-and carry one action; Undo is the action rather than a link in a stack.
-
-Where the reader's chrome still departs from the app's current page bar — its
-action sizes, label collapse, and tooltips — is recorded with the reasons in
-[the UI audit](docs/ui-audit.md).
+- **Refresh** refills the gitignored `.local/` cache every `refreshMinutes` (5)
+  while the reader is active — a request in the last `idleMinutes` (15). Each
+  feed keeps its own clock: one that produces items stays on the base interval,
+  a quiet one doubles up to `maxIntervalMinutes` (a day), and a failure moves
+  only its next attempt. A run where every attempted feed was unreachable is
+  the network, not the subscriptions, and judges no feed.
+- **Sync** commits and pushes read state about twenty seconds after the last
+  change, pulls when the reader is quiet, backs off to `syncMaxMinutes` (60),
+  and needs `allowGit` plus a working tree with an `origin`.
+- **Refresh** in the reader still fetches everything. The cadences in full, the
+  CLI (`gitfeed fetch`, `import-opml`, `init`), and the cron entry for an
+  always-on machine are in [`docs/fetching.md`](docs/fetching.md); the runner
+  contract is [`docs/jobs.md`](docs/jobs.md).
 
 ## Configuration
 
@@ -785,312 +407,43 @@ All of these call the same Host methods the reader uses.
 
 ## Data format
 
-`data/items/2026-11.ndjson`, one item per line:
+Items are append-only NDJSON shards under `data/items/YYYY-MM.ndjson`, with
+`data/meta.json` holding each feed's ETag, Last-Modified, and last error. Read
+and star state, and the attention log behind the source order, are append-only
+id sets. A fetch writes only the gitignored `.local/` cache.
 
 ```json
 {"id":"b77b13687363294f","feed":"simonwillison","title":"Quoting Kyle Kingsbury","link":"https://simonwillison.net/2026/Nov/1/kyle-kingsbury/","date":"2026-11-01T16:49:04.000Z","author":"","summary":"<blockquote>..."}
 ```
 
-`id` is `sha1(feedId + "|" + guid-or-link)` truncated to 16 hex chars, so the
-same entry is never imported twice, even if a feed reorders or re-publishes it.
-`summary` is the item HTML as the feed ships it. `fetch.maxSummaryChars` caps it when
-set to a positive number; the default of 0 keeps the body whole.
+`id` is `sha1(feedId + "|" + guid-or-link)` truncated to 16 hex characters, so a
+re-published entry is never imported twice. The two item stores, the merge
+rules, and the `merge=union` attributes are in
+[`docs/data-format.md`](docs/data-format.md).
 
-`data/meta.json` holds per-feed ETag / Last-Modified so re-fetching a quiet feed
-is a 304, plus the last error per feed, which the feed rail surfaces in red.
+A subscription with no feed behind it may name a script: the declaration, the
+interface, and a worked example are in
+[`docs/custom-feeds.md`](docs/custom-feeds.md).
 
-### Two item stores
+## Documentation
 
-Items live in two places, and the reader merges them on every model rebuild:
-
-| store | written by | committed |
-| --- | --- | --- |
-| `data/items/*.ndjson` | the CLI, and `Sync` after an unsubscribe rewrites shards | yes |
-| `.local/items/*.ndjson` | the plugin's own refresh | no — gitignored |
-
-`data/` is listed first, then `.local/`; the first sighting of an id wins, with
-one exception: when both hold the same id, the longer summary wins, because a
-repair only ever lengthens a body. A fetch counts **both** stores as already
-archived, so re-reading a feed does not copy the committed archive into the
-cache, and `.local/` can be deleted at any time — everything in it is either a
-row the committed store also holds or a body the next fetch re-reads. Marks
-always go to `data/read.ndjson` and `data/starred.ndjson`, whichever store the
-item came from.
-
-The same rule orders the two `meta.json` files (`.local/meta.json` is the
-cache's): the entry whose `checkedAt` is newer describes the feed, and a changed
-title or site URL therefore reaches the sidebar without a CLI run.
-
-Read and star state are append-only id sets with `merge=union`:
-
-```
-data/read.ndjson merge=union
-data/starred.ndjson merge=union
-data/interest.ndjson merge=union
-data/items/*.ndjson merge=union
-```
-
-A fetch only ever appends item shards, and the reader only ever appends read/star
-state and attention; unsubscribing is the one operation that rewrites a shard in place, which
-is why `Sync` stages `data/items/`.
-
-### Custom feeds
-
-Not everything worth reading publishes a feed. An entry may declare
-`"type": "custom"` and name a **script** in the data repository; the script
-returns a pseudo feed, and everything after that is the feed path — the same
-ids, de-duplication, retention, archive, rail, and agent tool. The reader cannot
-tell a custom feed from an RSS one, which is what makes a new source a new
-script rather than a change to the plugin.
-
-The script is the user's own part, so it lives in the data repository:
-
-```
-~/gitfeed/
-  feeds.json
-  sources/google-research.mjs       a custom feed
-  data/                             the archive
-```
-
-```json
-{
-  "id": "research-google-pubs",
-  "url": "https://research.google/pubs/",
-  "title": "Google Research — Publications",
-  "folder": "Papers",
-  "type": "custom",
-  "script": "sources/google-research.mjs"
-}
-```
-
-`sources/google-research.mjs` is the whole script — the same file as
-[`examples/google-research.mjs`](examples/google-research.mjs):
-
-```js
-export default async function (input) {
-  const answer = await input.fetch(input.url, {
-    headers: { 'user-agent': 'gitfeed/3 (+https://github.com/zizon/gitfeed-native)' },
-    redirect: 'follow',
-    signal: input.signal,
-  })
-  if (!answer.ok) throw new Error(`HTTP ${answer.status}`)
-  const html = await answer.text()
-
-  const cards = html
-    .split('<div class="row-card">')
-    .slice(1)
-    .map(function (chunk) {
-      const title = /<a class="row-card__heading[^>]*>([\s\S]*?)<\/a>/.exec(chunk)
-      const href = /<a class="row-card__heading[^>]*href=("[^"]*"|[^\s>]+)/.exec(chunk)
-      const author = /<div class="row-card__subheading__item small-text">([\s\S]*?)<\/div>/.exec(chunk)
-      if (!title || !href) return null
-      return {
-        title: text(title[1]),
-        link: new URL(href[1].replace(/^"|"$/g, ''), input.url).href,
-        author: author ? text(author[1]) : '',
-      }
-    })
-    .filter(Boolean)
-
-  // An empty list is a redesign far more often than it is an empty year, and a
-  // thrown error is what puts the feed's row in the reader's error colour.
-  if (cards.length === 0) throw new Error('no publication cards on the page')
-
-  // The cards carry no date, so the fetcher stamps each with the moment it was
-  // first seen, in page order: the first card is the newest and stays so.
-  return {
-    title: 'Google Research — Publications',
-    siteUrl: 'https://research.google/pubs/',
-    items: cards,
-  }
-}
-
-function text(html) {
-  return html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
-}
-```
-
-Paste it into `~/gitfeed/sources/`, add the entry, Refresh: fifteen papers
-arrive as items, each linked to its page and carrying its first author. The
-interface is one call:
-
-| | |
+| note | covers |
 | --- | --- |
-| input | `id`, `url`, `title`, `options`, `meta` (`etag`, `lastModified`), `fetch`, `signal` |
-| return | `{ title?, siteUrl?, etag?, lastModified?, items }` |
-| failure | throw it: the row goes red with the message. No items is a quiet run |
+| [`docs/reading.md`](docs/reading.md) | the page, the list's visible-window model, the source order, the design language |
+| [`docs/state-stream.md`](docs/state-stream.md) | the event stream: deltas, revisions, digests, measured cost |
+| [`docs/fetching.md`](docs/fetching.md) | the two adaptive jobs, the CLI, cron |
+| [`docs/data-format.md`](docs/data-format.md) | item shards, the two stores, merge rules |
+| [`docs/custom-feeds.md`](docs/custom-feeds.md) | a script-backed subscription: interface, rules, example |
+| [`docs/engineering.md`](docs/engineering.md) | bundle registration, layout, build, gates, release |
+| [`docs/jobs.md`](docs/jobs.md) | the runner contract, primitives, ratchet |
+| [`docs/list-state.md`](docs/list-state.md) | the item list's state machine (review, 2026-11-13) |
+| [`docs/async-api.md`](docs/async-api.md) | the async boundaries, surface by surface (review, 2026-11-09) |
+| [`docs/ui-audit.md`](docs/ui-audit.md) | the client surfaces against the app's design rules (2026-11-09) |
+| [`docs/history/`](docs/history/) | point-in-time records: the removed Actions job, cloud sync |
 
-A custom feed is held to the feed rules: identity is `sha1(feedId|id-or-link)`,
-an undated item is stamped the moment it was first sighted, `fetch.keepMonths`
-and `fetch.maxSummaryChars` apply, and the ETag a script reports is stored and
-handed back next run. `signal` is aborted at `fetch.timeoutMs`, so a script is
-bounded like a feed, and the script is resolved against the data root and must
-stay inside it — a data repository is cloned from remotes, so the code it runs
-has to belong to it.
-
-An agent writes these with `gitfeed_custom_feed` — `scaffold` writes a commented
-skeleton, `check` runs it against the page and reports what came back, and
-`subscribe` declares the feed — guided by the plugin's `custom-feeds` skill. By
-hand, the same three steps are: write the script in `sources/`, run
-`gitfeed fetch --root ~/gitfeed --only <id>`, then commit.
-
-[`docs/custom-feeds.md`](docs/custom-feeds.md) is the reference: the interface in
-full, a conditional-GET example, and the failure modes.
-
-## Layout
-
-```
-package.json                bundle metadata: dsh.bundle patch, dsh.client module, bin, files, prepare
-cordis.patch.yml            inserts the `gitfeed` Host row
-src/index.ts                typed Host entry: route, job runner, tools, skill
-src/cli.ts                  `gitfeed fetch | import-opml | init`
-src/host/                   settings, scaffold, store, OPML, XML, custom, brief, skill, fetch, git, runner, jobs, live, events, service, HTTP, tool
-.github/workflows/          ci.yml (gates) and release.yml (tag to npm and a GitHub release)
-tests/                      behaviour suites, fixtures, and the runner (`pnpm test`)
-docs/jobs.md                runner contract, primitives, and the ratchet
-docs/custom-feeds.md        custom feeds: the script interface and the rules
-docs/history/               point-in-time records: the removed Actions job, the 2026-11-09 review
-docs/screenshots/           the images this README shows (shipped with the package)
-src/client/                 native reader: controller, transport (the event stream), derivations, viewport, prefs, hooks, components, styles, locales
-src/shared/                 the types both halves import, the stream protocol and its merge, and the one runtime helper they share
-src/skill/                  the custom-feeds skill: workflow, interface, failure modes
-examples/                   a custom feed script: the Google Research list the docs walk through
-build.mjs                   tsc Host + esbuild Client into the loader envelope
-tsconfig.host.json          Host compiler face (includes the CLI)
-tsconfig.client.json        Client compiler face
-lib/                        build output (gitignored; `prepare` builds it)
-bin/gitfeed.mjs             CLI entry point
-locale/                     bundle display metadata (en, zh)
-icon.svg                    bundle icon
-pnpm-workspace.yaml         pnpm settings (skips esbuild's optional postinstall)
-node_modules/               build toolchain (gitignored)
-```
-
-The published package (`files` in `package.json`) contains `lib/`, `bin/`,
-`cordis.patch.yml`, `locale/`, `icon.svg`, and this README. It never contains
-feeds, items, or read state.
-
-## Development
-
-Editing `src/` and reinstalling is slow; build and reload in place instead:
-
-```bash
-cd ~/gitfeed-native
-pnpm install                       # toolchain, runs prepare
-node build.mjs                     # rebuild after an edit
-```
-
-Then point the plugin at this checkout by installing the bundle (or, for an
-already installed profile, replace `node_modules/@zizon/gitfeed-native` by a
-local install) and toggle **Plugins → @zizon/gitfeed-native** off/on. With HMR on, a linked
-checkout's changed modules are replaced on the next profile recomposition (any
-Plugin Manager change, or an edit to the profile patch), so a rebuilt `lib/`
-usually takes effect without a restart; a `dsh web` restart is the fallback.
-The Client bundle reloads on a page refresh once the plugin is re-activated.
-
-A `~/.dsh` that is a symlink — the usual iCloud Drive arrangement, where
-`~/.dsh` points at `~/Documents/.dsh` — gives the profile two paths: the logical
-one the Harness composes (`~/.dsh/profiles/web`) and the physical one on disk.
-pnpm writes a `link:` dependency relative to the physical directory; the Plugin
-Manager resolves the same recorded value against the logical one. When the
-relative hop crosses that symlink, an install can leave
-`node_modules/@zizon/gitfeed-native` pointing at `/gitfeed-native`, and the
-reader disappears from the sidebar on the next start. Reinstalling is the
-repair: remove the bundle and install the checkout again (the Plugins page, or
-`plugin_manager` with `remove_bundle` then `install_bundle` at the absolute
-path), which recomputes the link against the real directory. A machine that has
-never installed it gets this right the first time, which is why the same
-breakage does not follow the repository. Check without the UI, from the profile
-directory: `node -e "console.log(require.resolve('@zizon/gitfeed-native'))"`
-should print the checkout's `lib/index.js`.
-
-The build uses `tsc` for the ESM Host tree and `esbuild` for the Client bundle,
-both from `node_modules`. The Client resolves `react` and
-`@deepseek-ai/dsh-client-ui-primitives` from the Harness platform module table
-(both stay external in the bundle) and writes its own CSS against the
-documented `--dsw-*` tokens.
-
-### Quality gates
-
-Four gates cover a change before a commit:
-
-```bash
-pnpm build       # tsc Host + esbuild Client into lib/
-pnpm typecheck   # the same tsc passes, no output
-pnpm test        # builds, then runs every suite under tests/
-pnpm lint        # oxlint, including the type-aware rules
-```
-
-`tests/` holds the behaviour contract in runnable form (see
-[`docs/jobs.md`](docs/jobs.md)), the item-model and `/state`
-protocols, the timer-runtime check against a real Harness checkout, and the
-architecture ratchet that keeps a second clock out of the Host half. Suites are
-plain node scripts driven by `tests/run.mjs`; no test framework is installed.
-CI runs the same four gates on every push, on the floor `engines` declares
-(Node 24.9, which is what the Harness itself requires) and the latest 24.
-
-Lint reads the single root `tsconfig.json`, so Host and Client files resolve
-from one project; `pnpm lint:fix` also applies the formatting rules.
-
-Strings are built with template literals, never `+`: `prefer-template` rejects
-concatenation, `no-useless-concat` catches the literal-only case that rule
-skips, and `@stylistic/template-curly-spacing` keeps `${…}` tight so the fixer
-cannot leave `${  value}` behind. `lint:fix` runs the fixer twice because the
-first pass rewrites concatenation and the second formats the interpolation it
-produced.
-
-## Release
-
-Two workflows in `.github/workflows/`. `ci.yml` runs the gates on every push to
-`main` and every pull request: `pnpm install --frozen-lockfile`, `pnpm lint`,
-`pnpm test`. It publishes nothing.
-
-`release.yml` turns a tag into a release:
-
-1. bump `version` in `package.json` and commit it;
-2. `git tag -a v3.4.1 -m 3.4.1 && git push origin v3.4.1`;
-3. the workflow checks that the tag names that version, runs the gates, packs
-   the tarball (which is also uploaded as a build artifact and attached to a
-   GitHub release), and runs `npm publish --access public`.
-
-A manual run with `publish` unticked builds and checks the tarball without
-touching the registry.
-
-Authentication is either of two things, and the workflow handles both: it
-publishes with `NPM_TOKEN` when that secret exists, and through the package's
-trusted publisher when it does not.
-
-**With a token** — a granular access token on npmjs.com with publish rights on
-`@zizon/gitfeed-native`, stored as the repository secret `NPM_TOKEN`. Granular rather
-than classic, because granular tokens bypass the account's 2FA in CI. This is
-the only option for the *first* publish: a trusted publisher is configured on a
-package that already exists, so until one version is on the registry there is no
-page to set it up on.
-
-**With a trusted publisher** — no secret at all, and the way this repository
-now releases. The package's **Settings → Trusted Publisher** on npmjs.com names
-GitHub Actions, user `zizon`, repository `gitfeed-native`, and workflow
-`release.yml` with **direct publish** allowed (staged-only is the default and
-would refuse `npm publish`); there is no `NPM_TOKEN` secret. Without one the
-workflow upgrades npm first, because trusted publishing needs 11.5.1 or newer.
-To set this up again on another package: publish one version with a token,
-configure the publisher, then delete the token.
-
-No registry setting is needed anywhere — installs read the public registry
-anonymously, and the lockfile records only integrity hashes
-(`lockfileIncludeTarballUrl: false`), so a machine that installs through a
-mirror produces the same file CI can verify.
-
-Publishing passes `--provenance`: npm signs a statement that the tarball came
-from this workflow run and this commit, and attaches it to the version, where
-`npm attest` or the package page can verify it. It needs a public source
-repository and the `id-token: write` permission the workflow carries; without
-either, drop the flag rather than the release.
-
-Everything else in the release path needs no manual setup: the repository is
-public, the package is published through a trusted publisher, and the two things
-that must stay private — the data repository and any registry credential — are
-not in this tree. `.gitignore` covers the local files that carry them.
+The published package contains `lib/`, `bin/`, `cordis.patch.yml`, `locale/`,
+`icon.svg`, `docs/screenshots/`, and this README; the notes above are
+repository documentation.
 
 ## Limitations
 
