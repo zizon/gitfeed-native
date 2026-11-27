@@ -109,7 +109,7 @@ export function createHandler(service: GitfeedService) {
       }
       const route = url.pathname.slice(PREFIX.length) || '/'
       const method = req.method || 'GET'
-      const known = new Set(['/state', '/search', '/item', '/mark', '/star', '/attention', '/feeds', '/feeds/remove', '/feeds/folder', '/import-opml', '/fetch', '/pull', '/sync'])
+      const known = new Set(['/state', '/search', '/item', '/mark', '/star', '/attention', '/feeds', '/feeds/remove', '/feeds/folder', '/import-opml', '/export-opml', '/fetch', '/pull', '/sync'])
       if (!known.has(route)) {
         sendJson(res, 404, { ok: false, error: 'no such endpoint' })
         return
@@ -124,6 +124,20 @@ export function createHandler(service: GitfeedService) {
           return
         }
         sendJson(res, 200, state)
+        return
+      }
+
+      if (route === '/export-opml' && method === 'GET') {
+        // A download, not JSON: the reader hands the document to the browser's
+        // own save, so the file is the Host's answer as it stands.
+        const document = await service.exportOpml()
+        res.writeHead(200, {
+          'content-type': 'text/x-opml; charset=utf-8',
+          'content-disposition': 'attachment; filename="gitfeed-subscriptions.opml"',
+          'cache-control': 'no-store',
+          'x-gitfeed': 'native',
+        })
+        res.end(document)
         return
       }
 

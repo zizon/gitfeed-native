@@ -6,7 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { finish, lib, ok } from './harness.mjs'
 
-const { mergeOpml, parseOpml } = await import(lib('host', 'opml.js'))
+const { exportOpml, mergeOpml, parseOpml } = await import(lib('host', 'opml.js'))
 const { readFeeds, writeFeeds } = await import(lib('host', 'feeds.js'))
 
 const base = mkdtempSync(path.join(os.tmpdir(), 'gitfeed-opml-'))
@@ -61,6 +61,16 @@ ok(alpha && alpha.id === 'alpha' && alpha.folder === 'News', 'an updated entry k
 const custom = afterMerge.find((feed) => feed.id === 'custom')
 ok(custom && custom.type === 'custom' && custom.script === 'sources/custom.mjs', 'a custom feed keeps the script an export cannot describe', custom)
 
+// Two spellings of one feed are one subscription: the comparison key folds the
+// spelling, and the entry that was already there is updated rather than added.
+const respelled = root('respelled')
+await writeFeeds(respelled, [{ id: 'spelled', url: 'HTTPS://Spelled.Example.com/Feed', title: 'Spelled', folder: 'News' }])
+const respelling = await mergeOpml(respelled, doc([['Spelled again', 'https://spelled.example.com/Feed/', 'Papers']]))
+ok(respelling.added === 0 && respelling.updated === 1, 'a differently spelled URL updates the subscription it names', respelling)
+const respelledFeeds = await readFeeds(respelled)
+ok(respelledFeeds.length === 1 && respelledFeeds[0].id === 'spelled' && respelledFeeds[0].folder === 'Papers',
+  'and the stored URL keeps its own spelling while the folder follows the file', respelledFeeds[0])
+
 // ---------- replace ----------
 const replaced = root('replaced')
 await writeFeeds(replaced, [
@@ -107,6 +117,31 @@ const { importOpml } = await import(lib('host', 'opml.js'))
 const fromFile = root('from-file')
 const imported = await importOpml(fromFile, file)
 ok(imported.added === 1 && imported.total === 1, 'the CLI imports the file through the same merge', imported)
+
+// ---------- writing the list back out ----------
+const written = exportOpml([
+  { id: 'loose', url: 'https://loose.example.com/rss', title: 'Loose & <unsafe> "quotes"', folder: null },
+  { id: 'a', url: 'https://a.example.com/rss', title: 'A', folder: 'News' },
+  { id: 'b', url: 'https://b.example.com/rss', title: 'B', folder: 'News' },
+  { id: 'c', url: 'https://c.example.com/rss', title: 'C', folder: 'Papers' },
+  { id: 'u', url: 'https://u.example.com/rss', title: 'U', folder: 'Uncategorized' },
+  { id: 'custom', url: 'https://custom.example.com/list', title: 'Custom', folder: 'Papers', type: 'custom', script: 'sources/custom.mjs' },
+])
+ok(written.startsWith('<?xml version="1.0" encoding="UTF-8"?>') && /<opml version="2.0">/.test(written), 'the export is an OPML 2.0 document')
+const roundTrip = parseOpml(written)
+ok(roundTrip.length === 6, 'every subscription is in the export', roundTrip.length)
+const looseEntry = roundTrip.find((entry) => entry.url === 'https://loose.example.com/rss')
+ok(looseEntry && looseEntry.folder === null, 'a feed with no folder is a top-level outline', looseEntry)
+ok(looseEntry.title === 'Loose & <unsafe> "quotes"', 'an attribute value is escaped and reads back whole', looseEntry.title)
+ok(roundTrip.find((entry) => entry.url === 'https://a.example.com/rss').folder === 'News', 'folders become nested outlines')
+ok(roundTrip.find((entry) => entry.url === 'https://u.example.com/rss').folder === null, "the reader's Uncategorized is a top-level outline too")
+ok(roundTrip.some((entry) => entry.url === 'https://custom.example.com/list'), 'a custom feed travels as its URL')
+
+const restored = root('restored')
+const reimported = await mergeOpml(restored, written)
+ok(reimported.added === 6 && reimported.invalid === 0, 'the export imports back without loss', reimported)
+const restoredFeeds = await readFeeds(restored)
+ok(restoredFeeds.length === 6 && restoredFeeds.every((feed) => feed.url), 'and the list it restores is complete', restoredFeeds.length)
 
 rmSync(base, { recursive: true, force: true })
 finish()

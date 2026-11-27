@@ -351,24 +351,133 @@ export const CSS = `
   color: var(--dsw-alias-label-tertiary);
 }
 .gf-addrow { display: flex; gap: 6px; justify-content: flex-end; }
-/* Importing an OPML export: a file picker and the two ways to apply it, on
-   the add-feed form's grid so the rail keeps one shape. The input itself is
-   the browser's, hidden behind a button that uses the app's. */
-.gf-importform { display: grid; gap: 6px; padding: 6px 4px 8px; }
-.gf-importfile { display: none; }
-.gf-importrow { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.gf-importname {
+/* The subscriptions dialog: numbered steps in reading order, so the file comes
+   first and the strategy is chosen with its consequences in view. The trade is
+   a choice of two cards, not a pair of small buttons next to Import. */
+.gf-subs-dialog { width: min(480px, 100%); }
+.gf-subs { display: grid; gap: 18px; }
+.gf-subs-step { display: grid; gap: 8px; }
+.gf-subs-step-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+.gf-subs-step-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 10px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.gf-subs-drop {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  padding: 18px 12px;
+  border: 1px dashed var(--dsw-alias-border-l3);
+  border-radius: var(--dsw-radius-md);
+  background: var(--dsw-alias-bg-skeleton);
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+  text-align: center;
+  transition: border-color .12s ease, background .12s ease;
+}
+@media (hover: hover) {
+  .gf-subs-drop:hover { border-color: var(--dsw-alias-border-l4); background: var(--dsw-alias-interactive-bg-hover); }
+}
+.gf-subs-drop.dragging {
+  border-color: var(--dsw-alias-brand-primary-new-colorprimary-new-color);
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+.gf-subs-drop:focus-visible {
+  outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color);
+  outline-offset: 2px;
+}
+.gf-subs-drop.picked { grid-template-columns: 1fr auto; justify-items: start; text-align: left; }
+.gf-subs-file { display: none; }
+.gf-subs-drop-main { font-size: 12px; line-height: 16px; color: var(--dsw-alias-label-primary); }
+.gf-subs-drop-sub { font-size: 11px; line-height: 15px; }
+.gf-subs-file-name {
   min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 16px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--dsw-alias-label-primary);
 }
-.gf-importmode { display: flex; gap: 6px; }
-.gf-importmode > * { flex: 1 1 0; }
-.gf-importhint { margin: 0; font-size: 11px; line-height: 15px; color: var(--dsw-alias-label-tertiary); }
+.gf-subs-file-size { font-size: 11px; line-height: 15px; font-variant-numeric: tabular-nums; }
+.gf-subs-file-change { grid-column: 1 / -1; font-size: 11px; line-height: 15px; color: var(--dsw-alias-link); }
+.gf-subs-modes { display: grid; gap: 8px; }
+.gf-subs-mode {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-md);
+  background: var(--dsw-alias-bg-layer-1);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+@media (hover: hover) {
+  .gf-subs-mode:hover { background: var(--dsw-alias-interactive-bg-hover); }
+}
+.gf-subs-mode:focus-visible {
+  outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color);
+  outline-offset: 2px;
+}
+.gf-subs-mode.on {
+  border-color: var(--dsw-alias-brand-primary-new-colorprimary-new-color);
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+/* Replace is a real choice, not a variant of Merge: the card that removes
+   subscriptions reads in the warning colour, selected or not. */
+.gf-subs-mode.danger .gf-subs-mode-head { color: var(--dsw-alias-state-warn-primary); }
+.gf-subs-mode.danger.on { border-color: var(--dsw-alias-state-warn-primary); }
+.gf-subs-mode-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-primary);
+}
+.gf-subs-mode-name { font-weight: 600; }
+.gf-subs-badge {
+  padding: 0 6px;
+  border-radius: var(--dsw-radius-xs);
+  background: var(--dsw-alias-interactive-bg-active);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 10px;
+  line-height: 16px;
+}
+.gf-subs-mode-hint { font-size: 11px; line-height: 15px; color: var(--dsw-alias-label-tertiary); }
+.gf-subs-export {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 14px;
+  border-top: 1px solid var(--dsw-alias-border-l2);
+}
+.gf-subs-export-text { display: grid; gap: 4px; }
+.gf-subs-export-hint { margin: 0; font-size: 11px; line-height: 15px; color: var(--dsw-alias-label-tertiary); }
+.gf-subs-download { flex: none; white-space: nowrap; }
 .gf-confirm { height: auto; min-height: 32px; flex-wrap: wrap; padding: 4px 6px; gap: 4px; }
 .gf-confirm .name { flex: 1 1 100%; font-size: 12px; line-height: 18px; }
 

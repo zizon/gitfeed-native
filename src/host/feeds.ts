@@ -34,6 +34,28 @@ export function normalizeUrl(url: string): string {
   }
 }
 
+/**
+ * Index subscriptions by the key two spellings of one feed share.
+ *
+ * The list is de-duplicated and updated through this index, so a URL is
+ * normalized once per list instead of once per comparison. It is deliberately
+ * not stored on a {@link FeedDefinition}: `normalizeUrl` folds case and drops
+ * the fragment and a trailing slash, which makes it a usable comparison key
+ * and a lossy URL — the entry's `url` stays exactly what the fetcher requests.
+ * A later entry for the same key replaces the earlier one, the way the index
+ * in `mergeOpml` has always been written.
+ * @param feeds subscriptions, usually straight from `readFeeds`.
+ * @returns comparison key -> subscription.
+ */
+export function indexFeeds(feeds: FeedDefinition[]): Map<string, FeedDefinition> {
+  const index = new Map<string, FeedDefinition>()
+  for (const feed of feeds) {
+    if (!feed.url) continue
+    index.set(normalizeUrl(feed.url), feed)
+  }
+  return index
+}
+
 export async function readFeeds(root: string): Promise<FeedDefinition[]> {
   const raw = await readJson<{ feeds?: unknown }>(pathsFor(root).feeds, { feeds: [] })
   const entries = Array.isArray(raw.feeds) ? raw.feeds as Array<FeedDefinition | null> : []

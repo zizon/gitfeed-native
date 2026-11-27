@@ -4,9 +4,9 @@
 import crypto from 'node:crypto'
 import path from 'node:path'
 import { copyFile, mkdir, stat, writeFile } from 'node:fs/promises'
-import { feedIdFor, normalizeUrl, readFeeds, resolveFeed, sourceUrl, writeFeeds } from './feeds.js'
+import { feedIdFor, indexFeeds, normalizeUrl, readFeeds, resolveFeed, sourceUrl, writeFeeds } from './feeds.js'
 import { loadRuntimeFeeds, runFetch } from './fetch.js'
-import { mergeOpml } from './opml.js'
+import { exportOpml as writeOpml, mergeOpml } from './opml.js'
 import type { ImportSummary } from './opml.js'
 import { pull as pullRemote, readGitInfo, sync as syncRemote } from './git.js'
 import { createFetchJob, createSyncJob } from './jobs.js'
@@ -1017,9 +1017,8 @@ export function createGitfeed(options: GitfeedOptions) {
     // above, outside the queue, so a slow site does not hold it.
     const entry = await serialize(async function () {
       const feeds = await readFeeds(root)
-      const key = normalizeUrl(resolved.url)
-      for (const f of feeds) {
-        if (normalizeUrl(f.url) === key) throw new InputError(`already subscribed to ${resolved.url}`)
+      if (indexFeeds(feeds).has(normalizeUrl(resolved.url))) {
+        throw new InputError(`already subscribed to ${resolved.url}`)
       }
 
       let id = feedIdFor(resolved.url)
@@ -1102,6 +1101,18 @@ export function createGitfeed(options: GitfeedOptions) {
   }
 
   /**
+   * The subscription list as an OPML document.
+   *
+   * The export is a copy, not a backup: a custom feed travels as its URL, so
+   * the script behind it stays in the data repository that declared it.
+   * @returns {Promise<string>} the document.
+   */
+  async function exportOpml(): Promise<string> {
+    touch()
+    return writeOpml(await readFeeds(root))
+  }
+
+  /**
    * Merge or replace the subscription list from an OPML document.
    *
    * Merge adds what is new, takes the folders the file carries, and keeps the
@@ -1119,19 +1130,19 @@ export function createGitfeed(options: GitfeedOptions) {
     let addedIds: string[] = []
     const summary = await serialize(async function () {
       const before = await readFeeds(root)
-      const beforeUrls = new Set(before.map(function (feed) { return normalizeUrl(feed.url) }))
+      const beforeKeys = new Set(indexFeeds(before).keys())
       const result = await mergeOpml(root, document, { replace: replace })
-      const after = await readFeeds(root)
+      const after = indexFeeds(await readFeeds(root))
       if (replace) {
-        const remaining = new Set(after.map(function (feed) { return feed.id }))
+        const remaining = new Set(Array.from(after.values(), function (feed) { return feed.id }))
         const gone = before
           .map(function (feed) { return feed.id })
           .filter(function (id) { return !remaining.has(id) })
         if (gone.length) await removeItemsOf(gone)
       }
-      addedIds = after
-        .filter(function (feed) { return !beforeUrls.has(normalizeUrl(feed.url)) })
-        .map(function (feed) { return feed.id })
+      addedIds = Array.from(after.entries())
+        .filter(function ([key]) { return !beforeKeys.has(key) })
+        .map(function ([, feed]) { return feed.id })
       return result
     })
     invalidate()
@@ -1318,6 +1329,7 @@ export function createGitfeed(options: GitfeedOptions) {
     attention: attention,
     addFeed: addFeed,
     importOpml: importOpml,
+    exportOpml: exportOpml,
     removeFeed: removeFeed,
     setFeedFolder: setFeedFolder,
     runLocalFetch: runLocalFetch,

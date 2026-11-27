@@ -18,14 +18,20 @@ not carry its own theme setting.
   unsubscribe (colored destructive on hover, confirmed on click), which removes
   the subscription and that feed's items from both stores. That row is the only
   unsubscribe entry.
-- **Importing an export**: below **Add feed**, **Import OPML** takes a file the
-  reader picks. **Merge** adds what is new and takes the folders the file
-  carries, keeping the subscriptions it does not mention; **Replace** makes the
-  file the whole list and the sources that leave take their items with them. The
-  strategy is chosen before the file is applied, and the toast reports what
-  changed; a document with no feed outlines is refused rather than applied, so a
-  wrong file cannot empty the list. The sources that are new are fetched in the
-  background, so their first items arrive without a **Refresh**.
+- **Importing and exporting**: below **Add feed**, **Import / export…** opens the
+  app's own dialog. It asks in order — a numbered **Choose an OPML file** step with
+  a drop target and a browse button, then **What should it do?** as two described
+  cards, **Merge** (recommended) and **Replace** — and the primary action is
+  disabled with the words **Choose a file first** until there is one, rather than
+  a grey button with no reason. **Merge** adds what is new and takes the folders
+  the file carries, keeping the subscriptions it does not mention; **Replace**
+  makes the file the whole list and the sources that leave take their items with
+  them. The toast reports what changed, and a document with no feed outlines is
+  refused rather than applied, so a wrong file cannot empty the list. The
+  sources that are new are fetched in the background, so their first items
+  arrive without a **Refresh**. The same dialog's **Export** row downloads the
+  list as `gitfeed-subscriptions.opml` — a copy, not a backup: a custom feed
+  travels as its URL, so the script behind it stays in the data repository.
 - **Moving a feed**: the folder control on a feed row opens a picker of the
   folders already in use — the current one is marked and cannot be picked
   again — so a move is one click and lands in a folder that exists.

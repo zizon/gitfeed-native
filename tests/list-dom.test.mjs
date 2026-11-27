@@ -59,6 +59,11 @@ if (esbuild === undefined || !existsSync(reactDir) || !existsSync(domDir) || !ex
       "export const IconWarningOutlineRegular = glyph('warning')",
       "export const IconPanelLeftOutlineRegular = glyph('panel-left')",
       "export const IconUploadOutlineRegular = glyph('upload')",
+      "export const IconDownloadOutlineRegular = glyph('download')",
+      "export const Modal = (props) => props.open",
+      "  ? React.createElement('div', { className: props.className, role: 'dialog' }, props.children, props.footer)",
+      "  : null",
+      "export function fileSizeText(bytes) { return bytes + 'B' }",
       '',
     ].join('\n'))
 
@@ -388,13 +393,22 @@ if (esbuild === undefined || !existsSync(reactDir) || !existsSync(domDir) || !ex
       // are the fixed "All", "Add feed", and "Import OPML" entries every rail
       // has. Importing is a source-tree action, so it sits beside adding one.
       const names = [...host.querySelectorAll('.gf-folder-name, .gf-feed .name')].map((el) => el.textContent)
-      const imports = names[2] === t('action.importOpml')
+      const imports = names[2] === t('action.importExport')
       // The fold control is the page rail's, at its header corner; the compact
       // rail is the Sidebar's own popover, where the page's panels are not its
       // business, so it must not carry one.
       const fold = host.querySelector('.gf-rail-head button[aria-label="action.collapseSources"]') !== null
+      // The row opens the subscriptions dialog: the file first, then the two
+      // strategies, with the import action naming what is still missing.
+      const importRow = [...host.querySelectorAll('.gf-feed-main')][2]
+      await act(async function () { importRow.click() })
+      const dialog = host.querySelector('.gf-subs') !== null
+      const steps = host.querySelectorAll('.gf-subs-step').length
+      const waitsForFile = [...host.querySelectorAll('button')].some((button) => (
+        button.disabled && button.textContent === t('subs.chooseFirst')
+      ))
       await act(async function () { railRoot.unmount() })
-      return { names: names, fold: fold, imports: imports }
+      return { names: names, fold: fold, imports: imports, dialog: dialog, steps: steps, waitsForFile: waitsForFile }
     }
 
     const full = await renderRail(railEnv({}))
@@ -402,6 +416,8 @@ if (esbuild === undefined || !existsSync(reactDir) || !existsSync(domDir) || !ex
     const compactRail = await renderRail(railEnv({}, true))
     ok(!compactRail.fold, 'the compact rail carries no page fold')
     ok(full.imports && compactRail.imports, 'the rail offers an OPML import beside Add feed')
+    ok(full.dialog && full.steps === 2, 'the row opens the subscriptions dialog, one step per decision', full.steps)
+    ok(full.waitsForFile, 'and the import action names the file it is waiting for')
 
     const alphabetical = (await renderRail(railEnv({}))).names
     ok(JSON.stringify(alphabetical.slice(3)) === JSON.stringify(['Daily', 'Alder', 'Birch', 'Weekly', 'Cedar']),

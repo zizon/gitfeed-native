@@ -62,6 +62,10 @@ function primitivesStub() {
     'export const MenuSurface = (props) => React.createElement(\'div\', { className: props.className }, props.children)',
     'export const Tooltip = (props) => React.createElement(React.Fragment, null, props.children)',
     'export const Toast = () => null',
+    "export const Modal = (props) => props.open",
+    "  ? React.createElement('div', { className: props.className, role: 'dialog' }, props.children, props.footer)",
+    "  : null",
+    "export function fileSizeText(bytes) { return bytes + 'B' }",
     'export function focusWithoutRing(element) { if (element && element.focus) element.focus() }',
     ...Object.entries(glyphs).map(([name, key]) => (
       `export const ${name} = () => React.createElement('svg', { 'data-glyph': ${JSON.stringify(key)} })`

@@ -150,6 +150,8 @@ export interface Controller {
    * @returns whether the Host applied it.
    */
   importOpml(opml: string, replace: boolean): Promise<boolean>
+  /** Download the subscription list as an OPML file. */
+  exportOpml(): Promise<boolean>
   removeFeed(id: string): Promise<boolean>
   setFeedFolder(id: string, folder: string): Promise<boolean>
   runAction(name: string): Promise<void>

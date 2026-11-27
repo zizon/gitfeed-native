@@ -160,6 +160,16 @@ ok(!replacedState.body.items.some((item) => item.feed === feedB.id), 'and its ro
 const emptyImport = await post('/gitfeed/api/import-opml', { opml: '<opml version="2.0"><body></body></opml>' })
 ok(emptyImport.status === 400 && /no feed outlines/.test(emptyImport.body.error), 'a document with no feeds is the caller\'s error', [emptyImport.status, emptyImport.body])
 
+// Export is the same document in the other direction, served as a download.
+const exported = await fetch('http://127.0.0.1:7797/gitfeed/api/export-opml')
+const exportedText = await exported.text()
+ok(exported.status === 200 && exportedText.startsWith('<?xml'), 'GET /export-opml answers with the document', exported.status)
+ok(/^text\/x-opml/.test(exported.headers.get('content-type') || ''), 'as an OPML file, not JSON', exported.headers.get('content-type'))
+ok(/attachment; filename="gitfeed-subscriptions\.opml"/.test(exported.headers.get('content-disposition') || ''),
+  'and the browser is told to save it', exported.headers.get('content-disposition'))
+ok(exportedText.includes(feedA.url), 'the subscriptions in the list are in the document', exportedText.slice(0, 120))
+ok(!exportedText.includes(feedB.url), 'and the ones a replace removed are not', feedB.url)
+
 // A request the caller got wrong is 400, not 500. The status used to be chosen
 // by matching the message against a regular expression, so a reworded sentence
 // changed the code and any new message answered 500.

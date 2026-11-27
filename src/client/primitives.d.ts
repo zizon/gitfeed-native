@@ -193,6 +193,27 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
   export const IconBranchOutlineRegular: Icon
   export const IconSlidersTwoOutlineRegular: Icon
   export const IconTrashOutlineRegular: Icon
+  export interface ModalProps {
+    open: boolean
+    onClose: () => void
+    title: string
+    /** Accessible label for the close button; required for a dialog with chrome. */
+    closeLabel?: string
+    description?: string
+    children?: ReactNode
+    footer?: ReactNode
+    className?: string
+    contentClassName?: string
+    /** Render the children in the card directly, without the app's header. */
+    headless?: boolean
+    tone?: 'warning'
+  }
+  /** The app's centered, portaled dialog with a blurred page mask. */
+  export const Modal: (props: ModalProps) => ReactElement
+
+  /** Byte count as compact user-facing size text (`312B`, `4.2KB`). */
+  export function fileSizeText(bytes: number): string
+
   /**
    * Focus a control that was chosen for the reader rather than by them, without
    * the focus ring until they navigate. The app uses it whenever it moves focus

@@ -98,6 +98,8 @@ export interface Transport {
    * @param replace - whether it becomes the whole list instead of merging.
    */
   importOpml: (opml: string, replace: boolean) => Promise<boolean>
+  /** Download the subscription list as an OPML file. */
+  exportOpml: () => Promise<boolean>
   removeFeed: (id: string) => Promise<boolean>
   setFeedFolder: (id: string, folder: string) => Promise<boolean>
   runAction: (name: string) => Promise<void>
@@ -686,6 +688,42 @@ export function createTransport(ports: TransportPorts): Transport {
     }
   }
 
+  /**
+   * Download the subscription list as an OPML file.
+   *
+   * The Host answers with the document itself, and this surface hands it to
+   * the browser's own save. The downloaded name is set here, not read back from
+   * the response's disposition, so the file a reader gets is the one this
+   * button promised.
+   * @returns whether the download started.
+   */
+  async function exportOpml(): Promise<boolean> {
+    if (ui().busy.export) return false
+    ports.setBusy('export', true)
+    try {
+      const answer = await fetch(`${PREFIX}/export-opml`, { cache: 'no-store', credentials: 'same-origin' })
+      if (!answer.ok) throw new Error(`HTTP ${answer.status}`)
+      const opml = await answer.text()
+      const url = URL.createObjectURL(new Blob([opml], { type: 'text/x-opml' }))
+      const link = document.createElement('a')
+      link.href = url
+      link.download = 'gitfeed-subscriptions.opml'
+      document.body.append(link)
+      link.click()
+      link.remove()
+      // The click has already asked the browser to save; the blob is free once
+      // that dispatch has happened, and never before it.
+      setTimeout(function () { URL.revokeObjectURL(url) }, 0)
+      ports.toast(t('toast.exported', { n: data().feeds.length }))
+      return true
+    } catch (err) {
+      ports.toast(t('toast.failed', { error: messageOf(err) }), true)
+      return false
+    } finally {
+      ports.setBusy('export', false)
+    }
+  }
+
   async function removeFeed(id: string): Promise<boolean> {
     if (!id || ui().busy.remove) return false
     ports.setBusy('remove', true)
@@ -797,6 +835,7 @@ export function createTransport(ports: TransportPorts): Transport {
     attention: attention,
     addFeed: addFeed,
     importOpml: importOpml,
+    exportOpml: exportOpml,
     removeFeed: removeFeed,
     setFeedFolder: setFeedFolder,
     runAction: runAction,
