@@ -128,7 +128,9 @@ function commandInit(flags: Flags, positional: string[]): number {
   }
   console.log(`created ${target}`)
   console.log(`  ${starterFiles().join('  ')}`)
-  console.log('git init, add a remote, and commit when you want the data backed up')
+  console.log(result.repo
+    ? 'initialised a git repository on main; add a remote and Sync reads to back it up'
+    : 'no git repository was initialised (git not found); initialise one when you want the data backed up')
   console.log("add a feed with `gitfeed import-opml <file>` or the reader's Add feed box")
   return 0
 }

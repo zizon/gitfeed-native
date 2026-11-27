@@ -15,8 +15,8 @@ starts working again.
 
 ## Why it was removed
 
-The job was armed correctly and never ran. Observed on 2026-11-08, on
-`zizon/gitfeed` (private, created that morning):
+The job was armed correctly and never ran. Observed on 2026-11-08, on a private
+data repository created that morning:
 
 | check | result |
 | --- | --- |

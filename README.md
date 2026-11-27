@@ -46,7 +46,7 @@ subscriptions and items, so no one's feeds or history are in this repository.
 | repository | contents | visibility |
 | --- | --- | --- |
 | `zizon/gitfeed-native` (this one) | the plugin: TypeScript sources, bundle metadata, CLI | public |
-| `zizon/gitfeed` | the reader data: `feeds.json`, `config.json`, `data/` | private, cloned to `~/gitfeed` |
+| your data repository, or the root the plugin scaffolds | the reader data: `feeds.json`, `config.json`, `data/` | yours — private, or not a repository at all |
 
 Why split them:
 
@@ -57,21 +57,20 @@ Why split them:
 - **Updates stop colliding with data commits.** `git pull` for code and
   `git pull` for read state are now different repositories, so a plugin upgrade
   can never rebase your reading list.
-- **The data is portable.** The plugin's default `repo` is `~/gitfeed`; cloning
-  your data repository there is the whole setup. Nothing about the plugin pins
-  a machine or a user.
+- **The data is portable.** The plugin's default `repo` is `~/gitfeed`; a clone
+  of your data repository there — or a root the plugin scaffolds — is the whole
+  setup. Nothing about the plugin pins a machine or a user.
 
-The plugin still dogfoods: this checkout is developed against the real data
-repository, and the CLI in this package runs the same `lib/host` fetcher the
-reader uses.
+The plugin is developed against a working library, and the CLI in this package
+runs the same `lib/host` fetcher the reader uses.
 
 ## Quick start
 
-1. Clone the data repository to `~/gitfeed` (or let the plugin write a starter
-   root on first activation).
+1. Nothing to clone: the first activation creates `~/gitfeed` — a git
+   repository on `main` holding an empty inbox and the config defaults.
 2. Install the bundle (see **Install**).
-3. Open the **Feeds** card, subscribe, **Refresh**, read. If the root is a
-   checkout, **Sync reads** pushes subscriptions and read state.
+3. Open the **Feeds** card, subscribe, **Refresh**, read. To back the root up,
+   add a git remote and press **Sync reads** (see **Where backups land**).
 
 Each item row shows the title, its feed and age, and a one-line plain-text
 digest of the summary, so a list can be skimmed and skipped without opening
@@ -129,7 +128,7 @@ Harness installs the bundle the same way it installs any external plugin:
 `plugin_manager` with a package spec, or **Plugins → Add source** in the Web UI.
 Two forms work.
 
-**From the npm registry** (preferred once a version is published):
+**From the npm registry**, which is the normal install:
 
 ```json
 { "action": "install_bundle", "target": "@zizon/gitfeed-native" }
@@ -140,7 +139,7 @@ the same panel. Nothing is built in the profile: the tarball already carries
 `lib/`, so there are no `devDependencies` to install and no build script to
 approve.
 
-**From Git**, which is the only form while this repository is private:
+**From Git**, for a checkout or a commit that is not on the registry yet:
 
 ```json
 { "action": "install_bundle", "target": "git+ssh://git@github.com/zizon/gitfeed-native.git" }
@@ -155,8 +154,7 @@ first attempt stops with the package under `pendingBuilds`: approve that
 Plugins, or `approvedBuilds` on the tool's retry) and the installation
 finishes. A registry install skips this step entirely.
 
-After the repository is public, `github:zizon/gitfeed-native` (HTTPS, no key)
-works too.
+`github:zizon/gitfeed-native` is the shorter address when no SSH key is set up.
 
 ### Data root
 
@@ -167,10 +165,10 @@ The plugin reads and writes one directory — the data root — resolved as:
 3. `~/gitfeed`.
 
 That directory holds `feeds.json`, `config.json`, `data/`, and the gitignored
-`.local/` refresh cache. It is a clone of the data repository (or any checkout
-of it). When it is missing or empty, the first
-activation writes a starter version so the reader mounts with an empty inbox
-instead of an error:
+`.local/` refresh cache. Normally it is a clone of your data repository; when
+it is missing or empty, the first activation writes a starter version so the
+reader mounts with an empty inbox instead of an error, and runs
+`git init -b main` on it, so the root is a repository from the first run:
 
 ```
 feeds.json             {"feeds": []}
@@ -183,35 +181,35 @@ data/interest.ndjson   (empty — the attention log; see "The order of the sourc
 .gitignore             .local/ and friends
 ```
 
-### A local copy vs a checkout
+A root seeded this way has no remote, so backing it up is one step: point it at
+a repository you own. The CLI's `gitfeed init <dir>` writes the same starter
+for a root other than `~/gitfeed`.
 
-- **No git repository** (the starter root): everything works — subscribe, fetch,
-  read, star — but `Pull` and `Sync reads` are disabled, because there is
-  nothing to push to.
-- **A git checkout** with an `origin`: `Pull` fetches items and read state from
-  the remote; `Sync reads` commits `feeds.json`, `config.json`, `data/items/`,
+### Where backups land
+
+- **The scaffolded root** is a repository on `main` with no remote. Everything
+  works — subscribe, fetch, read, star — and `Pull` and `Sync reads` say there is
+  nowhere to push to until one exists.
+- **A root with an `origin`**: `Pull` fetches items and read state from the
+  remote; `Sync reads` commits `feeds.json`, `config.json`, `data/items/`,
   `data/read.ndjson`, `data/starred.ndjson`, `data/interest.ndjson`,
-  `.gitattributes`, and `.gitignore`, rebases, and pushes. The very first `Sync reads` of a freshly
-  `git init`-ed directory commits the whole tree as the baseline and pushes
-  with `-u origin HEAD` when no upstream exists yet.
+  `.gitattributes`, and `.gitignore`, rebases, and pushes. The first one
+  commits the whole seeded tree as the baseline and pushes with
+  `-u origin HEAD` when no upstream exists yet.
+- **A directory with no repository at all** still reads; create one when you
+  want the state backed up or shared.
 
-To sync, create (or clone) your own data repository and point the plugin at it:
+To start backing up, create an empty **private** repository on GitHub, then:
 
 ```bash
-# a new private repository, seeded by the plugin
-node ~/gitfeed-native/bin/gitfeed.mjs init ~/gitfeed   # from a code checkout
-cd ~/gitfeed && git init -b main && git add -A \
-  && git commit -m "gitfeed: starter data" \
-  && git remote add origin git@github.com:<you>/gitfeed-data.git \
-  && git push -u origin main
-
-# or an existing data repository
-git clone git@github.com:<you>/gitfeed-data.git ~/gitfeed
+cd ~/gitfeed
+git remote add origin git@github.com:<you>/gitfeed-data.git
 ```
 
-Once published, the same `init` is `npx --yes --package=github:zizon/gitfeed-native gitfeed init ~/gitfeed`.
-
-Then set `repo` in the profile patch if the path is not `~/gitfeed`.
+Press **Sync reads** in the reader — the first run commits the starter tree and
+pushes it. To join an existing data repository, `git clone` it to `~/gitfeed`
+instead; anything with an `origin` takes the same path. Then set `repo` in the
+profile patch if the path is not `~/gitfeed`.
 
 ### Updating
 

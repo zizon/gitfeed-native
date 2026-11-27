@@ -61,7 +61,8 @@ export function apply(ctx: PluginContext, config?: GitfeedConfig) {
   try {
     const seeded = scaffoldData(root)
     if (seeded.seeded) {
-      ctx.logger.info(`gitfeed: created a starter data root at ${root}`)
+      const repo = seeded.repo ? ' (git repository on main)' : ''
+      ctx.logger.info(`gitfeed: created a starter data root at ${root}${repo}`)
     } else if (seeded.reason === 'not-empty') {
       ctx.logger.warn(`gitfeed: ${root} has no feeds.json and is not empty; leaving it untouched`)
     }

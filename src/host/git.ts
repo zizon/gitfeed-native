@@ -115,12 +115,26 @@ export async function readGitInfo(root: string): Promise<GitInfo> {
 }
 
 /**
+ * Refuse a push-only operation on a checkout that has nowhere to push.
+ *
+ * A scaffolded root is a repository on `main` with no remote yet. Without this
+ * check the first Sync reported git's own "no configured push destination",
+ * which names a setting rather than the one step the reader is missing.
+ * @param {string} root checkout directory.
+ */
+async function requireRemote(root: string): Promise<void> {
+  const remotes = (await runGit(root, ['remote'])).trim()
+  if (!remotes) throw new Error(`gitfeed: ${root} has no git remote; add an origin, then try again`)
+}
+
+/**
  * Pull with a rebase, preserving uncommitted read state.
  * @param {string} root checkout directory.
  * @returns {Promise<{ok:boolean, action:string, output?:string, error?:string}>} settled result.
  */
 export async function pull(root: string): Promise<GitActionResult> {
   try {
+    await requireRemote(root)
     const output = await runGit(root, ['pull', '--rebase', '--autostash'])
     return { ok: true, action: 'pull', output: output.trim() }
   } catch (err) {
@@ -151,6 +165,7 @@ function hasShards(dir: string): boolean {
  */
 export async function sync(root: string): Promise<GitActionResult> {
   try {
+    await requireRemote(root)
     let hasHead = true
     try {
       await runGit(root, ['rev-parse', '--verify', 'HEAD'])

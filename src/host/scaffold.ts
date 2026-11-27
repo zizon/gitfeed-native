@@ -4,10 +4,12 @@
 // fetched items, read/star state — belongs to a separate, usually private git
 // repository. When a root has never been created, this writes a minimal but
 // complete starting point so the reader mounts with an empty inbox instead of
-// an error, and so `git init` in that directory immediately has the merge rules
-// and ignore list it needs. Fetches happen where the reader runs; nothing here
-// assumes a server.
+// an error. The starter files carry the merge attributes and ignore list a data
+// repository needs, and the root is initialised as a git repository on `main`,
+// so the only thing left to do is add a remote. Fetches happen where the reader
+// runs; nothing here assumes a server.
 
+import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { pathsFor } from './settings.js'
@@ -65,6 +67,8 @@ const STARTER_FILES: Array<[string, string]> = [
 export interface ScaffoldResult {
   seeded: boolean
   reason: 'seeded' | 'present' | 'not-empty'
+  /** Whether this call created the git repository. */
+  repo: boolean
 }
 
 function isPristine(dir: string): boolean {
@@ -85,22 +89,48 @@ function writeIfMissing(file: string, text: string): void {
 }
 
 /**
+ * Make `root` a git repository on `main` when it is not one already.
+ *
+ * The scaffolder writes the merge attributes and the ignore list, so a seeded
+ * root is ready to become a data repository; without this step the first thing
+ * a new reader is told is to `git init`, which gets the branch and the ignore
+ * file right only if the user remembers both. No commit is made: the first
+ * `Sync reads` takes the seeded tree as its baseline once a remote exists.
+ * @param root absolute data root.
+ * @returns whether this call created the repository.
+ */
+export function initDataRepo(root: string): boolean {
+  if (fs.existsSync(path.join(root, '.git'))) return false
+  const created = spawnSync('git', ['init', '-b', 'main', root], { encoding: 'utf8' })
+  // A missing `git` is not the reader's problem: the files are still usable
+  // without a repository, and the status line says the root is a local copy.
+  if (created.error) return false
+  if (created.status === 0) return true
+  // `-b` needs git 2.28; an older one still gets the branch the data wants.
+  const legacy = spawnSync('git', ['init', root], { encoding: 'utf8' })
+  if (legacy.error || legacy.status !== 0) return false
+  spawnSync('git', ['symbolic-ref', 'HEAD', 'refs/heads/main'], { cwd: root, encoding: 'utf8' })
+  return true
+}
+
+/**
  * Create the starter data root in `root` when it has no reader yet.
  *
  * A missing root is created; an existing root is filled only when it holds
  * nothing but a `.git`, `.local`, or `.DS_Store`. A root that already has
- * `feeds.json` is left untouched.
+ * `feeds.json` is left untouched. A seeded root is initialised as a git
+ * repository on `main` unless it already is one.
  * @param root absolute data root.
  * @returns what happened, for the caller's log line.
  */
 export function scaffoldData(root: string): ScaffoldResult {
   const resolved = path.resolve(root)
-  if (fs.existsSync(pathsFor(resolved).feeds)) return { seeded: false, reason: 'present' }
-  if (fs.existsSync(resolved) && !isPristine(resolved)) return { seeded: false, reason: 'not-empty' }
+  if (fs.existsSync(pathsFor(resolved).feeds)) return { seeded: false, reason: 'present', repo: false }
+  if (fs.existsSync(resolved) && !isPristine(resolved)) return { seeded: false, reason: 'not-empty', repo: false }
   for (const [relative, text] of STARTER_FILES) {
     writeIfMissing(path.join(resolved, relative), text)
   }
-  return { seeded: true, reason: 'seeded' }
+  return { seeded: true, reason: 'seeded', repo: initDataRepo(resolved) }
 }
 
 /**
