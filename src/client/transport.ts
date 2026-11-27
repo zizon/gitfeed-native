@@ -28,6 +28,13 @@ interface ApiResponse {
   ids?: string[]
   /** One row with its body whole, when an article asked for it. */
   item?: Item | null
+  /** What an OPML import changed. */
+  summary?: {
+    total?: number
+    added?: number
+    updated?: number
+    kept?: number
+  }
 }
 
 /** Failed stream attempts before the HTTP path takes over for a while. */
@@ -85,6 +92,12 @@ export interface Transport {
    */
   attention: (kind: 'open' | 'star', item: string, feed: string) => void
   addFeed: (url: string, folder: string) => Promise<boolean>
+  /**
+   * Merge or replace the subscription list from an OPML document.
+   * @param opml - the document's text.
+   * @param replace - whether it becomes the whole list instead of merging.
+   */
+  importOpml: (opml: string, replace: boolean) => Promise<boolean>
   removeFeed: (id: string) => Promise<boolean>
   setFeedFolder: (id: string, folder: string) => Promise<boolean>
   runAction: (name: string) => Promise<void>
@@ -641,6 +654,38 @@ export function createTransport(ports: TransportPorts): Transport {
     }
   }
 
+  /**
+   * Send one OPML document to the Host and report what it changed.
+   *
+   * The document is the reader's file, not a URL: the Host parses it, merges or
+   * replaces the subscription list, and the next state load draws the result.
+   * @param opml the document's text.
+   * @param replace whether it becomes the whole list instead of merging.
+   * @returns whether the Host applied it.
+   */
+  async function importOpml(opml: string, replace: boolean): Promise<boolean> {
+    if (ui().busy.import) return false
+    ports.setBusy('import', true)
+    try {
+      const payload = await request('/import-opml', { opml: opml, replace: replace })
+      const summary = payload.summary || {}
+      const added = Number(summary.added) || 0
+      const updated = Number(summary.updated) || 0
+      const kept = Number(summary.kept) || 0
+      const total = Number(summary.total) || 0
+      ports.toast(replace
+        ? t('toast.replaced', { total: total })
+        : t('toast.imported', { total: total, added: added, updated: updated, kept: kept }))
+      await showAll()
+      return true
+    } catch (err) {
+      ports.toast(t('toast.failed', { error: messageOf(err) }), true)
+      return false
+    } finally {
+      ports.setBusy('import', false)
+    }
+  }
+
   async function removeFeed(id: string): Promise<boolean> {
     if (!id || ui().busy.remove) return false
     ports.setBusy('remove', true)
@@ -751,6 +796,7 @@ export function createTransport(ports: TransportPorts): Transport {
     star: star,
     attention: attention,
     addFeed: addFeed,
+    importOpml: importOpml,
     removeFeed: removeFeed,
     setFeedFolder: setFeedFolder,
     runAction: runAction,

@@ -8,6 +8,7 @@ import {
   IconCloseOutlineRegular,
   IconPanelLeftOutlineRegular,
   IconPlusOutlineRegular,
+  IconUploadOutlineRegular,
   IconWarningOutlineRegular,
   Input,
 } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -23,6 +24,10 @@ export function FeedRail({ state, controller, t, compact, onPick }: FeedRailProp
   const [folder, setFolder] = useState('')
   const [pendingRemove, setPendingRemove] = useState<string | null>(null)
   const [creating, setCreating] = useState<{ id: string; value: string } | null>(null)
+  const [importOpen, setImportOpen] = useState(false)
+  const [importFile, setImportFile] = useState<{ name: string; text: string } | null>(null)
+  const [importReplace, setImportReplace] = useState(false)
+  const fileRef = useRef<HTMLInputElement>(null)
   const creatingId = creating ? creating.id : null
   const nameRef = useRef<HTMLInputElement>(null)
   const listId = useId()
@@ -107,6 +112,38 @@ export function FeedRail({ state, controller, t, compact, onPick }: FeedRailProp
     if (ok) setCreating(null)
   }
 
+  /**
+   * Read the file the reader picked, and keep it until they choose a strategy.
+   *
+   * The document is read here rather than on submit so a file that cannot be
+   * read is an empty picker, not a failed import.
+   * @param event the file field's change.
+   */
+  async function pickImport(event: { target: { files?: FileList | null; value: string } }) {
+    const file = event.target.files && event.target.files[0]
+    // Clearing the field lets the reader pick the same file again after a
+    // failed import; the element's own value would otherwise keep it.
+    event.target.value = ''
+    if (!file) return
+    try {
+      setImportFile({ name: file.name, text: await file.text() })
+    } catch {
+      setImportFile(null)
+    }
+  }
+
+  function closeImport() {
+    setImportOpen(false)
+    setImportFile(null)
+    setImportReplace(false)
+  }
+
+  async function submitImport() {
+    if (!importFile) return
+    const ok = await controller.importOpml(importFile.text, importReplace)
+    if (ok) closeImport()
+  }
+
   async function submitAdd(event: { preventDefault: () => void }) {
     event.preventDefault()
     const value = url.trim()
@@ -136,6 +173,76 @@ export function FeedRail({ state, controller, t, compact, onPick }: FeedRailProp
       </button>
     </div>,
   )
+
+  rows.push(
+    <div key="import" className="gf-feed gf-addbtn">
+      <button type="button" className="gf-feed-main" onClick={function () { if (importOpen) closeImport(); else setImportOpen(true) }}>
+        <IconUploadOutlineRegular size={14} />
+        <span className="name">{t('action.importOpml')}</span>
+      </button>
+    </div>,
+  )
+
+  if (importOpen) {
+    rows.push(
+      <div key="importform" className="gf-importform">
+        <input
+          ref={fileRef}
+          className="gf-importfile"
+          type="file"
+          accept=".opml,.xml,application/xml,text/xml,text/x-opml"
+          aria-label={t('import.choose')}
+          onChange={function (event) { void pickImport(event) }}
+        />
+        <div className="gf-importrow">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={function () { if (fileRef.current) fileRef.current.click() }}
+          >
+            {t('import.choose')}
+          </Button>
+          <span className="gf-importname" title={importFile ? importFile.name : undefined}>
+            {importFile ? importFile.name : t('import.none')}
+          </span>
+        </div>
+        <div className="gf-importmode" role="group" aria-label={t('import.mode')}>
+          <Button
+            type="button"
+            variant={importReplace ? 'ghost' : 'primary'}
+            size="sm"
+            onClick={function () { setImportReplace(false) }}
+          >
+            {t('import.merge')}
+          </Button>
+          <Button
+            type="button"
+            variant={importReplace ? 'primary' : 'ghost'}
+            size="sm"
+            onClick={function () { setImportReplace(true) }}
+          >
+            {t('import.replace')}
+          </Button>
+        </div>
+        <p className="gf-importhint">{importReplace ? t('import.replaceHint') : t('import.mergeHint')}</p>
+        <div className="gf-addrow">
+          <Button type="button" variant="ghost" size="sm" onClick={function () { closeImport() }}>
+            {t('action.cancel')}
+          </Button>
+          <Button
+            type="button"
+            variant="primary"
+            size="sm"
+            disabled={!importFile || state.busy.import}
+            onClick={function () { void submitImport() }}
+          >
+            {state.busy.import ? t('import.importing') : t('import.do')}
+          </Button>
+        </div>
+      </div>,
+    )
+  }
 
   if (addOpen) {
     rows.push(

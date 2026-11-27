@@ -131,6 +131,35 @@ const added = subscribed.filter((entry) => /feed-[ab]\.xml$/.test(entry.url))
 ok(subA.status === 200 && subB.status === 200, 'two subscribes at once both answer ok', [subA.status, subB.status, subA.body, subB.body])
 ok(added.length === 2, 'two subscribes at once both land in the list', added.map((entry) => entry.id))
 
+// Importing an OPML export from the reader: the document travels as text, and
+// merge/replace are the two answers the Host applies to the subscription list.
+function opml(urls) {
+  const outlines = urls.map((url, i) => `    <outline type="rss" text="Imported ${i + 1}" xmlUrl="${url}" />`).join('\n')
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<opml version="2.0">\n<body>\n  <outline text="Imported">\n${outlines}\n  </outline>\n</body>\n</opml>\n`
+}
+const beforeImport = JSON.parse(readFileSync(path.join(root, 'feeds.json'), 'utf8')).feeds
+const feedA = beforeImport.find((entry) => /feed-a\.xml$/.test(entry.url))
+const feedB = beforeImport.find((entry) => /feed-b\.xml$/.test(entry.url))
+const mergeImport = await post('/gitfeed/api/import-opml', { opml: opml([feedA.url, 'http://127.0.0.1:7797/feed-c.xml']) })
+ok(mergeImport.status === 200 && mergeImport.body.summary.added === 1 && mergeImport.body.summary.updated === 1,
+  'an import merges: one new source, one re-described', mergeImport.body)
+ok(mergeImport.body.summary.kept === beforeImport.length - 1, 'and keeps the subscriptions the document does not mention', mergeImport.body.summary)
+const mergedList = JSON.parse(readFileSync(path.join(root, 'feeds.json'), 'utf8')).feeds
+ok(mergedList.some((entry) => /feed-c\.xml$/.test(entry.url)), 'the new subscription is in the list', mergedList.map((entry) => entry.url))
+ok(mergedList.find((entry) => entry.url === feedA.url).folder === 'Imported', 'the re-described one takes the file folder')
+const afterImport = await get('/gitfeed/api/state')
+ok(afterImport.body.feeds.length === mergedList.length, 'the reader state carries the imported list', afterImport.body.feeds.length)
+
+const replaceImport = await post('/gitfeed/api/import-opml', { opml: opml([feedA.url]), replace: true })
+ok(replaceImport.status === 200 && replaceImport.body.summary.total === 1 && replaceImport.body.summary.kept === 0,
+  'a replace makes the document the whole list', replaceImport.body)
+const replacedState = await get('/gitfeed/api/state')
+ok(!replacedState.body.feeds.some((entry) => entry.id === feedB.id), 'the source the document does not mention is gone', replacedState.body.feeds)
+ok(!replacedState.body.items.some((item) => item.feed === feedB.id), 'and its rows left with it', replacedState.body.items.length)
+
+const emptyImport = await post('/gitfeed/api/import-opml', { opml: '<opml version="2.0"><body></body></opml>' })
+ok(emptyImport.status === 400 && /no feed outlines/.test(emptyImport.body.error), 'a document with no feeds is the caller\'s error', [emptyImport.status, emptyImport.body])
+
 // A request the caller got wrong is 400, not 500. The status used to be chosen
 // by matching the message against a regular expression, so a reworded sentence
 // changed the code and any new message answered 500.

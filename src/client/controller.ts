@@ -711,6 +711,7 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     setWidths: setWidths,
     setRailHidden: setRailHidden,
     addFeed: transport.addFeed,
+    importOpml: transport.importOpml,
     removeFeed: transport.removeFeed,
     setFeedFolder: transport.setFeedFolder,
     runAction: transport.runAction,

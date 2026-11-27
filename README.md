@@ -254,7 +254,10 @@ language are in [`docs/reading.md`](docs/reading.md).
 - **Sources**: folders from the OPML import, collapsible, with unread counts and
   error marks. Every feed row carries its actions in view — move to a folder,
   mark the source read, unsubscribe — and the source list folds to a 32px spine
-  from the panel toggle in its own header.
+  from the panel toggle in its own header. An **Import OPML** row beside **Add
+  feed** applies an export from another reader, either merged into the
+  subscriptions that are already there or replacing the whole list; the sources
+  it adds are fetched straight away.
 - **List**: one row per item — title, feed and age, one-line digest — grouped by
   folder or source on request. The section header sticks while its section is in
   view and carries that section's marks.

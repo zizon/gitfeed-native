@@ -35,6 +35,7 @@ function primitivesStub() {
     IconBranchOutlineRegular: 'branch',
     IconSlidersTwoOutlineRegular: 'sliders',
     IconPanelLeftOutlineRegular: 'panel',
+    IconUploadOutlineRegular: 'upload',
   }
   return [
     "import * as React from 'react'",

@@ -1,9 +1,10 @@
 // OPML import: read an export from Inoreader, Feedly, NetNewsWire, and the
-// like, and merge it into feeds.json. Shared by the CLI; the reader's Add feed
-// box covers the one-feed case.
+// like, and merge it into feeds.json. Shared by the CLI and the reader's
+// Import OPML row; the Add feed box covers the one-feed case.
 
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
+import { InputError } from '../shared/errors.js'
 import { feedIdFor, normalizeUrl, readFeeds, writeFeeds } from './feeds.js'
 import type { FeedDefinition } from './types.js'
 import { attr, decodeEntities } from './xml.js'
@@ -64,26 +65,30 @@ export function parseOpml(xml: string): OpmlEntry[] {
 }
 
 /**
- * Merge (or replace) `feeds.json` from an OPML file.
+ * Merge (or replace) `feeds.json` from an OPML document.
  *
  * In merge mode the OPML entries win because they carry folders; feeds already
- * subscribed but missing from the export are kept under "Uncategorized".
+ * subscribed but missing from the export are kept under "Uncategorized". A
+ * document with no feed outlines is refused rather than applied: in replace
+ * mode it would empty the subscription list, and the wrong file is far more
+ * likely than a deliberate reset.
  * @param root data root.
- * @param file OPML file path.
+ * @param xml OPML document.
  * @param options `replace` throws the old list away.
- * @returns counts for the CLI to print.
+ * @returns counts for the caller to print or report.
  */
-export async function importOpml(root: string, file: string, options?: { replace?: boolean }): Promise<ImportSummary> {
+export async function mergeOpml(root: string, xml: string, options?: { replace?: boolean }): Promise<ImportSummary> {
   const replace = !!(options && options.replace)
-  const xml = await readFile(path.resolve(file), 'utf8')
   const parsed = parseOpml(xml)
+  if (!parsed.length) throw new InputError('no feed outlines found in that OPML document')
 
+  // The list is read in both modes: in replace mode it is still what tells an
+  // entry it re-describes apart from a new one, so a custom feed's declaration
+  // and id survive a replace the same way they survive a merge.
   const existing = new Map<string, FeedDefinition>()
-  if (!replace) {
-    for (const entry of await readFeeds(root)) {
-      if (!entry.url) continue
-      existing.set(normalizeUrl(entry.url), entry)
-    }
+  for (const entry of await readFeeds(root)) {
+    if (!entry.url) continue
+    existing.set(normalizeUrl(entry.url), entry)
   }
 
   const seen = new Set<string>()
@@ -127,9 +132,10 @@ export async function importOpml(root: string, file: string, options?: { replace
     feeds.push(merged)
   }
 
-  // Merge mode keeps subscriptions the export does not mention.
+  // Merge mode keeps subscriptions the export does not mention; replace mode
+  // is the whole list, and the service drops the items of what left with it.
   let kept = 0
-  for (const entry of existing.values()) {
+  for (const entry of replace ? [] : existing.values()) {
     let id: string
     try {
       id = entry.id || feedIdFor(entry.url)
@@ -175,4 +181,16 @@ export async function importOpml(root: string, file: string, options?: { replace
     invalid: invalid,
     folders: folders,
   }
+}
+
+/**
+ * Merge (or replace) `feeds.json` from an OPML file.
+ * @param root data root.
+ * @param file OPML file path.
+ * @param options `replace` throws the old list away.
+ * @returns counts for the CLI to print.
+ */
+export async function importOpml(root: string, file: string, options?: { replace?: boolean }): Promise<ImportSummary> {
+  const xml = await readFile(path.resolve(file), 'utf8')
+  return mergeOpml(root, xml, options)
 }

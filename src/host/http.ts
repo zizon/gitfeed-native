@@ -18,6 +18,9 @@ interface ApiBody {
   type?: string
   script?: string
   options?: unknown
+  /** An OPML document uploaded from the reader, and whether it replaces the list. */
+  opml?: string
+  replace?: boolean
   /** The attention act: `open` or `star`, its row, and its source. */
   kind?: unknown
   item?: unknown
@@ -25,7 +28,10 @@ interface ApiBody {
 }
 
 const PREFIX = '/gitfeed/api'
-const MAX_BODY = 1024 * 1024
+// A feed export is a text document, not a request: a 1,000-subscription OPML
+// from Inoreader is around 250 KB of XML once JSON-encoded, and a browser can
+// send the whole library. Still bounded, because every other route shares it.
+const MAX_BODY = 4 * 1024 * 1024
 
 function sendJson(res: ServerResponse, status: number, value: unknown): void {
   const body = JSON.stringify(value)
@@ -103,7 +109,7 @@ export function createHandler(service: GitfeedService) {
       }
       const route = url.pathname.slice(PREFIX.length) || '/'
       const method = req.method || 'GET'
-      const known = new Set(['/state', '/search', '/item', '/mark', '/star', '/attention', '/feeds', '/feeds/remove', '/feeds/folder', '/fetch', '/pull', '/sync'])
+      const known = new Set(['/state', '/search', '/item', '/mark', '/star', '/attention', '/feeds', '/feeds/remove', '/feeds/folder', '/import-opml', '/fetch', '/pull', '/sync'])
       if (!known.has(route)) {
         sendJson(res, 404, { ok: false, error: 'no such endpoint' })
         return
@@ -171,6 +177,11 @@ export function createHandler(service: GitfeedService) {
       if (route === '/feeds/remove') {
         const result = await service.removeFeed(input.id)
         sendJson(res, 200, result)
+        return
+      }
+      if (route === '/import-opml') {
+        const summary = await service.importOpml(input.opml || '', input.replace === true)
+        sendJson(res, 200, { ok: true, summary: summary })
         return
       }
       if (route === '/feeds/folder') {

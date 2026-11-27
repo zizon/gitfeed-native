@@ -185,6 +185,8 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
   export const IconPlusOutlineRegular: Icon
   export const IconRefreshOutlineRegular: Icon
   export const IconDownloadOutlineRegular: Icon
+  /** The upload tray: an import from a file the reader picks. */
+  export const IconUploadOutlineRegular: Icon
   export const IconEllipsisOutlineRegular: Icon
   export const IconWarningOutlineRegular: Icon
   export const IconRightUpOutlineRegular: Icon

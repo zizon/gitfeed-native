@@ -351,6 +351,24 @@ export const CSS = `
   color: var(--dsw-alias-label-tertiary);
 }
 .gf-addrow { display: flex; gap: 6px; justify-content: flex-end; }
+/* Importing an OPML export: a file picker and the two ways to apply it, on
+   the add-feed form's grid so the rail keeps one shape. The input itself is
+   the browser's, hidden behind a button that uses the app's. */
+.gf-importform { display: grid; gap: 6px; padding: 6px 4px 8px; }
+.gf-importfile { display: none; }
+.gf-importrow { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.gf-importname {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-tertiary);
+}
+.gf-importmode { display: flex; gap: 6px; }
+.gf-importmode > * { flex: 1 1 0; }
+.gf-importhint { margin: 0; font-size: 11px; line-height: 15px; color: var(--dsw-alias-label-tertiary); }
 .gf-confirm { height: auto; min-height: 32px; flex-wrap: wrap; padding: 4px 6px; gap: 4px; }
 .gf-confirm .name { flex: 1 1 100%; font-size: 12px; line-height: 18px; }
 

@@ -58,6 +58,7 @@ if (esbuild === undefined || !existsSync(reactDir) || !existsSync(domDir) || !ex
       "export const IconCloseOutlineRegular = glyph('close')",
       "export const IconWarningOutlineRegular = glyph('warning')",
       "export const IconPanelLeftOutlineRegular = glyph('panel-left')",
+      "export const IconUploadOutlineRegular = glyph('upload')",
       '',
     ].join('\n'))
 
@@ -383,37 +384,40 @@ if (esbuild === undefined || !existsSync(reactDir) || !existsSync(domDir) || !ex
           state: env.state, controller: env.controller, t: t, compact: env.compact,
         }))
       })
-      // Folders and sources in the order they are drawn; the first two rows are
-      // the fixed "All" and "Add feed" entries every rail has.
+      // Folders and sources in the order they are drawn; the first three rows
+      // are the fixed "All", "Add feed", and "Import OPML" entries every rail
+      // has. Importing is a source-tree action, so it sits beside adding one.
       const names = [...host.querySelectorAll('.gf-folder-name, .gf-feed .name')].map((el) => el.textContent)
+      const imports = names[2] === t('action.importOpml')
       // The fold control is the page rail's, at its header corner; the compact
       // rail is the Sidebar's own popover, where the page's panels are not its
       // business, so it must not carry one.
       const fold = host.querySelector('.gf-rail-head button[aria-label="action.collapseSources"]') !== null
       await act(async function () { railRoot.unmount() })
-      return { names: names, fold: fold }
+      return { names: names, fold: fold, imports: imports }
     }
 
     const full = await renderRail(railEnv({}))
     ok(full.fold, 'the full rail folds from its own header corner')
     const compactRail = await renderRail(railEnv({}, true))
     ok(!compactRail.fold, 'the compact rail carries no page fold')
+    ok(full.imports && compactRail.imports, 'the rail offers an OPML import beside Add feed')
 
     const alphabetical = (await renderRail(railEnv({}))).names
-    ok(JSON.stringify(alphabetical.slice(2)) === JSON.stringify(['Daily', 'Alder', 'Birch', 'Weekly', 'Cedar']),
+    ok(JSON.stringify(alphabetical.slice(3)) === JSON.stringify(['Daily', 'Alder', 'Birch', 'Weekly', 'Cedar']),
       'the rail lists folders and sources by name when nothing is known', alphabetical)
 
     const readOrder = (await renderRail(railEnv({
       ranks: new Map([['f-c', 4], ['f-b', 1.5]]),
     }))).names
-    ok(JSON.stringify(readOrder.slice(2)) === JSON.stringify(['Weekly', 'Cedar', 'Daily', 'Birch', 'Alder']),
+    ok(JSON.stringify(readOrder.slice(3)) === JSON.stringify(['Weekly', 'Cedar', 'Daily', 'Birch', 'Alder']),
       'and by what the reader reads when the load carries scores', readOrder)
 
     const switchedOff = (await renderRail(railEnv({
       ranks: new Map([['f-c', 4], ['f-b', 1.5]]),
       interestOrder: false,
     }))).names
-    ok(JSON.stringify(switchedOff.slice(2)) === JSON.stringify(['Daily', 'Alder', 'Birch', 'Weekly', 'Cedar']),
+    ok(JSON.stringify(switchedOff.slice(3)) === JSON.stringify(['Daily', 'Alder', 'Birch', 'Weekly', 'Cedar']),
       'the preference turns the order back to the names', switchedOff)
   } finally {
     rmSync(out, { recursive: true, force: true })

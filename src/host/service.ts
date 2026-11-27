@@ -6,6 +6,8 @@ import path from 'node:path'
 import { copyFile, mkdir, stat, writeFile } from 'node:fs/promises'
 import { feedIdFor, normalizeUrl, readFeeds, resolveFeed, sourceUrl, writeFeeds } from './feeds.js'
 import { loadRuntimeFeeds, runFetch } from './fetch.js'
+import { mergeOpml } from './opml.js'
+import type { ImportSummary } from './opml.js'
 import { pull as pullRemote, readGitInfo, sync as syncRemote } from './git.js'
 import { createFetchJob, createSyncJob } from './jobs.js'
 import { createJobRunner } from './runner.js'
@@ -1056,6 +1058,26 @@ export function createGitfeed(options: GitfeedOptions) {
   }
 
   /**
+   * Delete the archived rows of feeds that no longer exist.
+   *
+   * Both stores are rewritten in place, the same way an unsubscribe does it: a
+   * row whose source is gone has no title, no folder, and nothing that could
+   * open it, so leaving it behind would only leave ghosts in the list.
+   * @param {string[]} ids feed ids whose rows should go.
+   */
+  async function removeItemsOf(ids: string[]): Promise<void> {
+    const gone = new Set(ids)
+    for (const dir of [paths.items, paths.localItems]) {
+      for (const file of await listShards(dir)) {
+        await updateNdjson<{ feed: string } | null>(file, function (rows) {
+          const kept = rows.filter(function (row) { return row && !gone.has(row.feed) })
+          return kept.length === rows.length ? null : kept
+        })
+      }
+    }
+  }
+
+  /**
    * Unsubscribe and remove that feed's items from both stores.
    * @param {string} id feed id.
    * @returns {Promise<{ok:boolean, removed:string}>} settled result.
@@ -1071,20 +1093,59 @@ export function createGitfeed(options: GitfeedOptions) {
       const next = feeds.filter(function (f) { return f.id !== key })
       if (next.length === feeds.length) throw new InputError('no such feed')
       await writeFeeds(root, next)
-
-      for (const dir of [paths.items, paths.localItems]) {
-        for (const file of await listShards(dir)) {
-          await updateNdjson<{ feed: string } | null>(file, function (rows) {
-            const kept = rows.filter(function (row) { return row && row.feed !== key })
-            return kept.length === rows.length ? null : kept
-          })
-        }
-      }
+      await removeItemsOf([key])
     })
     invalidate()
     syncJob.nudge(AUTO_SYNC_DEBOUNCE_MS, AUTO_SYNC_MAX_WAIT_MS)
     await refresh({ force: true, git: true })
     return { ok: true, removed: key }
+  }
+
+  /**
+   * Merge or replace the subscription list from an OPML document.
+   *
+   * Merge adds what is new, takes the folders the file carries, and keeps the
+   * subscriptions it does not mention. Replace makes the file the whole list,
+   * and the sources that leave with it take their rows with them, so a replace
+   * does not leave items no source can open behind.
+   * @param {string} xml OPML document.
+   * @param {boolean} replace whether the document replaces the list.
+   * @returns {Promise<ImportSummary>} counts for the reader's report.
+   */
+  async function importOpml(xml: string, replace: boolean): Promise<ImportSummary> {
+    touch()
+    const document = (xml || '').trim()
+    if (!document) throw new InputError('an OPML document is required')
+    let addedIds: string[] = []
+    const summary = await serialize(async function () {
+      const before = await readFeeds(root)
+      const beforeUrls = new Set(before.map(function (feed) { return normalizeUrl(feed.url) }))
+      const result = await mergeOpml(root, document, { replace: replace })
+      const after = await readFeeds(root)
+      if (replace) {
+        const remaining = new Set(after.map(function (feed) { return feed.id }))
+        const gone = before
+          .map(function (feed) { return feed.id })
+          .filter(function (id) { return !remaining.has(id) })
+        if (gone.length) await removeItemsOf(gone)
+      }
+      addedIds = after
+        .filter(function (feed) { return !beforeUrls.has(normalizeUrl(feed.url)) })
+        .map(function (feed) { return feed.id })
+      return result
+    })
+    invalidate()
+    syncJob.nudge(AUTO_SYNC_DEBOUNCE_MS, AUTO_SYNC_MAX_WAIT_MS)
+    await refresh({ force: true, git: true })
+    // The new subscriptions have nothing archived yet. Fetch just those, off
+    // the response: forty feeds take longer than a click should, and each one
+    // that answers reaches the reader over the stream as it lands.
+    if (addedIds.length) {
+      void runLocalFetch({ feeds: addedIds }).catch(function (err: unknown) {
+        logger.warn(`gitfeed: initial fetch after import failed: ${messageOf(err)}`)
+      })
+    }
+    return summary
   }
 
   /**
@@ -1256,6 +1317,7 @@ export function createGitfeed(options: GitfeedOptions) {
     star: star,
     attention: attention,
     addFeed: addFeed,
+    importOpml: importOpml,
     removeFeed: removeFeed,
     setFeedFolder: setFeedFolder,
     runLocalFetch: runLocalFetch,

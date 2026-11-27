@@ -143,6 +143,13 @@ export interface Controller {
   /** Collapse or show the source list; the choice is a preference. */
   setRailHidden(hidden: boolean): void
   addFeed(url: string, folder: string): Promise<boolean>
+  /**
+   * Merge or replace the subscription list from an OPML document.
+   * @param opml the document's text.
+   * @param replace whether it becomes the whole list instead of merging.
+   * @returns whether the Host applied it.
+   */
+  importOpml(opml: string, replace: boolean): Promise<boolean>
   removeFeed(id: string): Promise<boolean>
   setFeedFolder(id: string, folder: string): Promise<boolean>
   runAction(name: string): Promise<void>

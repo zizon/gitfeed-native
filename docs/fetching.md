@@ -131,6 +131,10 @@ From a checkout without installing global bin:
 node bin/gitfeed.mjs fetch --root ~/gitfeed
 ```
 
+The reader's own **Import OPML** row imports an export from a file picked in the
+page, with the same merge or replace choice as `--replace`; the CLI takes a path
+because it runs outside a browser.
+
 ## Cron
 
 The reader refreshes on its own while the Host runs. A machine that is always on
