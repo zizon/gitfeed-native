@@ -23,7 +23,7 @@ import { FilterTabs, SearchBox } from './FilterBar.js'
 import { ErrorState } from './Placeholders.js'
 import { DisplayPrefs } from './Prefs.js'
 import { jobOf, RefreshState } from './Status.js'
-import { jobWords } from '../jobWords.js'
+import { jobWords } from '../job-words.js'
 import { Toasts } from './Toasts.js'
 
 function RailMenu({ state, controller, t, onClose }: {
@@ -98,6 +98,85 @@ function RailMenu({ state, controller, t, onClose }: {
   )
 }
 
+/**
+ * The pointer handler that drags the list/article splitter.
+ *
+ * The list keeps at least 320px for the article, so the drag is clamped to this
+ * Surface's own width, not only to the global range.
+ * @param controller - the surface's commands.
+ * @param start - the list width the drag began at.
+ * @param total - the Surface's width.
+ * @returns the pointer-down handler.
+ */
+function resizeHandler(controller: Controller, start: number, total: number): (event: React.PointerEvent) => void {
+  return function (event) {
+    event.preventDefault()
+    const startX = event.clientX
+    const max = Math.max(LIST_MIN, Math.min(LIST_MAX, total - 325))
+    function move(moveEvent: PointerEvent) {
+      controller.setWidths({ listW: clamp(start + (moveEvent.clientX - startX), LIST_MIN, max) })
+    }
+    function up() {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }
+}
+
+/**
+ * The list, and the article beside it (wide) or over it (one pane).
+ *
+ * The container is the same in every state on purpose. Swapping the list
+ * between branches — a bare list when nothing is open, a wrapped one when an
+ * article is — unmounts it, and a remounted list starts at the top: the reader
+ * lost their place on every close. So the list is always this box's first child,
+ * and an open article is only something added beside it or over it.
+ */
+function RailBody({ state, controller, t, wide, listW, total }: {
+  state: ClientState
+  controller: Controller
+  t: Translate
+  wide: boolean
+  listW: number
+  total: number
+}) {
+  return (
+    <div
+      className={`gf-rail-body${wide ? ' wide' : ''}${state.current ? ' split' : ''}`}
+      style={{ '--gf-list': `${listW}px` } as CSSProperties}
+    >
+      <ItemList state={state} controller={controller} t={t} wide />
+      {state.current
+        ? wide
+          ? (
+            <>
+              <div
+                className="gf-splitter"
+                role="separator"
+                aria-orientation="vertical"
+                title={t('action.resize')}
+                onPointerDown={resizeHandler(controller, listW, total)}
+                onDoubleClick={function () { controller.setWidths({ listW: DEFAULT_LIST }) }}
+              />
+              <div className="gf-wide-article">
+                <Article state={state} controller={controller} t={t} />
+              </div>
+            </>
+          )
+          : (
+            // One pane: the article is drawn over the list, so it carries its
+            // own way back instead of the list's close button.
+            <div className="gf-rail-article">
+              <Article state={state} controller={controller} t={t} compact />
+            </div>
+          )
+        : null}
+    </div>
+  )
+}
+
 /** The whole snapshot: the rail's bar, list, and article all read it. */
 const wholeState = function (state: ClientState) { return state }
 
@@ -117,25 +196,6 @@ export function GitfeedRail({ controller, t, useReader, useTabInfo }: GitfeedRai
   // The list keeps at least 320px for the article, so the stored width is
   // clamped to this Surface's own width instead of only to its global range.
   const wideListW = clamp(state.listW, LIST_MIN, Math.max(LIST_MIN, width - 325))
-
-  function startResize() {
-    return function (event: React.PointerEvent) {
-      event.preventDefault()
-      const startX = event.clientX
-      const start = wideListW
-      const total = rootRef.current ? rootRef.current.clientWidth : width
-      const max = Math.max(LIST_MIN, Math.min(LIST_MAX, total - 325))
-      function move(moveEvent: PointerEvent) {
-        controller.setWidths({ listW: clamp(start + (moveEvent.clientX - startX), LIST_MIN, max) })
-      }
-      function up() {
-        window.removeEventListener('pointermove', move)
-        window.removeEventListener('pointerup', up)
-      }
-      window.addEventListener('pointermove', move)
-      window.addEventListener('pointerup', up)
-    }
-  }
 
   const feedLabel = state.feedId ? controller.feedTitle(state.feedId) : t('feed.all')
   const fetchRunning = !!jobOf(state, 'fetch')?.running
@@ -178,44 +238,15 @@ export function GitfeedRail({ controller, t, useReader, useTabInfo }: GitfeedRai
         : null}
       {state.status === 'error' && !state.items.length
         ? <ErrorState state={state} controller={controller} t={t} />
-        // The container is the same in every state on purpose. Swapping the
-        // list between branches — a bare list when nothing is open, a wrapped
-        // one when an article is — unmounts it, and a remounted list starts at
-        // the top: the reader lost their place on every close. So the list is
-        // always this box's first child, and an open article is only something
-        // added beside it (wide) or over it (one pane).
         : (
-          <div
-            className={`gf-rail-body${wide ? ' wide' : ''}${state.current ? ' split' : ''}`}
-            style={{ '--gf-list': `${wideListW}px` } as CSSProperties}
-          >
-            <ItemList state={state} controller={controller} t={t} wide />
-            {state.current
-              ? wide
-                ? (
-                  <>
-                    <div
-                      className="gf-splitter"
-                      role="separator"
-                      aria-orientation="vertical"
-                      title={t('action.resize')}
-                      onPointerDown={startResize()}
-                      onDoubleClick={function () { controller.setWidths({ listW: DEFAULT_LIST }) }}
-                    />
-                    <div className="gf-wide-article">
-                      <Article state={state} controller={controller} t={t} />
-                    </div>
-                  </>
-                )
-                : (
-                  // One pane: the article is drawn over the list, so it carries
-                  // its own way back instead of the list's close button.
-                  <div className="gf-rail-article">
-                    <Article state={state} controller={controller} t={t} compact />
-                  </div>
-                )
-              : null}
-          </div>
+          <RailBody
+            state={state}
+            controller={controller}
+            t={t}
+            wide={wide}
+            listW={wideListW}
+            total={rootRef.current ? rootRef.current.clientWidth : width}
+          />
         )}
       {feedsOpen
         ? (

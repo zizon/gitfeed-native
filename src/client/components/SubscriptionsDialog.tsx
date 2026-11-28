@@ -34,11 +34,137 @@ interface Picked {
   bytes: number
 }
 
+/**
+ * The two strategies as described cards: one is a choice, and each says what it
+ * does before it is pressed.
+ */
+function ModeCards({ t, count, replace, onReplace }: {
+  t: Translate
+  count: number
+  replace: boolean
+  onReplace: (value: boolean) => void
+}) {
+  return (
+    <div className="gf-subs-modes" role="radiogroup" aria-label={t('subs.stepMode')}>
+      <button
+        type="button"
+        role="radio"
+        aria-checked={!replace}
+        className={`gf-subs-mode${replace ? '' : ' on'}`}
+        onClick={function () { onReplace(false) }}
+      >
+        <span className="gf-subs-mode-head">
+          <IconCheckOutlineRegular size={14} />
+          <span className="gf-subs-mode-name">{t('subs.merge')}</span>
+          {replace ? null : <span className="gf-subs-badge">{t('subs.recommended')}</span>}
+        </span>
+        <span className="gf-subs-mode-hint">{t('subs.mergeHint')}</span>
+      </button>
+      <button
+        type="button"
+        role="radio"
+        aria-checked={replace}
+        className={`gf-subs-mode danger${replace ? ' on' : ''}`}
+        onClick={function () { onReplace(true) }}
+      >
+        <span className="gf-subs-mode-head">
+          <IconWarningOutlineRegular size={14} />
+          <span className="gf-subs-mode-name">{t('subs.replace')}</span>
+        </span>
+        <span className="gf-subs-mode-hint">{t('subs.replaceHint', { n: count })}</span>
+      </button>
+    </div>
+  )
+}
+
+/**
+ * Step one: the file. A drop target that says what it wants, the browse button
+ * inside it, and the file it now holds.
+ */
+export function FileStep({ t, busy, picked, onPick }: {
+  t: Translate
+  busy: boolean
+  picked: Picked | null
+  onPick: (picked: Picked | null) => void
+}) {
+  const [dragging, setDragging] = useState(false)
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  async function take(file: File | null | undefined) {
+    if (!file || busy) return
+    try {
+      onPick({ name: file.name, text: await file.text(), bytes: file.size })
+    } catch {
+      onPick(null)
+    }
+  }
+
+  function browse() {
+    if (fileRef.current) fileRef.current.click()
+  }
+
+  return (
+    <section className="gf-subs-step">
+      <h3 className="gf-subs-step-title">
+        <span className="gf-subs-step-num" aria-hidden="true">1</span>
+        {t('subs.stepFile')}
+      </h3>
+      <div
+        className={`gf-subs-drop${dragging ? ' dragging' : ''}${picked ? ' picked' : ''}`}
+        role="button"
+        tabIndex={0}
+        onClick={browse}
+        onKeyDown={function (event: { key: string; preventDefault: () => void }) {
+          if (event.key !== 'Enter' && event.key !== ' ') return
+          event.preventDefault()
+          browse()
+        }}
+        onDragOver={function (event: { preventDefault: () => void }) { event.preventDefault(); setDragging(true) }}
+        onDragEnter={function (event: { preventDefault: () => void }) { event.preventDefault(); setDragging(true) }}
+        onDragLeave={function (event: { preventDefault: () => void }) { event.preventDefault(); setDragging(false) }}
+        onDrop={function (event: { preventDefault: () => void; dataTransfer?: { files?: FileList | null } | null }) {
+          event.preventDefault()
+          setDragging(false)
+          void take(event.dataTransfer?.files?.[0])
+        }}
+      >
+        <input
+          ref={fileRef}
+          className="gf-subs-file"
+          type="file"
+          accept=".opml,.xml,application/xml,text/xml,text/x-opml"
+          aria-label={t('subs.stepFile')}
+          onChange={function (event: { target: { files?: FileList | null; value: string } }) {
+            const file = event.target.files ? event.target.files[0] : null
+            // Clearing the field lets the same file be chosen again after a
+            // failed import; the input's own value would keep it.
+            event.target.value = ''
+            void take(file)
+          }}
+        />
+        {picked === null
+          ? (
+            <>
+              <IconUploadOutlineRegular size={22} />
+              <span className="gf-subs-drop-main">{t('subs.dropHint')}</span>
+              <span className="gf-subs-drop-sub">{t('subs.browse')}</span>
+            </>
+          )
+          : (
+            <>
+              <span className="gf-subs-file-name" title={picked.name}>{picked.name}</span>
+              <span className="gf-subs-file-size">{fileSizeText(picked.bytes)}</span>
+              <span className="gf-subs-file-change">{t('subs.changeFile')}</span>
+            </>
+          )}
+      </div>
+    </section>
+  )
+}
+
 export function SubscriptionsDialog({ state, controller, t, onClose }: SubscriptionsDialogProps) {
   const [picked, setPicked] = useState<Picked | null>(null)
   const [replace, setReplace] = useState(false)
-  const [dragging, setDragging] = useState(false)
-  const fileRef = useRef<HTMLInputElement>(null)
 
   const busyImport = state.busy.import
   const busyExport = state.busy.export
@@ -48,19 +174,6 @@ export function SubscriptionsDialog({ state, controller, t, onClose }: Subscript
   function close() {
     if (busy) return
     onClose()
-  }
-
-  async function take(file: File | null | undefined) {
-    if (!file || busy) return
-    try {
-      setPicked({ name: file.name, text: await file.text(), bytes: file.size })
-    } catch {
-      setPicked(null)
-    }
-  }
-
-  function browse() {
-    if (fileRef.current) fileRef.current.click()
   }
 
   async function submit() {
@@ -95,96 +208,14 @@ export function SubscriptionsDialog({ state, controller, t, onClose }: Subscript
       )}
     >
       <div className="gf-subs">
-        <section className="gf-subs-step">
-          <h3 className="gf-subs-step-title">
-            <span className="gf-subs-step-num" aria-hidden="true">1</span>
-            {t('subs.stepFile')}
-          </h3>
-          <div
-            className={`gf-subs-drop${dragging ? ' dragging' : ''}${picked ? ' picked' : ''}`}
-            role="button"
-            tabIndex={0}
-            onClick={browse}
-            onKeyDown={function (event: { key: string; preventDefault: () => void }) {
-              if (event.key !== 'Enter' && event.key !== ' ') return
-              event.preventDefault()
-              browse()
-            }}
-            onDragOver={function (event: { preventDefault: () => void }) { event.preventDefault(); setDragging(true) }}
-            onDragEnter={function (event: { preventDefault: () => void }) { event.preventDefault(); setDragging(true) }}
-            onDragLeave={function (event: { preventDefault: () => void }) { event.preventDefault(); setDragging(false) }}
-            onDrop={function (event: { preventDefault: () => void; dataTransfer?: { files?: FileList | null } | null }) {
-              event.preventDefault()
-              setDragging(false)
-              void take(event.dataTransfer?.files?.[0])
-            }}
-          >
-            <input
-              ref={fileRef}
-              className="gf-subs-file"
-              type="file"
-              accept=".opml,.xml,application/xml,text/xml,text/x-opml"
-              aria-label={t('subs.stepFile')}
-              onChange={function (event: { target: { files?: FileList | null; value: string } }) {
-                const file = event.target.files ? event.target.files[0] : null
-                // Clearing the field lets the same file be chosen again after a
-                // failed import; the input's own value would keep it.
-                event.target.value = ''
-                void take(file)
-              }}
-            />
-            {picked === null
-              ? (
-                <>
-                  <IconUploadOutlineRegular size={22} />
-                  <span className="gf-subs-drop-main">{t('subs.dropHint')}</span>
-                  <span className="gf-subs-drop-sub">{t('subs.browse')}</span>
-                </>
-              )
-              : (
-                <>
-                  <span className="gf-subs-file-name" title={picked.name}>{picked.name}</span>
-                  <span className="gf-subs-file-size">{fileSizeText(picked.bytes)}</span>
-                  <span className="gf-subs-file-change">{t('subs.changeFile')}</span>
-                </>
-              )}
-          </div>
-        </section>
+        <FileStep t={t} busy={busy} picked={picked} onPick={setPicked} />
 
         <section className="gf-subs-step">
           <h3 className="gf-subs-step-title">
             <span className="gf-subs-step-num" aria-hidden="true">2</span>
             {t('subs.stepMode')}
           </h3>
-          <div className="gf-subs-modes" role="radiogroup" aria-label={t('subs.stepMode')}>
-            <button
-              type="button"
-              role="radio"
-              aria-checked={!replace}
-              className={`gf-subs-mode${replace ? '' : ' on'}`}
-              onClick={function () { setReplace(false) }}
-            >
-              <span className="gf-subs-mode-head">
-                <IconCheckOutlineRegular size={14} />
-                <span className="gf-subs-mode-name">{t('subs.merge')}</span>
-                {replace ? null : <span className="gf-subs-badge">{t('subs.recommended')}</span>}
-              </span>
-              <span className="gf-subs-mode-hint">{t('subs.mergeHint')}</span>
-            </button>
-            <button
-              type="button"
-              role="radio"
-              aria-checked={replace}
-              className={`gf-subs-mode danger${replace ? ' on' : ''}`}
-              onClick={function () { setReplace(true) }}
-            >
-              <span className="gf-subs-mode-head">
-                <IconWarningOutlineRegular size={14} />
-                <span className="gf-subs-mode-name">{t('subs.replace')}</span>
-              </span>
-              <span className="gf-subs-mode-hint">{t('subs.replaceHint', { n: count })}</span>
-            </button>
-          </div>
+          <ModeCards t={t} count={count} replace={replace} onReplace={setReplace} />
         </section>
 
         <section className="gf-subs-export">

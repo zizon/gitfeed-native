@@ -221,4 +221,3 @@ export async function sync(root: string): Promise<GitActionResult> {
     return { ok: false, action: 'sync', error: gitMessage(err) }
   }
 }
-

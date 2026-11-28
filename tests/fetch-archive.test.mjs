@@ -1,7 +1,8 @@
-// What a fetch run still has to read. Two options let the reader hand the run
-// what it already knows: the ids the archive holds (`known`) and the fact that
-// an unsubscribe already removed its own rows (`pruneOrphans`). Both are about
-// not reading twenty-odd megabytes to discover nothing changed.
+// What a fetch run still has to read. One option lets the reader hand the run
+// what it already knows — the ids the archive holds (`known`) — so a run does
+// not read twenty-odd megabytes to discover nothing changed. A run also leaves
+// the rows of feeds that are no longer subscribed alone: those rows are the
+// reader's past, and the digest, not the fetcher, decides what is on the shelf.
 import { readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 import { appendItem, makeDataRoot, removeRoot } from './fixtures.mjs'
@@ -59,9 +60,9 @@ try {
   // ...and the seeded map is the caller's: a run does not write through it.
   ok(known.size === 1, 'the caller keeps its own map', known.size)
 
-  // An orphan row — a feed that is no longer subscribed — is what the sweep is
-  // for. It lives in the store this run writes, which is the one it sweeps. A
-  // caller that removed its rows itself turns the sweep off.
+  // A row from a feed that is no longer subscribed stays put: unsubscribing
+  // stops future updates, it does not delete what was already fetched. What
+  // takes it off the shelf is the digest, which draws only followed sources.
   appendItem(items, {
     id: 'orphan-1',
     feed: 'gone',
@@ -71,15 +72,9 @@ try {
     author: '',
     summary: 'still here',
   })
-  await runFetch({ root, dataDir: '.local', known, pruneOrphans: false })
+  await runFetch({ root, dataDir: '.local', known })
   ok(rows(items).some((row) => row.id === 'orphan-1'),
-    'with the sweep off, an orphan row is left alone', rows(items).length)
-
-  // A standalone caller — the CLI, or anyone without a sweep of its own — still
-  // gets the archive cleaned up.
-  await runFetch({ root, dataDir: '.local' })
-  ok(!rows(items).some((row) => row.id === 'orphan-1'),
-    'and with it on, the row is swept', rows(items).map((row) => row.id))
+    'a run leaves a row whose feed is no longer subscribed alone', rows(items).length)
 } finally {
   removeRoot(root)
 }

@@ -249,6 +249,23 @@ async function readScheduleFile(root: string): Promise<PersistedSchedule> {
   return { version: 2, jobs: jobs }
 }
 
+/** The runner's mutable copy: what it knows, what it has armed, and what it waits on. */
+interface RunnerRecord {
+  root: string
+  logger: Logger
+  clock: () => number
+  timers: JobTimers
+  onRun?: (jobId: string) => void
+  jobs: Map<string, RuntimeJob>
+  states: Map<string, JobState>
+  /** The one read of the stored schedule; every caller awaits the same promise. */
+  loaded: Promise<void> | null
+  stopped: boolean
+  lastActivity: number
+  /** The tail of the schedule writes, so two passes cannot interleave a file. */
+  writing: Promise<void>
+}
+
 /**
  * Create the reader's job runner. There is nothing to start: `add` arms that
  * job's first wake-up, and the timers live on the fiber of whoever supplies
@@ -258,346 +275,347 @@ async function readScheduleFile(root: string): Promise<PersistedSchedule> {
  * @returns the runner surface the Host service drives.
  */
 export function createJobRunner(options: JobRunnerOptions): JobRunner {
-  const root = options.root
-  const logger = options.logger
   const clock = options.now ?? (() => Date.now())
-  const jobs = new Map<string, RuntimeJob>()
-  const states = new Map<string, JobState>()
-  let loaded: Promise<void> | null = null
-  let stopped = false
-  let lastActivity = clock()
-  let writing: Promise<void> = Promise.resolve()
-
-  function isStopped(): boolean {
-    return stopped
+  const record: RunnerRecord = {
+    root: options.root,
+    logger: options.logger,
+    clock: clock,
+    timers: options.timers,
+    onRun: options.onRun,
+    jobs: new Map<string, RuntimeJob>(),
+    states: new Map<string, JobState>(),
+    loaded: null,
+    stopped: false,
+    lastActivity: clock(),
+    writing: Promise.resolve(),
   }
+  return {
+    add: function (job) { return add(record, job) },
+    touch: function () { touch(record) },
+    status: function () { return status(record) },
+    dispose: function () { dispose(record) },
+  }
+}
 
-  /**
-   * A chain step whose result is answered elsewhere: the chain only orders
-   * runs, and each run's outcome goes to the caller that asked for it.
-   */
-  function chainStep(): void { /* the outcome is not the chain's */ }
+/**
+ * A chain step whose result is answered elsewhere: the chain only orders runs,
+ * and each run's outcome goes to the caller that asked for it.
+ */
+function chainStep(): void { /* the outcome is not the chain's */ }
 
-  function stateFor(job: Job): JobState {
-    const existing = states.get(job.id)
-    if (existing) return existing
-    const created: JobState = {
-      intervalMin: Math.max(1, Math.round(job.baseMin)),
-      nextAt: clock() + Math.max(0, job.firstRunAfterMin ?? 0) * 60000,
-      last: null,
-      data: job.initial(),
+function stateFor(record: RunnerRecord, job: Job): JobState {
+  const existing = record.states.get(job.id)
+  if (existing) return existing
+  const created: JobState = {
+    intervalMin: Math.max(1, Math.round(job.baseMin)),
+    nextAt: record.clock() + Math.max(0, job.firstRunAfterMin ?? 0) * 60000,
+    last: null,
+    data: job.initial(),
+  }
+  record.states.set(job.id, created)
+  return created
+}
+
+async function ensureLoaded(record: RunnerRecord): Promise<void> {
+  if (record.loaded) return record.loaded
+  record.loaded = (async function () {
+    let file: PersistedSchedule
+    try {
+      file = await readScheduleFile(record.root)
+    } catch (err) {
+      record.logger.warn(`gitfeed: could not read the schedule: ${messageOf(err)}`)
+      file = { version: 2, jobs: {} }
     }
-    states.set(job.id, created)
-    return created
-  }
-
-  function ensureLoaded(): Promise<void> {
-    if (!loaded) {
-      loaded = (async function () {
-        let file: PersistedSchedule
-        try {
-          file = await readScheduleFile(root)
-        } catch (err) {
-          logger.warn(`gitfeed: could not read the schedule: ${messageOf(err)}`)
-          file = { version: 2, jobs: {} }
-        }
-        for (const runtime of jobs.values()) {
-          const saved = file.jobs[runtime.job.id]
-          if (!saved) continue
-          const current = stateFor(runtime.job)
-          states.set(runtime.job.id, Object.assign({}, current, saved, {
-            // A job whose payload predates this format keeps its own default
-            // object, so the job can keep writing to it.
-            data: saved.data === undefined || saved.data === null ? current.data : saved.data,
-          }))
-        }
-        await persist()
-      })()
+    for (const runtime of record.jobs.values()) {
+      const saved = file.jobs[runtime.job.id]
+      if (!saved) continue
+      const current = stateFor(record, runtime.job)
+      record.states.set(runtime.job.id, Object.assign({}, current, saved, {
+        // A job whose payload predates this format keeps its own default
+        // object, so the job can keep writing to it.
+        data: saved.data === undefined || saved.data === null ? current.data : saved.data,
+      }))
     }
-    return loaded
-  }
+    await persist(record)
+  })()
+  return record.loaded
+}
 
-  function snapshot(): PersistedSchedule {
-    const jobsOut: Record<string, JobState | undefined> = {}
-    for (const id of Array.from(states.keys()).sort()) {
-      const state = states.get(id)
-      if (state) jobsOut[id] = state
+function snapshot(record: RunnerRecord): PersistedSchedule {
+  const jobsOut: Record<string, JobState | undefined> = {}
+  for (const id of Array.from(record.states.keys()).sort()) {
+    const state = record.states.get(id)
+    if (state) jobsOut[id] = state
+  }
+  return { version: 2, jobs: jobsOut }
+}
+
+async function persist(record: RunnerRecord): Promise<void> {
+  const payload = snapshot(record)
+  async function write(): Promise<void> {
+    try {
+      await writeJson(pathsFor(record.root).localSchedule, payload)
+    } catch (err) {
+      record.logger.warn(`gitfeed: could not save the schedule: ${messageOf(err)}`)
     }
-    return { version: 2, jobs: jobsOut }
   }
+  record.writing = record.writing.then(write, write)
+  return record.writing
+}
 
-  function persist(): Promise<void> {
-    const payload = snapshot()
-    async function write(): Promise<void> {
-      try {
-        await writeJson(pathsFor(root).localSchedule, payload)
-      } catch (err) {
-        logger.warn(`gitfeed: could not save the schedule: ${messageOf(err)}`)
+/** Whether the reader has been away long enough for an activity-gated job. */
+function paused(record: RunnerRecord, job: Job, now: number): boolean {
+  const gate = job.activeWithinMin ?? 0
+  return gate > 0 && now - record.lastActivity > gate * 60000
+}
+
+function disarm(runtime: RuntimeJob): void {
+  if (runtime.wake) {
+    runtime.wake()
+    runtime.wake = null
+  }
+}
+
+/**
+ * Arm this job's own wake-up for the deadline in its state. A paused job holds
+ * no timer at all: the deadline would only be skipped, and `touch` arms it again
+ * the moment the reader is back.
+ */
+function arm(record: RunnerRecord, runtime: RuntimeJob): void {
+  disarm(runtime)
+  if (record.stopped) return
+  const now = record.clock()
+  if (paused(record, runtime.job, now)) {
+    runtime.idleSleep = true
+    return
+  }
+  runtime.idleSleep = false
+  const state = stateFor(record, runtime.job)
+  const delay = Math.max(0, state.nextAt - now)
+  runtime.wake = record.timers.timeout(function () {
+    runtime.wake = null
+    return fire(record, runtime)
+  }, delay)
+}
+
+/**
+ * A deadline came due: run one pass, then arm the next deadline. The pass is
+ * returned so a fake timer can await it; the Host's timer ignores the value.
+ */
+function fire(record: RunnerRecord, runtime: RuntimeJob): Promise<void> {
+  if (record.stopped || runtime.running || runtime.queued > 0) return Promise.resolve()
+  runtime.queued += 1
+  const task = function (): Promise<void> {
+    return pass(record, runtime)
+  }
+  const run = runtime.chain.then(task, task)
+  runtime.chain = run.then(chainStep, chainStep)
+  return run.then(settle, settle)
+  function settle(): void {
+    runtime.queued -= 1
+    if (!record.stopped) arm(record, runtime)
+  }
+}
+
+/**
+ * Store what the job reported. The runner has no backoff of its own: a job that
+ * wants to slow down says so with `intervalMin` and `nextAt`.
+ */
+function applyOutcome(job: Job, state: JobState, outcome: JobOutcome, now: number): void {
+  const base = Math.max(1, Math.round(job.baseMin))
+  const intervalMin = Math.max(1, Math.round(numberOr(outcome.intervalMin, base)))
+  state.intervalMin = intervalMin
+  const nextAt = numberOr(outcome.nextAt, 0)
+  state.nextAt = nextAt > 0 ? Math.max(now + MIN_RERUN_MS, nextAt) : now + intervalMin * 60000
+  state.last = {
+    at: new Date(now).toISOString(),
+    ok: outcome.failed !== true,
+    fresh: outcome.fresh === true,
+    summary: outcome.summary ?? '',
+    ...(outcome.detail ? { detail: outcome.detail } : {}),
+  }
+}
+
+async function execute(
+  record: RunnerRecord, runtime: RuntimeJob, now: number, scope: unknown,
+): Promise<JobRunResult> {
+  const job = runtime.job
+  runtime.running = true
+  const state = stateFor(record, job)
+  let outcome: JobOutcome
+  try {
+    try {
+      outcome = await job.run({ now: now, state: state.data, scope: scope })
+      if (outcome.failed === true) {
+        record.logger.warn(`gitfeed: ${job.id} failed: ${outcome.summary || 'unknown error'}`)
       }
+    } catch (err) {
+      const summary = messageOf(err)
+      outcome = { failed: true, summary: summary }
+      record.logger.warn(`gitfeed: ${job.id} job failed: ${summary}`)
     }
-    writing = writing.then(write, write)
-    return writing
+    applyOutcome(job, state, outcome, record.clock())
+    await persist(record)
+    record.onRun?.(job.id)
+    return { id: job.id, ok: outcome.failed !== true, outcome: outcome, value: outcome.value }
+  } finally {
+    runtime.running = false
+    runtime.debounceSince = 0
   }
+}
 
-  /** Whether the reader has been away long enough for an activity-gated job. */
-  function paused(job: Job, now: number): boolean {
-    const gate = job.activeWithinMin ?? 0
-    return gate > 0 && now - lastActivity > gate * 60000
-  }
-
-  function disarm(runtime: RuntimeJob): void {
-    if (runtime.wake) {
-      runtime.wake()
-      runtime.wake = null
-    }
-  }
-
-  /**
-   * Arm this job's own wake-up for the deadline in its state. A paused job
-   * holds no timer at all: the deadline would only be skipped, and `touch`
-   * arms it again the moment the reader is back.
-   */
-  function arm(runtime: RuntimeJob): void {
-    disarm(runtime)
-    if (stopped) return
-    const now = clock()
-    if (paused(runtime.job, now)) {
+/** One evaluation of one job: everything except the timer bookkeeping. */
+async function pass(record: RunnerRecord, runtime: RuntimeJob): Promise<void> {
+  const job = runtime.job
+  try {
+    await ensureLoaded(record)
+    if (record.stopped) return
+    const now = record.clock()
+    const state = stateFor(record, job)
+    if (paused(record, job, now)) {
       runtime.idleSleep = true
       return
     }
     runtime.idleSleep = false
-    const state = stateFor(runtime.job)
-    const delay = Math.max(0, state.nextAt - now)
-    runtime.wake = options.timers.timeout(function () {
-      runtime.wake = null
-      return fire(runtime)
-    }, delay)
-  }
-
-  /**
-   * A deadline came due: run one pass, then arm the next deadline. The pass is
-   * returned so a fake timer can await it; the Host's timer ignores the value.
-   */
-  function fire(runtime: RuntimeJob): Promise<void> {
-    if (stopped || runtime.running || runtime.queued > 0) return Promise.resolve()
-    runtime.queued += 1
-    const task = function (): Promise<void> {
-      return pass(runtime)
-    }
-    const run = runtime.chain.then(task, task)
-    runtime.chain = run.then(chainStep, chainStep)
-    return run.then(settle, settle)
-    function settle(): void {
-      runtime.queued -= 1
-      if (!stopped) arm(runtime)
-    }
-  }
-
-  /**
-   * Store what the job reported. The runner has no backoff of its own: a job
-   * that wants to slow down says so with `intervalMin` and `nextAt`.
-   */
-  function applyOutcome(job: Job, state: JobState, outcome: JobOutcome, now: number): void {
+    if (!(state.nextAt <= now)) return
     const base = Math.max(1, Math.round(job.baseMin))
-    const intervalMin = Math.max(1, Math.round(numberOr(outcome.intervalMin, base)))
-    state.intervalMin = intervalMin
-    const nextAt = numberOr(outcome.nextAt, 0)
-    state.nextAt = nextAt > 0 ? Math.max(now + MIN_RERUN_MS, nextAt) : now + intervalMin * 60000
-    state.last = {
-      at: new Date(now).toISOString(),
-      ok: outcome.failed !== true,
-      fresh: outcome.fresh === true,
-      summary: outcome.summary ?? '',
-      ...(outcome.detail ? { detail: outcome.detail } : {}),
-    }
-  }
-
-  async function execute(runtime: RuntimeJob, now: number, scope: unknown): Promise<JobRunResult> {
-    const job = runtime.job
-    runtime.running = true
-    const state = stateFor(job)
-    let outcome: JobOutcome
+    let availability: { ok: boolean; reason?: string }
     try {
-      try {
-        outcome = await job.run({ now: now, state: state.data, scope: scope })
-        if (outcome.failed === true) {
-          logger.warn(`gitfeed: ${job.id} failed: ${outcome.summary || 'unknown error'}`)
-        }
-      } catch (err) {
-        const summary = messageOf(err)
-        outcome = { failed: true, summary: summary }
-        logger.warn(`gitfeed: ${job.id} job failed: ${summary}`)
-      }
-      applyOutcome(job, state, outcome, clock())
-      await persist()
-      options.onRun?.(job.id)
-      return { id: job.id, ok: outcome.failed !== true, outcome: outcome, value: outcome.value }
-    } finally {
-      runtime.running = false
-      runtime.debounceSince = 0
-    }
-  }
-
-  /** One evaluation of one job: everything except the timer bookkeeping. */
-  async function pass(runtime: RuntimeJob): Promise<void> {
-    const job = runtime.job
-    try {
-      await ensureLoaded()
-      if (isStopped()) return
-      const now = clock()
-      const state = stateFor(job)
-      if (paused(job, now)) {
-        runtime.idleSleep = true
-        return
-      }
-      runtime.idleSleep = false
-      if (!(state.nextAt <= now)) return
-      const base = Math.max(1, Math.round(job.baseMin))
-      let availability: { ok: boolean; reason?: string }
-      try {
-        availability = await job.available()
-      } catch (err) {
-        logger.warn(`gitfeed: could not check ${job.id}: ${messageOf(err)}`)
-        state.nextAt = now + base * 60000
-        return
-      }
-      if (!availability.ok) {
-        state.nextAt = now + base * 60000
-        return
-      }
-      let decision: DueDecision
-      try {
-        decision = await job.due(now, state.data)
-      } catch (err) {
-        logger.warn(`gitfeed: could not check ${job.id}: ${messageOf(err)}`)
-        state.nextAt = now + base * 60000
-        return
-      }
-      if (!decision.run) {
-        const nextAt = numberOr(decision.nextAt, 0)
-        state.nextAt = nextAt > 0 ? nextAt : now + base * 60000
-        return
-      }
-      await execute(runtime, now, undefined)
+      availability = await job.available()
     } catch (err) {
-      logger.warn(`gitfeed: ${job.id} pass failed: ${messageOf(err)}`)
+      record.logger.warn(`gitfeed: could not check ${job.id}: ${messageOf(err)}`)
+      state.nextAt = now + base * 60000
+      return
     }
-  }
-
-  /**
-   * Registering is the arming: the job's first deadline goes on the fiber at
-   * once, and again after the stored schedule is read, because the persisted
-   * `nextAt` replaces the fresh one. The returned handle is the only way to
-   * act on that job, so no caller has to name it by string.
-   */
-  function add(job: Job): JobHandle {
-    const runtime: RuntimeJob = {
-      job: job,
-      running: false,
-      queued: 0,
-      chain: Promise.resolve(),
-      wake: null,
-      idleSleep: false,
-      debounceSince: 0,
+    if (!availability.ok) {
+      state.nextAt = now + base * 60000
+      return
     }
-    jobs.set(job.id, runtime)
-    arm(runtime)
-    void ensureLoaded().then(function () {
-      if (!stopped) arm(runtime)
-    })
-    return {
-      id: job.id,
-      runNow: function (scope?: unknown) { return runJob(job.id, scope) },
-      nudge: function (delayMs: number, capMs: number) { nudge(job.id, delayMs, capMs) },
-    }
-  }
-
-  function dispose(): void {
-    stopped = true
-    for (const runtime of jobs.values()) {
-      disarm(runtime)
-      runtime.idleSleep = false
-    }
-  }
-
-  async function runJob(id: string, scope?: unknown): Promise<JobRunResult> {
-    const runtime = jobs.get(id)
-    if (!runtime) throw new Error(`gitfeed: no scheduled job ${id}`)
-    await ensureLoaded()
-    disarm(runtime)
-    runtime.queued += 1
-    const task = function (): Promise<JobRunResult> {
-      return execute(runtime, clock(), scope)
-    }
-    const run = runtime.chain.then(task, task)
-    runtime.chain = run.then(chainStep, chainStep)
+    let decision: DueDecision
     try {
-      return await run
-    } finally {
-      runtime.queued -= 1
-      if (!stopped) arm(runtime)
+      decision = await job.due(now, state.data)
+    } catch (err) {
+      record.logger.warn(`gitfeed: could not check ${job.id}: ${messageOf(err)}`)
+      state.nextAt = now + base * 60000
+      return
     }
-  }
-
-  function nudge(id: string, delayMs: number, capMs: number): void {
-    const runtime = jobs.get(id)
-    if (!runtime) return
-    const state = stateFor(runtime.job)
-    // A failing job is backing off on purpose; do not retry it early.
-    if (state.last && !state.last.ok) return
-    const now = clock()
-    if (!runtime.debounceSince) runtime.debounceSince = now
-    // A deadline, not a live debouncer: the burst cap is a property of the
-    // job's stored state, so a reload in the middle of a burst still syncs.
-    const limit = runtime.debounceSince + Math.max(0, capMs)
-    state.nextAt = Math.max(now + MIN_RERUN_MS, Math.min(now + Math.max(0, delayMs), limit))
-    arm(runtime)
-  }
-
-  function touch(): void {
-    lastActivity = clock()
-    for (const runtime of jobs.values()) {
-      if (runtime.idleSleep) arm(runtime)
+    if (!decision.run) {
+      const nextAt = numberOr(decision.nextAt, 0)
+      state.nextAt = nextAt > 0 ? nextAt : now + base * 60000
+      return
     }
+    await execute(record, runtime, now, undefined)
+  } catch (err) {
+    record.logger.warn(`gitfeed: ${job.id} pass failed: ${messageOf(err)}`)
   }
+}
 
-  async function status(): Promise<ScheduleJobInfo[]> {
-    await ensureLoaded()
-    const result: ScheduleJobInfo[] = []
-    for (const runtime of jobs.values()) {
-      const job = runtime.job
-      const state = stateFor(job)
-      let enabled = true
-      let reason: string | null = null
-      try {
-        const availability = await job.available()
-        enabled = availability.ok
-        reason = availability.ok ? null : (availability.reason ?? 'disabled')
-      } catch (err) {
-        enabled = false
-        reason = messageOf(err)
-      }
-      const base = Math.max(1, Math.round(job.baseMin))
-      const intervalMin = job.reportBaseInterval || !(state.intervalMin > 0) ? base : Math.round(state.intervalMin)
-      result.push({
-        id: job.id,
-        label: job.label,
-        enabled: enabled,
-        intervalMs: Math.max(1, intervalMin) * 60000,
-        nextDueAt: enabled && state.nextAt > 0 ? new Date(state.nextAt).toISOString() : null,
-        lastRunAt: state.last ? state.last.at : null,
-        running: runtime.running || runtime.queued > 0,
-        last: state.last,
-        error: reason,
-      })
-    }
-    return result
+/**
+ * Registering is the arming: the job's first deadline goes on the fiber at once,
+ * and again after the stored schedule is read, because the persisted `nextAt`
+ * replaces the fresh one. The returned handle is the only way to act on that
+ * job, so no caller has to name it by string.
+ */
+function add(record: RunnerRecord, job: Job): JobHandle {
+  const runtime: RuntimeJob = {
+    job: job,
+    running: false,
+    queued: 0,
+    chain: Promise.resolve(),
+    wake: null,
+    idleSleep: false,
+    debounceSince: 0,
   }
-
+  record.jobs.set(job.id, runtime)
+  arm(record, runtime)
+  void ensureLoaded(record).then(function () {
+    if (!record.stopped) arm(record, runtime)
+  })
   return {
-    add: add,
-    touch: touch,
-    status: status,
-    dispose: dispose,
+    id: job.id,
+    runNow: function (scope?: unknown) { return runJob(record, job.id, scope) },
+    nudge: function (delayMs: number, capMs: number) { nudge(record, job.id, delayMs, capMs) },
   }
+}
+
+function dispose(record: RunnerRecord): void {
+  record.stopped = true
+  for (const runtime of record.jobs.values()) {
+    disarm(runtime)
+    runtime.idleSleep = false
+  }
+}
+
+async function runJob(record: RunnerRecord, id: string, scope?: unknown): Promise<JobRunResult> {
+  const runtime = record.jobs.get(id)
+  if (!runtime) throw new Error(`gitfeed: no scheduled job ${id}`)
+  await ensureLoaded(record)
+  disarm(runtime)
+  runtime.queued += 1
+  const task = function (): Promise<JobRunResult> {
+    return execute(record, runtime, record.clock(), scope)
+  }
+  const run = runtime.chain.then(task, task)
+  runtime.chain = run.then(chainStep, chainStep)
+  try {
+    return await run
+  } finally {
+    runtime.queued -= 1
+    if (!record.stopped) arm(record, runtime)
+  }
+}
+
+function nudge(record: RunnerRecord, id: string, delayMs: number, capMs: number): void {
+  const runtime = record.jobs.get(id)
+  if (!runtime) return
+  const state = stateFor(record, runtime.job)
+  // A failing job is backing off on purpose; do not retry it early.
+  if (state.last && !state.last.ok) return
+  const now = record.clock()
+  if (!runtime.debounceSince) runtime.debounceSince = now
+  // A deadline, not a live debouncer: the burst cap is a property of the job's
+  // stored state, so a reload in the middle of a burst still syncs.
+  const limit = runtime.debounceSince + Math.max(0, capMs)
+  state.nextAt = Math.max(now + MIN_RERUN_MS, Math.min(now + Math.max(0, delayMs), limit))
+  arm(record, runtime)
+}
+
+function touch(record: RunnerRecord): void {
+  record.lastActivity = record.clock()
+  for (const runtime of record.jobs.values()) {
+    if (runtime.idleSleep) arm(record, runtime)
+  }
+}
+
+async function status(record: RunnerRecord): Promise<ScheduleJobInfo[]> {
+  await ensureLoaded(record)
+  const result: ScheduleJobInfo[] = []
+  for (const runtime of record.jobs.values()) {
+    const job = runtime.job
+    const state = stateFor(record, job)
+    let enabled = true
+    let reason: string | null = null
+    try {
+      const availability = await job.available()
+      enabled = availability.ok
+      reason = availability.ok ? null : (availability.reason ?? 'disabled')
+    } catch (err) {
+      enabled = false
+      reason = messageOf(err)
+    }
+    const base = Math.max(1, Math.round(job.baseMin))
+    const intervalMin = job.reportBaseInterval || !(state.intervalMin > 0) ? base : Math.round(state.intervalMin)
+    result.push({
+      id: job.id,
+      label: job.label,
+      enabled: enabled,
+      intervalMs: Math.max(1, intervalMin) * 60000,
+      nextDueAt: enabled && state.nextAt > 0 ? new Date(state.nextAt).toISOString() : null,
+      lastRunAt: state.last ? state.last.at : null,
+      running: runtime.running || runtime.queued > 0,
+      last: state.last,
+      error: reason,
+    })
+  }
+  return result
 }

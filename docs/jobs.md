@@ -75,7 +75,7 @@ are the read and the teardown.
 | `handle.nudge(delay, cap)` | a mark, a star, a subscription change | moves the deadline to the end of the burst |
 | `touch()` | every `/state` request | re-arms jobs that slept through an idle window |
 | `status()` | `/state`, the agent tool | the job list the UI renders |
-| `dispose()` | the plugin's teardown effect | makes an in-flight pass inert |
+| `dispose()` | the plugin's teardown effect | stops the run in flight — no new feed starts, the reads in flight are cut — and makes a pending pass inert |
 
 Start/stop are missing on purpose: the timers are created through `ctx.timer`
 from the plugin's own context, so they belong to its fiber and disappear with

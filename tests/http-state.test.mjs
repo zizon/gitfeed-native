@@ -2,7 +2,7 @@
 // only valid when it names the item model the caller already holds.
 import http from 'node:http'
 import os from 'node:os'
-import { readFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { makeDataRoot, removeRoot, sampleLibrary } from './fixtures.mjs'
 import { finish, lib, nodeTimers, ok } from './harness.mjs'
@@ -155,7 +155,13 @@ ok(replaceImport.status === 200 && replaceImport.body.summary.total === 1 && rep
   'a replace makes the document the whole list', replaceImport.body)
 const replacedState = await get('/gitfeed/api/state')
 ok(!replacedState.body.feeds.some((entry) => entry.id === feedB.id), 'the source the document does not mention is gone', replacedState.body.feeds)
-ok(!replacedState.body.items.some((item) => item.feed === feedB.id), 'and its rows left with it', replacedState.body.items.length)
+ok(!replacedState.body.items.some((item) => item.feed === feedB.id),
+  'and its rows leave the digest, because the list shows what the reader follows', replacedState.body.items.length)
+// The rows are the reader's past, and an unsubscribe — a replace included —
+// is a statement about future updates rather than a deletion.
+const committed = readFileSync(path.join(root, 'data', 'items', '2026-01.ndjson'), 'utf8')
+ok(committed.includes('"feed":"feed-b"'), 'the rows themselves are still in the store', committed.slice(0, 80))
+
 
 const emptyImport = await post('/gitfeed/api/import-opml', { opml: '<opml version="2.0"><body></body></opml>' })
 ok(emptyImport.status === 400 && /no feed outlines/.test(emptyImport.body.error), 'a document with no feeds is the caller\'s error', [emptyImport.status, emptyImport.body])
@@ -169,6 +175,14 @@ ok(/attachment; filename="gitfeed-subscriptions\.opml"/.test(exported.headers.ge
   'and the browser is told to save it', exported.headers.get('content-disposition'))
 ok(exportedText.includes(feedA.url), 'the subscriptions in the list are in the document', exportedText.slice(0, 120))
 ok(!exportedText.includes(feedB.url), 'and the ones a replace removed are not', feedB.url)
+
+// Subscribing to a source again brings the rows it left behind straight back:
+// the digest is a view over the stores, not a copy that was thrown away.
+const listNow = JSON.parse(readFileSync(path.join(root, 'feeds.json'), 'utf8'))
+listNow.feeds.push(feedB)
+writeFileSync(path.join(root, 'feeds.json'), `${JSON.stringify(listNow, null, 2)}\n`)
+const restored = await get('/gitfeed/api/state')
+ok(restored.body.items.some((item) => item.feed === feedB.id), 'subscribing to a removed source again brings its rows back')
 
 // A request the caller got wrong is 400, not 500. The status used to be chosen
 // by matching the message against a regular expression, so a reworded sentence

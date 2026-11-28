@@ -16,8 +16,11 @@ not carry its own theme setting.
   marks; one "Add feed" row that opens the form. Every feed row carries its
   actions in view — move it to another folder, mark the source read, and
   unsubscribe (colored destructive on hover, confirmed on click), which removes
-  the subscription and that feed's items from both stores. That row is the only
-  unsubscribe entry.
+  the subscription. An unsubscribe is a statement about future updates: the
+  articles the source already delivered stay in both stores, and because the
+  digest draws only the sources that are followed, the section leaves the list
+  while its rows stay on disk. Subscribing again brings them back with their read
+  marks. That row is the only unsubscribe entry.
 - **Importing and exporting**: below **Add feed**, **Import / export…** opens the
   app's own dialog. It asks in order — a numbered **Choose an OPML file** step with
   a drop target and a browse button, then **What should it do?** as two described
@@ -25,8 +28,9 @@ not carry its own theme setting.
   disabled with the words **Choose a file first** until there is one, rather than
   a grey button with no reason. **Merge** adds what is new and takes the folders
   the file carries, keeping the subscriptions it does not mention; **Replace**
-  makes the file the whole list and the sources that leave take their items with
-  them. The toast reports what changed, and a document with no feed outlines is
+  makes the file the whole list, and the sources it does not mention stop being
+  followed — their articles stay in the archive, out of the list. The toast
+  reports what changed, and a document with no feed outlines is
   refused rather than applied, so a wrong file cannot empty the list. The
   sources that are new are fetched in the background, so their first items
   arrive without a **Refresh**. The same dialog's **Export** row downloads the
@@ -219,4 +223,3 @@ and carry one action; Undo is the action rather than a link in a stack.
 Where the reader's chrome still departs from the app's current page bar — its
 action sizes, label collapse, and tooltips — is recorded with the reasons in
 [the UI audit](ui-audit.md).
-

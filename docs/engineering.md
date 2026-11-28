@@ -26,7 +26,7 @@ package.json                bundle metadata: dsh.bundle patch, dsh.client module
 cordis.patch.yml            inserts the `gitfeed` Host row
 src/index.ts                typed Host entry: route, job runner, tools, skill
 src/cli.ts                  `gitfeed fetch | import-opml | init`
-src/host/                   settings, scaffold, store, OPML, XML, custom, brief, skill, fetch, git, runner, jobs, live, events, service, HTTP, tool
+src/host/                   settings, scaffold, store, OPML, XML, document, custom, brief, skill, fetch, git, runner, jobs, live, events, service, HTTP, tool
 .github/workflows/          ci.yml (gates) and release.yml (tag to npm and a GitHub release)
 tests/                      behaviour suites, fixtures, and the runner (`pnpm test`)
 docs/reading.md             the page, the list's model, the source order, the design language
@@ -39,6 +39,10 @@ docs/engineering.md         this note: registration, layout, build, gates, relea
 docs/history/               point-in-time records: the removed Actions job, cloud sync
 docs/screenshots/           the images the README shows (shipped with the package)
 src/client/                 native reader: controller, transport (the event stream), derivations, viewport, prefs, hooks, components, styles, locales
+                            Names follow the Host's own convention: React component
+                            files are PascalCase (`FeedRail.tsx`), every other file
+                            and directory is lowercase or kebab-case
+                            (`job-words.ts`, `transport-core.ts`, `styles/list.ts`).
 src/shared/                 the types both halves import, the stream protocol and its merge, and the one runtime helper they share
 src/skill/                  the custom-feeds skill: workflow, interface, failure modes
 examples/                   a custom feed script: the Google Research list the docs walk through
@@ -126,6 +130,48 @@ cannot leave `${  value}` behind. `lint:fix` runs the fixer twice because the
 first pass rewrites concatenation and the second formats the interpolation it
 produced.
 
+### Code shape
+
+One-shot work — a fetch run, one HTTP request, an import — is a sequence of
+named steps. `runFetch` and the plugin's `apply` are the examples: they are the
+data flow (`runFetch`: plan → feeds → archive → tally → report; `apply`: root →
+limits → service → what it serves → the line that says so), and each step is a
+function at module level that takes what it needs and returns what the next step
+uses. A step-sized block defined inside another function, or a phase's work
+inlined as an anonymous callback, is the shape this avoids: it reads as one knot
+and hides the flow. The state a one-shot step accumulates is a named record
+(`RunPlan`, `ArchiveState`, `RunTally`), not a spread of `let`s or setter calls.
+
+A long-lived object is still one unit, but it is not one long function: the
+state is a record (`ServiceRecord`, `RunnerRecord`, `LiveRecord`,
+`TransportRecord`, `ControllerRecord`) and the work is module functions that
+take it, so the factory is the thin surface that builds the record and returns
+the object. A view is one unit too, and a view that outgrows a screen is split
+into child views (`FeedRail` → `FeedRow` / `FolderHead` / `AddFeedForm`,
+`GitfeedPage` → `SourcePane` / `PageToolbar`), not into helpers defined inside
+the render.
+
+The lint enforces the mechanical half, in `.oxlintrc.json`:
+
+| rule | limit | what it catches |
+| --- | --- | --- |
+| `max-lines-per-function` | 100 | a function that needs a scroll is two steps |
+| `max-statements` | 50 | the same, counted in work |
+| `max-depth` | 4 | a block nested deeper is a step asking to be named |
+| `max-params` | 6 | more inputs than that is a record the step should take |
+| `max-lines` | 600 | a file is a unit, not a shelf |
+
+The span rule is what makes the shape checkable: a factory that keeps forty
+helpers in its body measures as one 800-line function, so every long-lived unit
+is a record plus module functions — `createGitfeed`, `createJobRunner`,
+`createLiveState`, `createTransport`, `createController` all read that way. No
+file carries an exemption and no function carries a directive; the rule is the
+same everywhere.
+
+The thresholds are a ratchet at the code's current worst, so new debt fails
+while existing code needs no rewrite. Every file is now under the 600-line cap;
+a file that outgrows it splits along the seams the steps already have.
+
 ## Release
 
 Two workflows in `.github/workflows/`. `ci.yml` runs the gates on every push to
@@ -178,4 +224,3 @@ Everything else in the release path needs no manual setup: the repository is
 public, the package is published through a trusted publisher, and the two things
 that must stay private — the data repository and any registry credential — are
 not in this tree. `.gitignore` covers the local files that carry them.
-

@@ -1,14 +1,14 @@
 /**
  * What the scheduler and the checkout are doing, as the status line, the rail
  * menu, and the rail's refresh marker report them. The sentences about a job
- * are built in `jobWords.ts`; this module draws them.
+ * are built in `job-words.ts`; this module draws them.
  */
 
 import type { ReactNode } from '../react.js'
 import type { ScheduleJobInfo } from '../../shared/types.js'
 import type { ClientState } from '../types.js'
 import type { Translate } from '../locales.js'
-import { jobWords, minutesOf } from '../jobWords.js'
+import { jobWords, minutesOf } from '../job-words.js'
 import { fmtTime } from '../util.js'
 
 /** One job of the reader's scheduler, by id; the fetch job drives the refresh UI. */

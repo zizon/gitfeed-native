@@ -7,7 +7,9 @@ import {
   IconCloseOutlineRegular,
   IconRightUpOutlineRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { ArticleProps } from '../types.js'
+import type { ArticleProps, ClientState, Controller } from '../types.js'
+import type { Translate } from '../locales.js'
+import type { Feed } from '../../shared/types.js'
 import { folderNames } from '../derive.js'
 import { EmptyArticle } from './Placeholders.js'
 import { IconButton } from './Controls.js'
@@ -15,57 +17,23 @@ import { FolderMenu } from './FolderMenu.js'
 import { IconFolder, IconStar, IconUnreadDot } from '../icons.js'
 import { fmtDate, sanitize } from '../util.js'
 
-export function Article({ state, controller, t, compact }: ArticleProps) {
-  const item = state.byId.get(state.current || '')
-  const bodyRef = useRef<HTMLDivElement>(null)
-  const scrollRef = useRef<HTMLDivElement>(null)
-  // Past the opening of the article the reading flow matters more than the
-  // metadata, so a compact "next" control follows the viewport instead of
-  // sitting at the top of the pane.
-  const [deep, setDeep] = useState(false)
-  const feed = item ? state.feedMap.get(item.feed) : null
-  const host = item && item.link && /^https?:/i.test(item.link) ? item.link : null
-  const base = host || (feed && feed.siteUrl) || window.location.href
-  const html = useMemo(function () {
-    if (!item) return ''
-    return sanitize(item.summary || '', base)
-  }, [item && item.id, item && item.summary, base])
-
-  useEffect(function () {
-    const el = bodyRef.current
-    if (!el) return
-    const images = el.querySelectorAll('img')
-    const broken: Array<[HTMLImageElement, () => void]> = []
-    for (const img of images) {
-      const handler = function () { img.style.display = 'none' }
-      img.addEventListener('error', handler)
-      broken.push([img, handler])
-    }
-    return function () {
-      for (const pair of broken) pair[0].removeEventListener('error', pair[1])
-    }
-  }, [html])
-
-  useEffect(function () {
-    const el = scrollRef.current
-    if (!el) return
-    const onScroll = function () { setDeep(el.scrollTop > 240) }
-    el.addEventListener('scroll', onScroll, { passive: true })
-    return function () { el.removeEventListener('scroll', onScroll) }
-  }, [item && item.id])
-
-  if (!item) {
-    return compact ? null : <EmptyArticle t={t} />
-  }
-
-  const starred = state.starred.has(item.id)
-  const unread = !state.read.has(item.id)
-  const meta: string[] = []
-  meta.push(feed ? feed.title : item.feed)
-  meta.push(fmtDate(item.date))
-  if (item.author) meta.push(`${t('article.by')} ${item.author}`)
-
-  const topBar = (
+/**
+ * The article's metadata row: where it came from, its actions, and where to read
+ * it in the original. The source is named beside these, which is why a source can
+ * be moved from here while the article is open.
+ */
+function ArticleTopBar({ state, controller, t, compact, feed, host, starred, unread, meta }: {
+  state: ClientState
+  controller: Controller
+  t: Translate
+  compact?: boolean
+  feed: Feed | null | undefined
+  host: string | null
+  starred: boolean
+  unread: boolean
+  meta: string[]
+}) {
+  return (
     <div className="gf-article-top">
       {compact ? (
         <IconButton
@@ -135,6 +103,71 @@ export function Article({ state, controller, t, compact }: ArticleProps) {
         )}
       </div>
     </div>
+  )
+}
+
+export function Article({ state, controller, t, compact }: ArticleProps) {
+  const item = state.byId.get(state.current || '')
+  const bodyRef = useRef<HTMLDivElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  // Past the opening of the article the reading flow matters more than the
+  // metadata, so a compact "next" control follows the viewport instead of
+  // sitting at the top of the pane.
+  const [deep, setDeep] = useState(false)
+  const feed = item ? state.feedMap.get(item.feed) : null
+  const host = item && item.link && /^https?:/i.test(item.link) ? item.link : null
+  const base = host || (feed && feed.siteUrl) || window.location.href
+  const html = useMemo(function () {
+    if (!item) return ''
+    return sanitize(item.summary || '', base)
+  }, [item && item.id, item && item.summary, base])
+
+  useEffect(function () {
+    const el = bodyRef.current
+    if (!el) return
+    const images = el.querySelectorAll('img')
+    const broken: Array<[HTMLImageElement, () => void]> = []
+    for (const img of images) {
+      const handler = function () { img.style.display = 'none' }
+      img.addEventListener('error', handler)
+      broken.push([img, handler])
+    }
+    return function () {
+      for (const pair of broken) pair[0].removeEventListener('error', pair[1])
+    }
+  }, [html])
+
+  useEffect(function () {
+    const el = scrollRef.current
+    if (!el) return
+    const onScroll = function () { setDeep(el.scrollTop > 240) }
+    el.addEventListener('scroll', onScroll, { passive: true })
+    return function () { el.removeEventListener('scroll', onScroll) }
+  }, [item && item.id])
+
+  if (!item) {
+    return compact ? null : <EmptyArticle t={t} />
+  }
+
+  const starred = state.starred.has(item.id)
+  const unread = !state.read.has(item.id)
+  const meta: string[] = []
+  meta.push(feed ? feed.title : item.feed)
+  meta.push(fmtDate(item.date))
+  if (item.author) meta.push(`${t('article.by')} ${item.author}`)
+
+  const topBar = (
+    <ArticleTopBar
+      state={state}
+      controller={controller}
+      t={t}
+      compact={compact}
+      feed={feed}
+      host={host}
+      starred={starred}
+      unread={unread}
+      meta={meta}
+    />
   )
 
   const body = html.trim()

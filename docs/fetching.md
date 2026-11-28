@@ -86,6 +86,12 @@ reload or dispose cancels whatever is pending with the rest of the plugin. What
 the timer service does not provide — per-feed backoff, the activity gate, the
 stored burst deadline — lives with the job that needs it.
 
+A run already in flight is stopped rather than left to finish: the reader owns an
+`AbortSignal` for its lifetime and hands it to the fetch, which checks it before
+starting each feed and combines it with that feed's deadline. A stop ends the
+reads on the wire, starts no new ones, and reports "stopped before the run
+finished" instead of judging feeds a shutdown interrupted.
+
 `ctx.timer.interval` is not used: the Refresh job's next run is the earliest
 per-feed clock, not a period. `ctx.timer.debounce` is not used either: it lives
 in memory, would be lost on reload, and cannot express the burst cap. The
@@ -150,4 +156,3 @@ open, by running the same fetcher from the installed CLI:
   && git commit -qm "feed: $(date -u +%FT%TZ)" \
   && git push || true
 ```
-

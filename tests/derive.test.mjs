@@ -135,7 +135,7 @@ if (esbuild === undefined) {
     // A section is finished when nothing listed in it is still unread.
     const titleOf = (id) => feedTitle(feeds, id)
     const folderOf = (id) => feedFolder(feeds, id, 'Uncategorized')
-    const sections = entriesOf(items, 'folder', 10, 10, titleOf, folderOf)
+    const sections = entriesOf(items, 'folder', { row: 10, group: 10 }, titleOf, folderOf)
     ok(
       sections.map((entry) => entry.kind).join(',') === 'group,row,row,group,row,row',
       'grouping flattens one header plus its rows per section',
@@ -165,7 +165,7 @@ if (esbuild === undefined) {
       others,
     )
     ok(
-      exhaustedGroups(entriesOf(items, 'none', 10, 10, titleOf, folderOf), new Set(['a1', 'a2']), 'unread').length === 0,
+      exhaustedGroups(entriesOf(items, 'none', { row: 10, group: 10 }, titleOf, folderOf), new Set(['a1', 'a2']), 'unread').length === 0,
       'an ungrouped list has no section to finish',
     )
 
@@ -203,15 +203,15 @@ if (esbuild === undefined) {
       { id: 'feed-b', url: null, title: 'Beta Notes', folder: null },
     ]
     const read = sourceOrder(itemFeeds, new Map([['feed-b', 5]]), 'Uncategorized')
-    const rankedSections = entriesOf(items, 'folder', 10, 10, titleOf, folderOf,
+    const rankedSections = entriesOf(items, 'folder', { row: 10, group: 10 }, titleOf, folderOf,
       (key) => (read.folders.get(key) === undefined ? read.next : read.folders.get(key)))
     ok(rankedSections[0].kind === 'group' && rankedSections[0].group.key === 'Uncategorized',
       'the grouped list follows the same order as the rail', rankedSections.map((entry) => entry.kind === 'group' ? entry.group.key : '-'))
-    const byFeed = entriesOf(items, 'feed', 10, 10, titleOf, folderOf,
+    const byFeed = entriesOf(items, 'feed', { row: 10, group: 10 }, titleOf, folderOf,
       (key) => (read.rank.get(key) === undefined ? read.next : read.rank.get(key)))
     ok(byFeed[0].kind === 'group' && byFeed[0].group.key === 'feed-b',
       'and so do source sections, by the score their source earned', byFeed.map((entry) => entry.kind === 'group' ? entry.group.key : '-'))
-    const alphabetically = entriesOf(items, 'feed', 10, 10, titleOf, folderOf)
+    const alphabetically = entriesOf(items, 'feed', { row: 10, group: 10 }, titleOf, folderOf)
     ok(alphabetically[0].group.key === 'feed-a',
       'a list with no order to apply still reads by name', alphabetically.map((entry) => entry.kind === 'group' ? entry.group.key : '-'))
 

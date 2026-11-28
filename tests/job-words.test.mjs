@@ -25,7 +25,7 @@ if (esbuild === undefined) {
   const bundle = path.join(out, 'jobWords.mjs')
   try {
     writeFileSync(entry, [
-      `export { jobWords, minutesOf } from ${JSON.stringify(path.join(repoRoot, 'src/client/jobWords.ts'))}`,
+      `export { jobWords, minutesOf } from ${JSON.stringify(path.join(repoRoot, 'src/client/job-words.ts'))}`,
       `export { EN, ZH } from ${JSON.stringify(path.join(repoRoot, 'src/client/locales.ts'))}`,
     ].join('\n'))
     execFileSync(esbuild, [

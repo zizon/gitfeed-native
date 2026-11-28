@@ -84,8 +84,12 @@ Both actions a reader wants *while reading a feed* live on that feed's section
 row in the list: `Open Source Security  [Unsubscribe] [Mark 16 read]`. The
 section header sticks to the top while its section is in view, so they are at
 hand whenever a post from that feed is on screen; `Unsubscribe` first swaps the
-row into a confirm (`Cancel` / `Unsubscribe`) and only then removes the
-subscription and that feed's items. A folder section can only be marked.
+row into a confirm (`Cancel` / `Unsubscribe`) and then removes the subscription.
+It stops future updates and nothing else: the articles that source already
+delivered stay in the archive. The list draws only the sources that are followed,
+so the section leaves with the subscription while its rows stay in both stores —
+subscribing to it again puts them back, read marks included. A folder section can
+only be marked.
 The Feeds panel keeps the same two marks on a feed's own row, which is how a
 feed is managed without opening it, and no row shows a count twice.
 
@@ -288,10 +292,13 @@ server-side job, no workflow to keep in sync, and no token to hand to CI.
 - **Sync** commits and pushes read state about twenty seconds after the last
   change, pulls when the reader is quiet, backs off to `syncMaxMinutes` (60),
   and needs `allowGit` plus a working tree with an `origin`.
-- **Refresh** in the reader still fetches everything. The cadences in full, the
-  CLI (`gitfeed fetch`, `import-opml`, `init`), and the cron entry for an
-  always-on machine are in [`docs/fetching.md`](docs/fetching.md); the runner
-  contract is [`docs/jobs.md`](docs/jobs.md).
+- **Refresh** in the reader still fetches everything. A Host that shuts down
+  mid-run cuts it: no new feed starts, the reads in flight are aborted, and the
+  run judges nothing and writes nothing, so the next start begins from the same
+  deadlines. The cadences in full, the CLI (`gitfeed fetch`, `import-opml`,
+  `init`), and the cron entry for an always-on machine are in
+  [`docs/fetching.md`](docs/fetching.md); the runner contract is
+  [`docs/jobs.md`](docs/jobs.md).
 
 ## Configuration
 
@@ -310,6 +317,12 @@ the plugin config, so they survive upgrades.
   ]
 }
 ```
+
+`id` is the key an entry's rows, read marks, cached check, and scheduler clock are
+all stored under. It is optional — an entry written without one is keyed by the
+id its URL derives — and once written it is used exactly as written: renaming it
+does not move that source's archive, it orphans it. An id that repeats is
+numbered in file order, so keep ids unique.
 
 `config.json`:
 
@@ -465,6 +478,9 @@ repository documentation.
 - **Item history is pruned** to `fetch.keepMonths` (6) to keep the data repo
   small. The attention log is not pruned: it accrues one short row per opened or
   starred article, and only its last couple of months move the order.
+  Unsubscribing is not a deletion: it stops future updates, and the rows already
+  fetched stay in the stores and out of the list until the source is followed
+  again — the retention window, not the unsubscribe, is what retires old rows.
 - **The source order is a habit, not a setting per row.** It is learned from
   opened and starred rows only: a reader who reads the digests and never opens an
   article gives it nothing to learn from, and the rail stays alphabetical. There

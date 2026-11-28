@@ -1,1354 +1,158 @@
 // The reader's Host state machine: committed items plus the local refresh
 // cache, read/star state, subscriptions, git actions, and the job runner.
 
-import crypto from 'node:crypto'
-import path from 'node:path'
-import { copyFile, mkdir, stat, writeFile } from 'node:fs/promises'
-import { feedIdFor, indexFeeds, normalizeUrl, readFeeds, resolveFeed, sourceUrl, writeFeeds } from './feeds.js'
 import { loadRuntimeFeeds, runFetch } from './fetch.js'
-import { exportOpml as writeOpml, mergeOpml } from './opml.js'
-import type { ImportSummary } from './opml.js'
-import { pull as pullRemote, readGitInfo, sync as syncRemote } from './git.js'
 import { createFetchJob, createSyncJob } from './jobs.js'
 import { createJobRunner } from './runner.js'
-import type { JobRunner, JobTimers } from './runner.js'
-import { pathsFor, readRepoConfig } from './settings.js'
-import { CUSTOM_FEED_TEMPLATE, declarationOf, kindOf, runCustom, scaffoldPath, scriptFile } from './custom.js'
+import type { JobHandle, JobRunner } from './runner.js'
+import { pathsFor } from './settings.js'
 import { createLiveState } from './live.js'
-import { interestOf, recordAttention, seedFromStars } from './interest.js'
-import type { LiveSnapshot } from './live.js'
-import { appendNdjson, listShards, readJson, readNdjson, updateNdjson } from './store.js'
-import type { FetchResult, GitActionResult, Logger, ReaderStateData, ReadyState, RepoConfig } from './types.js'
-import type { FeedDefinition } from './types.js'
-import type { GitInfo, Feed, Item, SourceKind } from '../shared/types.js'
-import type { InterestEvent } from '../shared/interest.js'
-import type { StreamFrame } from '../shared/stream.js'
-import { PROBE_MS, PROTOCOL } from '../shared/stream.js'
-import { InputError, messageOf } from '../shared/errors.js'
-import { decodeEntities } from './xml.js'
+import type { Item } from '../shared/types.js'
 
-/** A local mark is pushed after this much quiet, so scrolling marks coalesce. */
-const AUTO_SYNC_DEBOUNCE_MS = 20000
-/** Longest a continuously marking reader waits before a sync. */
-const AUTO_SYNC_MAX_WAIT_MS = 5 * 60000
-/** Rows whose searchable text is built between yields to the event loop. */
-const SEARCH_CHUNK = 64
-/**
- * How long the git facts behind the status line stay usable before they are
- * read again. A fetch run changes nothing git tracks — the cache it writes is
- * ignored — so it must not pay for `git status`; a pull, a commit, or a
- * subscription change invalidates the facts explicitly.
- */
-const GIT_FACTS_MS = 5 * 60000
 
-export type StateResponse = Omit<ReadyState, keyof ReaderStateData> & Partial<ReaderStateData>
+import { pull as pullRemote, sync as syncRemote } from './git.js'
+import type { GitfeedOptions, ServiceRecord } from './service-core.js'
+import {
+  archivedLengths, disarmProbe, fileVersion, frames, getState, gitInfo, invalidate, invalidateGit,
+  invalidateItems, itemBody, refresh, search, settings,
+} from './service-snapshot.js'
+import {
+  addFeed, attention, checkCustomFeed, customFeeds, ensureLocalMeta, exportOpml, gitAction, importOpml,
+  mark, removeFeed, runLocalFetch, scaffoldCustomFeed, setFeedFolder, star,
+} from './service-commands.js'
+import { getForTool, listForTool, statusForTool } from './service-tools.js'
 
-export interface GitfeedOptions {
-  root: string
-  logger?: Logger
-  /** Where the jobs' wake-ups come from: the Host's timer service. */
-  timers: JobTimers
-  refreshMinutes?: number
-  idleMinutes?: number
-  allowGit?: boolean
-  adaptive?: boolean
-  maxIntervalMinutes?: number
-  /** Minutes between read-state syncs; 0 disables auto-sync. */
-  syncMinutes?: number
-  /** Ceiling of the sync backoff. */
-  syncMaxMinutes?: number
-}
-
-interface MetaEntry {
-  title?: string | null
-  folder?: string | null
-  siteUrl?: string | null
-  url?: string | null
-  lastError?: string | null
-  checkedAt?: string | null
-}
-
-interface ListToolInput {
-  query?: unknown
-  feed?: unknown
-  feedId?: unknown
-  unreadOnly?: unknown
-  starredOnly?: unknown
-  limit?: unknown
-}
-
-/** A feed body as plain text, stripped first and decoded with the parser's own
- * table: the agent's search then finds the same `&mdash;` and numeric
- * references the reader's search does. */
-function plainText(html: string | null | undefined): string {
-  return decodeEntities((html || '').replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim()
-}
-
-function checkedIds(ids: unknown): string[] {
-  if (!Array.isArray(ids)) return []
-  const clean: string[] = []
-  for (const id of ids) {
-    if (typeof id !== 'string' || id.length === 0 || id.length >= 64) continue
-    clean.push(id)
-  }
-  return clean
-}
-
-/**
- * Newest first, with the id as a tie-break: two items that share a timestamp
- * would otherwise keep whatever order the shards happened to read in, and a
- * refresh could swap them under the reader.
- */
-function compareItems(a: Item, b: Item): number {
-  if (a.date !== b.date) return a.date < b.date ? 1 : -1
-  if (a.id !== b.id) return a.id < b.id ? -1 : 1
-  return 0
-}
-
-/**
- * Create the Host-side reader for one checkout.
- * @param {object} options
- * @param {string} options.root absolute gitfeed checkout.
- * @param {{info:Function, warn:Function, error:Function}} [options.logger]
- * @returns {object} reader surface used by the HTTP API and the agent tool.
- */
 export function createGitfeed(options: GitfeedOptions) {
   const root = options.root
-  const logger = options.logger || console
-  const paths = pathsFor(root)
-  const refreshMinutes = Number.isFinite(Number(options.refreshMinutes)) ? Math.max(0, Number(options.refreshMinutes)) : 0
-  const idleMinutes = Number(options.idleMinutes) > 0 ? Number(options.idleMinutes) : 15
-  const allowGit = options.allowGit !== false
-  const adaptive = options.adaptive !== false
-  const maxIntervalMinutes = Number.isFinite(Number(options.maxIntervalMinutes))
-    ? Math.max(1, Number(options.maxIntervalMinutes))
-    : 1440
-  const syncMinutes = Number.isFinite(Number(options.syncMinutes)) ? Math.max(0, Number(options.syncMinutes)) : 10
-  const syncMaxMinutes = Number.isFinite(Number(options.syncMaxMinutes))
-    ? Math.max(1, Number(options.syncMaxMinutes))
-    : 60
-
-  /**
-   * The item model has its own version: read and star marks bump the state
-   * version without touching the items, and re-reading, re-sorting, and
-   * re-sending thousands of rows because a mark landed is what made polling
-   * expensive. The client sends this back, so an unchanged model travels as a
-   * flag instead of a payload.
-   */
-  let itemsCache: { version: string | null; items: Item[] | null } = { version: null, items: null }
-  /**
-   * Parsed rows per shard, keyed on that shard's size and modification time.
-   * An NDJSON shard is append-only in the ordinary case, so a run that adds a
-   * few rows changes one file: without this, every such write paid a parse of
-   * the whole archive to find them.
-   */
-  const shardRows = new Map<string, { stamp: string; rows: Item[] }>()
-  let gitCache: { at: number; value: GitInfo | null } = { at: 0, value: null }
-  /** The git facts the last snapshot carried, so a probe does not re-run git. */
-  let gitFacts: { at: number; value: GitInfo | null } | null = null
-  /**
-   * Every row's searchable text. Bodies are the Host's to search: the wire
-   * carries the list's half of a row, and a query has to match text the list
-   * does not have. The map is added to, not rebuilt, so a fetch costs the rows
-   * it landed rather than the whole archive.
-   */
-  let searchTexts: Map<string, string> | null = null
-  /** Signature of the source names the texts were built with. */
-  let searchTitles = ''
-  let writeQueue = Promise.resolve()
-  let disposed = false
-
-  /**
-   * What the event stream serves: the state the last read found, and the deltas
-   * since. A change made here is a revision; a surface asks for what it missed.
-   */
-  const live = createLiveState()
-  /** Surfaces currently pulling frames; the probe only runs while one is. */
-  let attached = 0
-  /** Cancels the stream's wake-up; null while no surface is attached. */
-  let probeWaker: (() => void) | null = null
-
-  function touch() {
-    runner.touch()
+  const record: ServiceRecord = {
+    root: root,
+    logger: options.logger || console,
+    paths: pathsFor(root),
+    refreshMinutes: Number.isFinite(Number(options.refreshMinutes)) ? Math.max(0, Number(options.refreshMinutes)) : 0,
+    idleMinutes: Number(options.idleMinutes) > 0 ? Number(options.idleMinutes) : 15,
+    allowGit: options.allowGit !== false,
+    adaptive: options.adaptive !== false,
+    maxIntervalMinutes: Number.isFinite(Number(options.maxIntervalMinutes))
+      ? Math.max(1, Number(options.maxIntervalMinutes))
+      : 1440,
+    syncMinutes: Number.isFinite(Number(options.syncMinutes)) ? Math.max(0, Number(options.syncMinutes)) : 10,
+    syncMaxMinutes: Number.isFinite(Number(options.syncMaxMinutes))
+      ? Math.max(1, Number(options.syncMaxMinutes))
+      : 60,
+    timers: options.timers,
+    itemsCache: { version: null, items: null },
+    shardRows: new Map<string, { stamp: string; rows: Item[] }>(),
+    gitCache: { at: 0, value: null },
+    gitFacts: null,
+    searchTexts: null,
+    searchTitles: '',
+    writeQueue: Promise.resolve(),
+    disposed: false,
+    stopping: new AbortController(),
+    live: createLiveState(),
+    attached: 0,
+    probeWaker: null,
+    runner: null as unknown as JobRunner,
+    refreshJob: null as unknown as JobHandle,
+    syncJob: null as unknown as JobHandle,
   }
+  bootstrap(record)
+  return apiOf(record)
+}
 
-  /** Drop the derived item model. The parsed shards stay: each is keyed on its own stamp. */
-  function invalidateItems() {
-    itemsCache = { version: null, items: null }
+function apiOf(rec: ServiceRecord) {
+  return {
+    root: rec.root,
+    getState: getState.bind(null, rec),
+    mark: mark.bind(null, rec),
+    star: star.bind(null, rec),
+    attention: attention.bind(null, rec),
+    addFeed: addFeed.bind(null, rec),
+    importOpml: importOpml.bind(null, rec),
+    exportOpml: exportOpml.bind(null, rec),
+    removeFeed: removeFeed.bind(null, rec),
+    setFeedFolder: setFeedFolder.bind(null, rec),
+    runLocalFetch: runLocalFetch.bind(null, rec),
+    scaffoldCustomFeed: scaffoldCustomFeed.bind(null, rec),
+    checkCustomFeed: checkCustomFeed.bind(null, rec),
+    customFeeds: customFeeds.bind(null, rec),
+    pull: function () { return gitAction(rec, 'pull') },
+    sync: function () { return gitAction(rec, 'sync') },
+    settings: settings.bind(null, rec),
+    listForTool: listForTool.bind(null, rec),
+    getForTool: getForTool.bind(null, rec),
+    statusForTool: statusForTool.bind(null, rec),
+    search: search.bind(null, rec),
+    itemBody: itemBody.bind(null, rec),
+    frames: frames.bind(null, rec),
+    /** Re-read the data root and announce what changed (the stream's probe, by hand). */
+    refresh: refresh.bind(null, rec),
+    dispose: dispose.bind(null, rec),
   }
+}
 
-  /** Drop what a fetch, a subscription change, or a git action invalidates. */
-  function invalidate() {
-    invalidateItems()
-    invalidateGit()
-  }
-
-  /**
-   * Drop only what a mark can move. Read and star ids are not part of the item
-   * model — that is what the separate itemsVersion is for — so a mark must not
-   * make the next payload re-read, re-filter, and re-sort every shard.
-   */
-  function invalidateGit() {
-    gitCache = { at: 0, value: null }
-    gitFacts = null
-  }
-
-  function serialize<T>(task: () => Promise<T>): Promise<T> {
-    const run = writeQueue.then(task, task)
-    // The queue only decides what runs next; a failed task is answered to the
-    // caller that asked for it, so its outcome is not the chain's to carry.
-    writeQueue = run.then(chainStep, chainStep)
-    return run
-  }
-
-  /** A chain step whose result is answered elsewhere. */
-  function chainStep(): void { /* the outcome is not the queue's */ }
-
-  /**
-   * The whole state, read from disk, in the shape the stream diffs.
-   * @param cfg - the reader's settings.
-   * @param recomputeGit - re-read the git facts the status line shows.
-   * @param signal - cancels between reads.
-   * @returns the state, carrying the version it measured for itself.
-   */
-  async function readSnapshot(cfg: RepoConfig, recomputeGit: boolean, signal?: AbortSignal): Promise<LiveSnapshot> {
-    signal?.throwIfAborted()
-    const version = await fileVersion()
-    signal?.throwIfAborted()
-    const model = await buildItems()
-    const data = await buildSnapshot(cfg, model.items)
-    return {
-      version: version,
-      itemsVersion: model.version,
-      items: model.items,
-      read: data.read,
-      starred: data.starred,
-      feeds: data.feeds,
-      reader: data.reader,
-      interest: data.interest,
-      git: await currentGit(recomputeGit),
-      schedule: await runner.status(),
-      repo: root,
-      allowGit: allowGit,
-    }
-  }
-
-  /**
-   * Re-read the data root and broadcast what changed.
-   *
-   * Reads and writes share one queue, so a refresh never reads a file a
-   * mutation is midway through writing. A read that finds the same version the
-   * live copy holds is dropped without a rebuild, which is what makes the
-   * stream's probe free when nothing is happening.
-   * @param options - `force` broadcasts even when only the version moved; `git`
-   * re-reads the git facts that the version fingerprint does not cover.
-   */
-  function refresh(options?: { force?: boolean; git?: boolean }): Promise<void> {
-    return serialize(async function () {
-      if (disposed) return
-      try {
-        const held = live.info()
-        // A cheap look decides whether a rebuild is worth it at all; the
-        // snapshot itself measures the version it actually read.
-        if (!options?.force && held && held.version === await fileVersion()) return
-        const next = await readSnapshot(settings(), options?.git === true || held === null)
-        live.apply(next)
-      } catch (err) {
-        logger.warn(`gitfeed: could not refresh the reader: ${messageOf(err)}`)
-      }
-    })
-  }
-
-  /** Arm the stream's next look at the data root, once per attached surface window. */
-  function armProbe(): void {
-    if (probeWaker || disposed || attached === 0) return
-    probeWaker = options.timers.timeout(function () {
-      probeWaker = null
-      void probe().finally(armProbe)
-    }, PROBE_MS)
-  }
-
-  function disarmProbe(): void {
-    if (!probeWaker) return
-    probeWaker()
-    probeWaker = null
-  }
-
-  /**
-   * Look for writes this process did not make: a CLI fetch, the agent tool, a
-   * second Host on the same data root, a hand edit. The probe is a handful of
-   * stats, and the reader is using a surface, so it also counts as activity for
-   * the scheduler's idle gate.
-   */
-  async function probe(): Promise<void> {
-    if (disposed || attached === 0) return
-    touch()
-    try {
-      const version = await fileVersion()
-      const held = live.info()
-      if (held && held.version === version) return
-      await refresh()
-    } catch (err) {
-      logger.warn(`gitfeed: could not probe ${root}: ${messageOf(err)}`)
-    }
-  }
-
-  /**
-   * The frames that bring a surface at `rev` current, then every change after
-   * it — as a pull source.
-   *
-   * This is the stream's backpressure. The consumer awaits the next frame and
-   * writes it before asking again, so a slow surface simply stops advancing its
-   * cursor; it never fills a queue here. When it falls behind the kept history,
-   * `framesAfter` answers with the whole state, which is the resync — the same
-   * rule that makes a dropped connection safe.
-   * @param rev - the revision the surface last saw; 0 when it has none.
-   * @param signal - cancels the pull; the calling response's close aborts it.
-   */
-  async function* frames(rev: number, signal: AbortSignal): AsyncGenerator<StreamFrame> {
-    attached += 1
-    armProbe()
-    try {
-      if (!live.info()) await refresh({ force: true, git: true })
-      if (!live.info()) {
-        yield { t: 'error', protocol: PROTOCOL, message: `gitfeed: ${root} has no readable feeds.json` }
-        return
-      }
-      let cursor = rev
-      // A function, not a narrowed `let`: both of these change from outside the
-      // generator, and an inlined check would be folded to its first value.
-      const stopped = function (): boolean { return disposed || signal.aborted }
-      while (!stopped()) {
-        const batch = live.framesAfter(cursor)
-        if (batch.length === 0) {
-          await live.changed(cursor, signal)
-          continue
-        }
-        for (const frame of batch) {
-          if (stopped()) return
-          if (frame.t !== 'error') cursor = frame.rev
-          yield frame
-        }
-      }
-    } finally {
-      attached -= 1
-      if (attached === 0) disarmProbe()
-    }
-  }
-
-  function settings(): RepoConfig {
-    return readRepoConfig(root)
-  }
-
-  /** A stable fingerprint of the named files, by size and modification time. */
-  async function statVersion(files: string[]): Promise<string> {
-    const hash = crypto.createHash('sha1')
-    for (const file of files) {
-      try {
-        const info = await stat(file)
-        hash.update(`${file}:${info.size}:${info.mtimeMs}\n`)
-      } catch {
-        hash.update(`${file}:missing\n`)
-      }
-    }
-    return hash.digest('hex')
-  }
-
-  /** Item shards in a fixed order: committed data first, then the local cache. */
-  async function itemShards(): Promise<string[]> {
-    return (await listShards(paths.items)).concat(await listShards(paths.localItems))
-  }
-
-  /**
-   * The state's fingerprint: every file a surface draws from.
-   *
-   * The attention log is deliberately absent. It is read on every build — a
-   * surface that loads gets the scores of that read — but it is not something a
-   * loaded surface draws, so an act must not wake every other surface to tell
-   * it that nothing it holds moved.
-   */
-  async function fileVersion(): Promise<string> {
-    const files = [paths.config, paths.feeds, paths.meta, paths.read, paths.starred, paths.localMeta]
-    let feedsExists = true
-    try {
-      await stat(paths.feeds)
-    } catch {
-      feedsExists = false
-    }
-    if (!feedsExists) return 'uninitialized'
-    files.push(...await itemShards())
-    return statVersion(files)
-  }
-
-  function snapshotFeed(f: FeedDefinition, m: MetaEntry): Feed {
-    let kind: SourceKind = 'rss'
-    try {
-      kind = kindOf(f)
-    } catch {
-      // A declaration this version cannot read is that feed's error to report,
-      // not the reader's: the fetch writes the complaint into meta.lastError and
-      // the row renders with it, instead of every /state call failing.
-      kind = 'rss'
-    }
-    return {
-      id: f.id,
-      title: m.title || f.title || f.id,
-      folder: f.folder || m.folder || null,
-      siteUrl: m.siteUrl || null,
-      url: f.url || m.url || null,
-      error: m.lastError || null,
-      checkedAt: m.checkedAt || null,
-      kind: kind,
-    }
-  }
-
-  /** One shard's content stamp: what changes when the file is written. */
-  async function shardStamp(file: string): Promise<string> {
-    try {
-      const info = await stat(file)
-      return `${info.size}:${info.mtimeMs}`
-    } catch {
-      return 'missing'
-    }
-  }
-
-  /**
-   * The archive as the fetcher needs it: every id already held, with the length
-   * of the body kept. Taken from the model the reader already has.
-   */
-  async function archivedLengths(): Promise<Map<string, number>> {
-    const { items } = await buildItems()
-    const known = new Map<string, number>()
-    for (const item of items) known.set(item.id, (item.summary || '').length)
-    return known
-  }
-
-  /** The item model, read from disk only when its own fingerprints moved. */
-  async function buildItems(): Promise<{ version: string; items: Item[] }> {
-    const shards = await itemShards()
-    // The same fingerprint the state version uses, computed in the one pass that
-    // also decides which shards still need parsing.
-    const hash = crypto.createHash('sha1')
-    const stamps = new Map<string, string>()
-    for (const file of shards) {
-      const stamp = await shardStamp(file)
-      stamps.set(file, stamp)
-      hash.update(`${file}:${stamp}\n`)
-    }
-    const version = hash.digest('hex')
-    if (itemsCache.version === version && itemsCache.items) return { version: version, items: itemsCache.items }
-
-    const items: Item[] = []
-    /** id -> index in `items`, so a later copy can replace an earlier one. */
-    const at = new Map<string, number>()
-    for (const file of shards) {
-      const stamp = stamps.get(file) || 'missing'
-      let parsed = shardRows.get(file)
-      if (!parsed || parsed.stamp !== stamp) {
-        const rows: Item[] = []
-        for (const row of await readNdjson<Item | null>(file)) {
-          if (!row || !row.id || !row.date) continue
-          rows.push(row)
-        }
-        parsed = { stamp: stamp, rows: rows }
-        shardRows.set(file, parsed)
-      }
-      for (const row of parsed.rows) {
-        const index = at.get(row.id)
-        if (index === undefined) {
-          at.set(row.id, items.length)
-          items.push(row)
-          continue
-        }
-        // Both stores can hold the same id: a repair lengthens the copy in the
-        // cache while the committed one came first, and a repair only ever
-        // grows a summary, so the longer copy is the one that was repaired.
-        if ((row.summary || '').length > (items[index].summary || '').length) items[index] = row
-      }
-    }
-    // A shard that is gone — pruned by retention, or a cache file removed — is
-    // not a shard any more; keeping its rows would resurrect deleted items.
-    const live = new Set(shards)
-    for (const file of Array.from(shardRows.keys())) if (!live.has(file)) shardRows.delete(file)
-    items.sort(compareItems)
-    itemsCache = { version: version, items: items }
-    return { version: version, items: items }
-  }
-
-  async function gitInfo(): Promise<GitInfo> {
-    if (gitCache.value && Date.now() - gitCache.at < 30000) return gitCache.value
-    const value = await readGitInfo(root)
-    gitCache = { at: Date.now(), value: value }
-    return value
-  }
-
-  /**
-   * The git facts a snapshot carries.
-   * @param recompute - read them again; otherwise the last read is reused while
-   * it is recent, because a status line five minutes old is not wrong, and
-   * spawning git on every probe is.
-   */
-  async function currentGit(recompute: boolean): Promise<GitInfo | null> {
-    const recent = gitFacts !== null && Date.now() - gitFacts.at < GIT_FACTS_MS
-    if (!recompute && recent && gitFacts) return gitFacts.value
-    const value = await gitInfo()
-    gitFacts = { at: Date.now(), value: value }
-    return value
-  }
-
-  /** A fingerprint of the names the searchable text carries. */
-  function titlesSignature(titles: Map<string, string>): string {
-    const hash = crypto.createHash('sha1')
-    for (const id of Array.from(titles.keys()).sort()) hash.update(`${id}\u0000${titles.get(id) || ''}\n`)
-    return hash.digest('hex')
-  }
-
-  /** Yield to the Host's event loop, so a long index build does not stall it. */
-  function yieldToLoop(): Promise<void> {
-    return new Promise(function (resolve) {
-      options.timers.timeout(function () { resolve() }, 0)
-    })
-  }
-
-  /**
-   * The searchable text of every row that needs one, built in chunks: the
-   * first query on a cold process reads every body, and the Host serves the
-   * whole application, so it must not block on that.
-   */
-  async function searchableTexts(items: readonly Item[], titles: Map<string, string>, signal?: AbortSignal): Promise<Map<string, string>> {
-    const signature = titlesSignature(titles)
-    const rebuildAll = searchTexts === null || signature !== searchTitles
-    if (rebuildAll) {
-      searchTexts = new Map()
-      searchTitles = signature
-    }
-    const texts = searchTexts as Map<string, string>
-    const todo: Item[] = []
-    const live = new Set<string>()
-    for (const item of items) {
-      live.add(item.id)
-      if (rebuildAll || !texts.has(item.id)) todo.push(item)
-    }
-    if (!rebuildAll) for (const id of texts.keys()) if (!live.has(id)) texts.delete(id)
-    for (let i = 0; i < todo.length; i++) {
-      signal?.throwIfAborted()
-      const item = todo[i]
-      texts.set(item.id, `${item.title} ${plainText(item.summary)} ${titles.get(item.feed) || item.feed}`.toLowerCase())
-      if (i % SEARCH_CHUNK === SEARCH_CHUNK - 1) await yieldToLoop()
-    }
-    return texts
-  }
-
-  /**
-   * One row as the archive holds it, body whole. The wire sends a digest of a
-   * row, so an article that opens asks for the one body it shows.
-   * @param id - item id.
-   * @returns the row, or null when the archive does not hold it.
-   */
-  async function itemBody(id: unknown): Promise<Item | null> {
-    const key = typeof id === 'string' ? id : ''
-    if (!key) return null
-    const { items } = await buildItems()
-    return items.find(function (item) { return item.id === key }) || null
-  }
-
-  /**
-   * Ask the archive which rows match a query.
-   * @param query - the reader's text; matched case-insensitively.
-   * @param signal - cancels the answer; an abandoned query stops building.
-   * @returns the matching ids in archive order.
-   */
-  async function search(query: unknown, signal?: AbortSignal): Promise<{ ids: string[] }> {
-    touch()
-    const needle = typeof query === 'string' ? query.trim().toLowerCase() : ''
-    if (!needle) return { ids: [] }
-    signal?.throwIfAborted()
-    const model = await buildItems()
-    signal?.throwIfAborted()
-    const data = await buildSnapshot(settings(), model.items)
-    const titles = new Map<string, string>(data.feeds.map(function (feed): [string, string] { return [feed.id, feed.title] }))
-    const texts = await searchableTexts(model.items, titles, signal)
-    signal?.throwIfAborted()
-    const ids: string[] = []
-    for (const item of model.items) {
-      const text = texts.get(item.id)
-      if (text !== undefined && text.indexOf(needle) !== -1) ids.push(item.id)
-    }
-    return { ids: ids }
-  }
-
-  async function buildSnapshot(cfg: RepoConfig, items: Item[]): Promise<ReaderStateData> {
-    const read: string[] = []
-    for (const row of await readNdjson<{ id: string } | null>(paths.read)) if (row && row.id) read.push(row.id)
-    const starred: string[] = []
-    for (const row of await readNdjson<{ id: string } | null>(paths.starred)) if (row && row.id) starred.push(row.id)
-
-    const dataMeta = await readJson<Record<string, MetaEntry | undefined>>(paths.meta, {})
-    const localMeta = await readJson<Record<string, MetaEntry | undefined>>(paths.localMeta, {})
-    const meta: Record<string, MetaEntry | undefined> = {}
-    const metaIds = new Set(Object.keys(dataMeta).concat(Object.keys(localMeta)))
-    for (const id of metaIds) {
-      const d: MetaEntry = dataMeta[id] || {}
-      const l: MetaEntry = localMeta[id] || {}
-      // The store whose check ran last describes the feed: the plugin fetches
-      // into the cache, so preferring the committed copy meant an upstream
-      // rename could never reach the sidebar. Fields it cannot fill fall back to
-      // the other store, but an absent error stays absent — a later successful
-      // check is what clears a failure.
-      const localWins = (l.checkedAt || '') > (d.checkedAt || '')
-      const newer: MetaEntry = localWins ? l : d
-      const older: MetaEntry = localWins ? d : l
-      meta[id] = {
-        title: newer.title || older.title || null,
-        folder: newer.folder || older.folder || null,
-        siteUrl: newer.siteUrl || older.siteUrl || null,
-        url: newer.url || older.url || null,
-        lastError: newer.lastError || null,
-        checkedAt: newer.checkedAt || older.checkedAt || null,
-      }
-    }
-
-    const subscribed = await readFeeds(root)
-    const feeds = subscribed.map(function (f) { return snapshotFeed(f, meta[f.id] || {}) })
-
-    // The acts that say which sources the reader reads, decayed to now. The
-    // first build of a root that predates the log seeds it from the stars, which
-    // are the one explicit interest the archive already holds.
-    const now = Date.now()
-    await seedFromStars(paths.interest, starred, items, now)
-    const interest = await interestOf(paths.interest, now)
-
-    const data: ReaderStateData = {
-      items: items,
-      read: read,
-      starred: starred,
-      feeds: feeds,
-      reader: cfg.reader,
-      interest: interest,
-      repo: root,
-      allowGit: allowGit,
-    }
-    return data
-  }
-
-  /**
-   * Read the complete reader state, or only its volatile facts when the caller
-   * already holds this version, or the item model when the caller already holds
-   * that model's version.
-   * @param {string} [knownVersion] state version the caller rendered last.
-   * @param {string} [knownItemsVersion] item-model version the caller holds.
-   * @returns {Promise<object>} state payload.
-   */
-  async function getState(knownVersion?: string, knownItemsVersion?: string, signal?: AbortSignal): Promise<StateResponse> {
-    touch()
-    const version = await fileVersion()
-    signal?.throwIfAborted()
-    let cfg
-    try {
-      cfg = settings()
-    } catch (err) {
-      return {
-        version: version,
-        error: messageOf(err),
-        items: [], read: [], starred: [], feeds: [],
-        reader: { hideEmptyFeeds: true, markReadOnScroll: true, groupBy: 'none' },
-        git: await gitInfo(),
-        schedule: await runner.status(),
-        repo: root,
-        allowGit: allowGit,
-        generatedAt: new Date().toISOString(),
-      }
-    }
-    const base = {
-      version: version,
-      // A poll that finds nothing new reuses the facts of the last read; the
-      // git subprocesses are not worth running for a status line.
-      git: await currentGit(false),
-      schedule: await runner.status(),
-      repo: root,
-      allowGit: allowGit,
-      generatedAt: new Date().toISOString(),
-    }
-    if (version === 'uninitialized') {
-      return Object.assign({}, base, {
-        error: `gitfeed: no feeds.json in ${root} — point config.repo at a gitfeed data root, or let the bundle seed an empty directory`,
-        items: [], read: [], starred: [], feeds: [], reader: cfg.reader,
-      })
-    }
-    if (knownVersion && knownVersion === version) return Object.assign({ unchanged: true }, base)
-    signal?.throwIfAborted()
-    const model = await buildItems()
-    signal?.throwIfAborted()
-    const data = await buildSnapshot(cfg, model.items)
-    // A reader that loaded over HTTP then opens the stream must be caught up
-    // from the same copy the stream holds, so this read feeds the live state too.
-    live.apply({
-      version: version,
-      itemsVersion: model.version,
-      items: model.items,
-      read: data.read,
-      starred: data.starred,
-      feeds: data.feeds,
-      reader: data.reader,
-      interest: data.interest,
-      git: base.git,
-      schedule: base.schedule,
-      repo: root,
-      allowGit: allowGit,
-    })
-    if (knownItemsVersion && knownItemsVersion === model.version) {
-      // The reader already holds this item model: send the marks and feeds that
-      // moved, and a flag instead of thousands of unchanged rows.
-      return Object.assign({}, base, data, {
-        itemsVersion: model.version,
-        itemsUnchanged: true,
-        items: undefined,
-      })
-    }
-    return Object.assign({}, base, data, { itemsVersion: model.version })
-  }
-
-  async function setState(file: string, ids: unknown, value: boolean): Promise<number> {
-    return serialize(async function () {
-      const clean = checkedIds(ids)
-      if (clean.length === 0) return 0
-      if (value) {
-        // Additive, and the append is ordered behind any rewrite of this file:
-        // a row already there is not written twice.
-        const have = new Set((await readNdjson<{ id: string }>(file)).map(function (r) { return r.id }))
-        const add: Array<{ id: string }> = []
-        for (const id of clean) {
-          if (have.has(id)) continue
-          have.add(id)
-          add.push({ id: id })
-        }
-        await appendNdjson(file, add)
-        return add.length
-      }
-      // Removing filters the rows it reads, so the whole step holds the file's
-      // write queue: a fetch appending between the read and the write would
-      // lose that row.
-      const drop = new Set(clean)
-      let changed = 0
-      await updateNdjson<{ id: string }>(file, function (rows) {
-        const kept = rows.filter(function (r) { return !drop.has(r.id) })
-        changed = rows.length - kept.length
-        return changed === 0 ? null : kept
-      })
-      return changed
-    })
-  }
-
-  /**
-   * Mark items read or unread.
-   * @param {string[]} ids item ids.
-   * @param {boolean} read target state.
-   * @returns {Promise<{ok:boolean, changed:number, version:string}>} settled result.
-   */
-  async function mark(ids: unknown, read: boolean): Promise<{ ok: boolean; changed: number; version: string }> {
-    touch()
-    const clean = checkedIds(ids)
-    const changed = await setState(paths.read, clean, read)
-    // The git facts are left alone on purpose: a mark dirties the worktree, but
-    // the sync job that the nudge below arms commits it and re-reads them, and
-    // re-running `git status` on every scroll mark is a worse trade.
-    // The mark is what this surface just did, so it does not need the row text:
-    // one frame carries the ids to every other surface, and the revision keeps
-    // a reconnecting one from seeing it twice.
-    live.mark(clean, read)
-    if (changed > 0) syncJob.nudge(AUTO_SYNC_DEBOUNCE_MS, AUTO_SYNC_MAX_WAIT_MS)
-    return { ok: true, changed: changed, version: await fileVersion() }
-  }
-
-  /**
-   * Star or unstar items.
-   * @param {string[]} ids item ids.
-   * @param {boolean} starred target state.
-   * @returns {Promise<{ok:boolean, changed:number, version:string}>} settled result.
-   */
-  async function star(ids: unknown, starred: boolean): Promise<{ ok: boolean; changed: number; version: string }> {
-    touch()
-    const clean = checkedIds(ids)
-    const changed = await setState(paths.starred, clean, starred)
-    live.star(clean, starred)
-    if (changed > 0) syncJob.nudge(AUTO_SYNC_DEBOUNCE_MS, AUTO_SYNC_MAX_WAIT_MS)
-    return { ok: true, changed: changed, version: await fileVersion() }
-  }
-
-  /**
-   * Record that the reader opened or starred a row: attention, not state.
-   *
-   * The log is committed reader state, so it rides Sync with the marks; what it
-   * does not do is move the state version, which is why ordering a surface
-   * already holds never re-ranks under it. A bad kind is the caller's error;
-   * the rest is deduplicated rather than rejected, because recording attention
-   * twice is not something the reader should ever see a failure for.
-   * @param kind `open` or `star`.
-   * @param item the row.
-   * @param feed the source it belongs to.
-   * @returns whether the log grew.
-   */
-  async function attention(kind: unknown, item: unknown, feed: unknown): Promise<{ ok: boolean; recorded: boolean }> {
-    touch()
-    if (kind !== 'open' && kind !== 'star') throw new InputError('attention: kind must be open or star')
-    const id = typeof item === 'string' ? item.trim() : ''
-    const source = typeof feed === 'string' ? feed.trim() : ''
-    if (!id || id.length >= 64) throw new InputError('attention: item id is required')
-    if (!source || source.length >= 200) throw new InputError('attention: feed id is required')
-    const event: InterestEvent = { kind: kind, feed: source, item: id, at: new Date().toISOString() }
-    const recorded = await recordAttention(paths.interest, event)
-    // The log is committed reader state like a mark, so an act arms the same
-    // sync; the debounce coalesces a sweep of selection into one commit.
-    if (recorded) syncJob.nudge(AUTO_SYNC_DEBOUNCE_MS, AUTO_SYNC_MAX_WAIT_MS)
-    return { ok: true, recorded: recorded }
-  }
-
-  async function ensureLocalMeta(): Promise<void> {
-    await mkdir(paths.localItems, { recursive: true })
-    try {
-      await stat(paths.localMeta)
-    } catch {
-      try {
-        await copyFile(paths.meta, paths.localMeta)
-      } catch {
-        // no committed meta yet; the first run just takes longer
-      }
-    }
-  }
-
-  /**
-   * Write the custom feed skeleton, and never over a script that exists.
-   * @param input `name` is the script's file name, without the `.mjs`.
-   * @returns the path as `feeds.json` writes it, plus what to do next.
-   */
-  async function scaffoldCustomFeed(input: { name?: string } | null | undefined) {
-    touch()
-    const target = scaffoldPath(root, input?.name || '')
-    await mkdir(path.dirname(target.file), { recursive: true })
-    try {
-      await writeFile(target.file, CUSTOM_FEED_TEMPLATE, { flag: 'wx' })
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
-        throw new InputError(`custom feed: ${target.script} already exists; pick another name`)
-      }
-      throw err
-    }
-    return {
-      script: target.script,
-      file: target.file,
-      next: 'fill in the items loop, then check it with gitfeed_custom_feed check',
-    }
-  }
-
-  /**
-   * Run a script exactly the way the fetcher would, and write nothing: the loop
-   * an author iterates in.
-   * @param input the script, the URL to hand it, and its options.
-   * @returns what the script returned, with a sample of the items.
-   */
-  async function checkCustomFeed(input: { script?: string; url?: string; options?: unknown } | null | undefined) {
-    if (!input?.script) throw new InputError('script is required')
-    const declaration = declarationOf({ type: 'custom', script: input.script, options: input.options })
-    if (declaration === null) throw new InputError('script is required')
-    const file = await scriptFile(root, declaration.script)
-    const url = sourceUrl(input.url || 'https://example.com/')
-    const controller = new AbortController()
-    // The same deadline the fetcher would give it, armed on the Host timer.
-    const cancel = options.timers.timeout(function () { controller.abort() }, settings().fetch.timeoutMs)
-    try {
-      const feed = await runCustom(file, {
-        id: 'check',
-        url: url,
-        title: null,
-        options: declaration.options,
-        meta: { etag: null, lastModified: null },
-        fetch: globalThis.fetch,
-        signal: controller.signal,
-      })
-      return {
-        ok: true,
-        script: declaration.script,
-        url: url,
-        title: feed.title,
-        siteUrl: feed.siteUrl,
-        count: feed.items.length,
-        dated: feed.items.filter(function (item) { return item.date !== '' }).length,
-        sample: feed.items.slice(0, 5).map(function (item) {
-          return {
-            title: item.title.slice(0, 90),
-            link: item.link,
-            date: item.date,
-            author: item.author.slice(0, 60),
-          }
-        }),
-      }
-    } finally {
-      cancel()
-    }
-  }
-
-  /**
-   * The custom feeds the reader has declared, with what each one archived.
-   * @returns every declaration and its item count and last error.
-   */
-  async function customFeeds() {
-    const { data } = await snapshotNow()
-    const declared = await readFeeds(root)
-    const counts = new Map<string, number>()
-    for (const item of data.items) counts.set(item.feed, (counts.get(item.feed) || 0) + 1)
-    const rows = []
-    for (const feed of declared) {
-      if (feed.type !== 'custom') continue
-      const shown = data.feeds.find(function (candidate) { return candidate.id === feed.id })
-      rows.push({
-        id: feed.id,
-        title: shown ? shown.title : (feed.title || feed.id),
-        folder: feed.folder || null,
-        script: feed.script || null,
-        items: counts.get(feed.id) || 0,
-        error: shown ? shown.error : null,
-      })
-    }
-    return { count: rows.length, feeds: rows }
-  }
-
+function bootstrap(rec: ServiceRecord): void {
   // The runner owns every periodic run: the fetch job's per-feed clocks
   // and the sync job's push/pull debounce both live here, not in a timer.
-  const runner: JobRunner = createJobRunner({
-    root: root,
-    logger: logger,
-    idleMinutes: idleMinutes,
-    timers: options.timers,
+  rec.runner = createJobRunner({
+    root: rec.root,
+    logger: rec.logger,
+    idleMinutes: rec.idleMinutes,
+    timers: rec.timers,
     // A run wrote something: drop the caches keyed on those files and let the
     // stream read once and announce what the run actually changed. A refresh
     // run only writes the ignored local cache, so it does not invalidate what
     // git reports.
     onRun: function (id) {
-      invalidateItems()
-      if (id !== 'fetch') invalidateGit()
-      void refresh({ force: true, git: id !== 'fetch' })
+      invalidateItems(rec)
+      if (id !== 'fetch') invalidateGit(rec)
+      void refresh(rec, { force: true, git: id !== 'fetch' })
     },
   })
 
-  const refreshJob = runner.add(createFetchJob({
-    refreshMinutes: refreshMinutes,
-    maxIntervalMinutes: maxIntervalMinutes,
-    adaptive: adaptive,
-    idleMinutes: idleMinutes,
-    loadFeeds: function () { return loadRuntimeFeeds(root) },
+  rec.refreshJob = rec.runner.add(createFetchJob({
+    refreshMinutes: rec.refreshMinutes,
+    maxIntervalMinutes: rec.maxIntervalMinutes,
+    adaptive: rec.adaptive,
+    idleMinutes: rec.idleMinutes,
+    loadFeeds: function () { return loadRuntimeFeeds(rec.root) },
     fetch: async function (scope) {
-      if (disposed) throw new Error('gitfeed is unloading')
-      await ensureLocalMeta()
+      if (rec.disposed) throw new Error('gitfeed is unloading')
+      await ensureLocalMeta(rec)
       return runFetch({
-        root: root,
+        root: rec.root,
         dataDir: '.local',
         only: scope.only,
         feeds: scope.feeds,
         // The merged model is already in memory; the run does not read the
         // archive again to learn which ids it holds.
-        known: await archivedLengths(),
-        // Unsubscribing removes that feed's rows itself, so there is nothing
-        // for a run to sweep — and sweeping reads every shard to find that out.
-        pruneOrphans: false,
+        known: await archivedLengths(rec),
+        signal: rec.stopping.signal,
       })
     },
   }))
 
-  const syncJob = runner.add(createSyncJob({
-    allowGit: allowGit,
-    syncMinutes: syncMinutes,
-    maxIntervalMinutes: syncMaxMinutes,
-    gitInfo: gitInfo,
-    pull: function () { return pullRemote(root) },
-    sync: function () { return syncRemote(root) },
-    version: fileVersion,
+  rec.syncJob = rec.runner.add(createSyncJob({
+    allowGit: rec.allowGit,
+    syncMinutes: rec.syncMinutes,
+    maxIntervalMinutes: rec.syncMaxMinutes,
+    gitInfo: gitInfo.bind(null, rec),
+    pull: function () { return pullRemote(rec.root) },
+    sync: function () { return syncRemote(rec.root) },
+    version: fileVersion.bind(null, rec),
   }))
+}
 
-  /**
-   * Run the fetcher into the gitignored `.local/` cache.
-   * @param {{only?: string, feeds?: string[], all?: boolean}} [opts] restrict the run; the default is every feed.
-   * @returns {Promise<object>} fetcher result.
-   */
-  async function runLocalFetch(opts?: { only?: string; feeds?: string[]; all?: boolean }): Promise<FetchResult> {
-    touch()
-    const run = await refreshJob.runNow(opts || { all: true })
-    // The run's own onRun already refreshed; awaiting it here makes the
-    // response the signal that the rows are on the wire, not a race with it.
-    await refresh({ force: true })
-    if (run.value) return run.value as FetchResult
-    throw new Error(run.outcome.summary || 'fetch failed')
-  }
-
-  /**
-   * Subscribe to a feed URL, or to a site URL whose feed is discovered.
-   *
-   * With a `source` declaration the URL is taken as given: the spec is the
-   * recipe, so there is no page to look for a feed tag on, and validation here
-   * is what discovery would have been.
-   * @param {{url?: string, folder?: string, title?: string, source?: unknown}} input subscription request.
-   * @returns {Promise<object>} the new feed entry.
-   */
-  async function addFeed(
-    input: {
-      url?: string
-      folder?: string
-      title?: string
-      type?: string
-      script?: string
-      options?: unknown
-    } | null | undefined,
-  ): Promise<FeedDefinition> {
-    touch()
-    const raw = (input?.url || '').trim()
-    if (!raw) throw new InputError('a feed or site URL is required')
-    // A custom feed is its own recipe: validating the declaration is what
-    // discovery would have been, and the URL is taken as given.
-    const declared = declarationOf({ type: input?.type, script: input?.script, options: input?.options })
-    const resolved = declared === null
-      ? await resolveFeed(raw)
-      : { url: sourceUrl(raw), title: (input?.title || '').trim() || null, items: 0 }
-    // Resolved before the subscription exists: a missing script is a rejected
-    // add, not a red row the user has to unsubscribe from.
-    if (declared !== null) await scriptFile(root, declared.script)
-
-    // The subscription list is read-modify-write, so the whole step queues
-    // behind every other one: two subscribes at once would otherwise both read
-    // the same list and the second would drop the first. Discovery is done
-    // above, outside the queue, so a slow site does not hold it.
-    const entry = await serialize(async function () {
-      const feeds = await readFeeds(root)
-      if (indexFeeds(feeds).has(normalizeUrl(resolved.url))) {
-        throw new InputError(`already subscribed to ${resolved.url}`)
-      }
-
-      let id = feedIdFor(resolved.url)
-      const used = new Set(feeds.map(function (f) { return f.id }))
-      const base = id
-      let n = 2
-      while (used.has(id)) id = `${base}-${n++}`
-
-      const folder = (input?.folder || '').trim() || 'Uncategorized'
-      const added: FeedDefinition = { id: id, url: resolved.url, title: resolved.title || id, folder: folder }
-      // Stored as written: it stays readable in feeds.json, and the script is
-      // the user's, so it is never copied into the package.
-      if (declared !== null) {
-        added.type = 'custom'
-        added.script = declared.script
-        if (declared.options !== undefined) added.options = declared.options
-      }
-      feeds.push(added)
-      await writeFeeds(root, feeds)
-      return added
-    })
-    invalidate()
-    syncJob.nudge(AUTO_SYNC_DEBOUNCE_MS, AUTO_SYNC_MAX_WAIT_MS)
-    // The new row is drawn from the stream, so announce it before the one-off
-    // fetch starts: the subscription existing is the news here.
-    await refresh({ force: true, git: true })
-
-    // Pull this one feed into the local cache so it appears immediately. A
-    // failure here still leaves the subscription in place.
-    try {
-      await runLocalFetch({ only: entry.id })
-    } catch (err) {
-      logger.warn(`gitfeed: initial fetch for ${entry.id} failed: ${messageOf(err)}`)
-    }
-    return entry
-  }
-
-  /**
-   * Delete the archived rows of feeds that no longer exist.
-   *
-   * Both stores are rewritten in place, the same way an unsubscribe does it: a
-   * row whose source is gone has no title, no folder, and nothing that could
-   * open it, so leaving it behind would only leave ghosts in the list.
-   * @param {string[]} ids feed ids whose rows should go.
-   */
-  async function removeItemsOf(ids: string[]): Promise<void> {
-    const gone = new Set(ids)
-    for (const dir of [paths.items, paths.localItems]) {
-      for (const file of await listShards(dir)) {
-        await updateNdjson<{ feed: string } | null>(file, function (rows) {
-          const kept = rows.filter(function (row) { return row && !gone.has(row.feed) })
-          return kept.length === rows.length ? null : kept
-        })
-      }
-    }
-  }
-
-  /**
-   * Unsubscribe and remove that feed's items from both stores.
-   * @param {string} id feed id.
-   * @returns {Promise<{ok:boolean, removed:string}>} settled result.
-   */
-  async function removeFeed(id: string | undefined): Promise<{ ok: boolean; removed: string }> {
-    touch()
-    const key = id || ''
-    if (!key) throw new InputError('feed id is required')
-    // One queue for every subscription mutation and every mark, so the list and
-    // the shards it rewrites cannot interleave with another one.
-    await serialize(async function () {
-      const feeds = await readFeeds(root)
-      const next = feeds.filter(function (f) { return f.id !== key })
-      if (next.length === feeds.length) throw new InputError('no such feed')
-      await writeFeeds(root, next)
-      await removeItemsOf([key])
-    })
-    invalidate()
-    syncJob.nudge(AUTO_SYNC_DEBOUNCE_MS, AUTO_SYNC_MAX_WAIT_MS)
-    await refresh({ force: true, git: true })
-    return { ok: true, removed: key }
-  }
-
-  /**
-   * The subscription list as an OPML document.
-   *
-   * The export is a copy, not a backup: a custom feed travels as its URL, so
-   * the script behind it stays in the data repository that declared it.
-   * @returns {Promise<string>} the document.
-   */
-  async function exportOpml(): Promise<string> {
-    touch()
-    return writeOpml(await readFeeds(root))
-  }
-
-  /**
-   * Merge or replace the subscription list from an OPML document.
-   *
-   * Merge adds what is new, takes the folders the file carries, and keeps the
-   * subscriptions it does not mention. Replace makes the file the whole list,
-   * and the sources that leave with it take their rows with them, so a replace
-   * does not leave items no source can open behind.
-   * @param {string} xml OPML document.
-   * @param {boolean} replace whether the document replaces the list.
-   * @returns {Promise<ImportSummary>} counts for the reader's report.
-   */
-  async function importOpml(xml: string, replace: boolean): Promise<ImportSummary> {
-    touch()
-    const document = (xml || '').trim()
-    if (!document) throw new InputError('an OPML document is required')
-    let addedIds: string[] = []
-    const summary = await serialize(async function () {
-      const before = await readFeeds(root)
-      const beforeKeys = new Set(indexFeeds(before).keys())
-      const result = await mergeOpml(root, document, { replace: replace })
-      const after = indexFeeds(await readFeeds(root))
-      if (replace) {
-        const remaining = new Set(Array.from(after.values(), function (feed) { return feed.id }))
-        const gone = before
-          .map(function (feed) { return feed.id })
-          .filter(function (id) { return !remaining.has(id) })
-        if (gone.length) await removeItemsOf(gone)
-      }
-      addedIds = Array.from(after.entries())
-        .filter(function ([key]) { return !beforeKeys.has(key) })
-        .map(function ([, feed]) { return feed.id })
-      return result
-    })
-    invalidate()
-    syncJob.nudge(AUTO_SYNC_DEBOUNCE_MS, AUTO_SYNC_MAX_WAIT_MS)
-    await refresh({ force: true, git: true })
-    // The new subscriptions have nothing archived yet. Fetch just those, off
-    // the response: forty feeds take longer than a click should, and each one
-    // that answers reaches the reader over the stream as it lands.
-    if (addedIds.length) {
-      void runLocalFetch({ feeds: addedIds }).catch(function (err: unknown) {
-        logger.warn(`gitfeed: initial fetch after import failed: ${messageOf(err)}`)
-      })
-    }
-    return summary
-  }
-
-  /**
-   * Move one subscription to another folder.
-   *
-   * Only the folder changes. The entry keeps its id, url, title, and any
-   * custom-feed declaration, so a move never re-identifies a feed or makes the
-   * fetcher start over. An empty folder is written as `Uncategorized` rather
-   * than dropped: a subscription always names the folder it is in, which is
-   * what lets the reader show one list whatever feeds.json was written by.
-   * @param {string} id feed id.
-   * @param {string} [folder] folder to move it to.
-   * @returns {Promise<FeedDefinition>} the entry as written.
-   */
-  async function setFeedFolder(id: string | undefined, folder: string | undefined): Promise<FeedDefinition> {
-    touch()
-    const key = (id || '').trim()
-    if (!key) throw new InputError('feed id is required')
-    const name = (folder || '').trim() || 'Uncategorized'
-    // Same queue as every other subscription write: the list is
-    // read-modify-write, so a move must not land on a list a subscribe is
-    // still replacing.
-    const moved = await serialize(async function () {
-      const feeds = await readFeeds(root)
-      const entry = feeds.find(function (f) { return f.id === key })
-      if (!entry) throw new InputError('no such feed')
-      if ((entry.folder || '') === name) return entry
-      entry.folder = name
-      await writeFeeds(root, feeds)
-      return entry
-    })
-    invalidate()
-    // feeds.json is already a sync target, so the move is pushed whatever
-    // pushed the last subscription change.
-    syncJob.nudge(AUTO_SYNC_DEBOUNCE_MS, AUTO_SYNC_MAX_WAIT_MS)
-    await refresh({ force: true, git: true })
-    return moved
-  }
-
-  async function gitAction(name: string): Promise<GitActionResult> {
-    touch()
-    if (!allowGit) throw new Error('git actions are disabled by the gitfeed plugin config (allowGit)')
-    const info = await readGitInfo(root)
-    if (!info.repo) {
-      const localCopy = `gitfeed: ${root} is a local copy, not a git working tree`
-      throw new Error(`${localCopy} — clone your own repository there (or point config.repo at one) to ${name}`)
-    }
-    if (name === 'sync' && (info.remotes || []).indexOf('origin') === -1) {
-      throw new Error(`gitfeed: ${root} has no \`origin\` remote — add one with \`git remote add origin <url>\` and try Sync again`)
-    }
-    const run = await syncJob.runNow({ action: name })
-    invalidate()
-    await refresh({ force: true, git: true })
-    const value = run.value
-    if (value && typeof value === 'object') return value as GitActionResult
-    return { ok: false, action: name, error: run.outcome.summary || 'git action failed' }
-  }
-
-  async function snapshotNow(): Promise<{ cfg: RepoConfig; version: string; data: ReaderStateData }> {
-    const version = await fileVersion()
-    if (version === 'uninitialized') throw new Error(`gitfeed: no feeds.json in ${root}`)
-    const cfg = settings()
-    const model = await buildItems()
-    return { cfg: cfg, version: version, data: await buildSnapshot(cfg, model.items) }
-  }
-
-  async function listForTool(input: ListToolInput | null | undefined) {
-    const opts: ListToolInput = input || {}
-    const { data } = await snapshotNow()
-    const query = typeof opts.query === 'string' ? opts.query.trim().toLowerCase() : ''
-    const feedId = typeof opts.feed === 'string' ? opts.feed.trim() : typeof opts.feedId === 'string' ? opts.feedId.trim() : ''
-    const unreadOnly = opts.unreadOnly === true
-    const starredOnly = opts.starredOnly === true
-    const limit = Math.max(1, Math.min(100, Number(opts.limit) || 30))
-    const readSet = new Set(data.read)
-    const starredSet = new Set(data.starred)
-    const feedNames = new Map<string, string>(data.feeds.map(function (f): [string, string] { return [f.id, f.title] }))
-    const hits = []
-    for (const item of data.items) {
-      if (feedId && item.feed !== feedId) continue
-      if (unreadOnly && readSet.has(item.id)) continue
-      if (starredOnly && !starredSet.has(item.id)) continue
-      if (query) {
-        const hay = (`${item.title} ${plainText(item.summary)} ${feedNames.get(item.feed) || item.feed}`).toLowerCase()
-        if (hay.indexOf(query) === -1) continue
-      }
-      hits.push({
-        id: item.id,
-        title: item.title,
-        feed: item.feed,
-        feedTitle: feedNames.get(item.feed) || item.feed,
-        date: item.date,
-        link: item.link || null,
-        unread: !readSet.has(item.id),
-        starred: starredSet.has(item.id),
-        summary: plainText(item.summary).slice(0, 240),
-      })
-      if (hits.length >= limit) break
-    }
-    return {
-      returned: hits.length,
-      unread: data.items.reduce(function (n, item) { return readSet.has(item.id) ? n : n + 1 }, 0),
-      feeds: data.feeds.length,
-      items: hits,
-    }
-  }
-
-  async function getForTool(id: string) {
-    const { data } = await snapshotNow()
-    const item = data.items.find(function (candidate) { return candidate.id === id })
-    if (!item) throw new Error(`no item with id ${id}`)
-    const readSet = new Set(data.read)
-    const starredSet = new Set(data.starred)
-    return {
-      id: item.id,
-      title: item.title,
-      feed: item.feed,
-      date: item.date,
-      link: item.link || null,
-      author: item.author || null,
-      unread: !readSet.has(item.id),
-      starred: starredSet.has(item.id),
-      summary: plainText(item.summary).slice(0, 12000),
-    }
-  }
-
-  async function statusForTool() {
-    const { data, version } = await snapshotNow()
-    const readSet = new Set(data.read)
-    const unread = data.items.reduce(function (n, item) { return readSet.has(item.id) ? n : n + 1 }, 0)
-    // The folder names travel with the counts: a caller that moves a feed has
-    // no datalist to pick from, so the names it could move it to are the ones
-    // already in use rather than a spelling of its own.
-    const folders = new Map<string, number>()
-    for (const feed of data.feeds) {
-      const name = feed.folder || 'Uncategorized'
-      folders.set(name, (folders.get(name) || 0) + 1)
-    }
-    return {
-      repo: root,
-      version: version,
-      feeds: data.feeds.length,
-      folders: Array.from(folders.entries())
-        .sort(function (a, b) { return a[0].localeCompare(b[0]) })
-        .map(function (entry) { return { name: entry[0], feeds: entry[1] } }),
-      items: data.items.length,
-      unread: unread,
-      starred: data.starred.length,
-      failingFeeds: data.feeds.filter(function (f) { return !!f.error }).length,
-      git: await currentGit(true),
-      schedule: await runner.status(),
-      allowGit: allowGit,
-    }
-  }
-
-  function dispose(): void {
-    disposed = true
-    disarmProbe()
-    live.wake()
-    attached = 0
-    runner.dispose()
-    invalidate()
-  }
-
-  return {
-    root: root,
-    getState: getState,
-    mark: mark,
-    star: star,
-    attention: attention,
-    addFeed: addFeed,
-    importOpml: importOpml,
-    exportOpml: exportOpml,
-    removeFeed: removeFeed,
-    setFeedFolder: setFeedFolder,
-    runLocalFetch: runLocalFetch,
-    scaffoldCustomFeed: scaffoldCustomFeed,
-    checkCustomFeed: checkCustomFeed,
-    customFeeds: customFeeds,
-    pull: function () { return gitAction('pull') },
-    sync: function () { return gitAction('sync') },
-    settings: settings,
-    listForTool: listForTool,
-    getForTool: getForTool,
-    statusForTool: statusForTool,
-    search: search,
-    itemBody: itemBody,
-    frames: frames,
-    /** Re-read the data root and announce what changed (the stream's probe, by hand). */
-    refresh: refresh,
-    dispose: dispose,
-  }
+function dispose(rec: ServiceRecord): void {
+  rec.disposed = true
+  // Before the runner: a run it is about to forget should stop asking the
+  // network for feeds.
+  rec.stopping.abort()
+  disarmProbe(rec)
+  rec.live.wake()
+  rec.attached = 0
+  rec.runner.dispose()
+  invalidate(rec)
 }
 
 export type GitfeedService = ReturnType<typeof createGitfeed>

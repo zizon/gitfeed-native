@@ -1,37 +1,65 @@
 /** Fixed-height virtualized item list with group headers and read-on-scroll. */
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from '../react.js'
-import type { ReactNode } from '../react.js'
-import {
-  Button,
-  IconChevronDownOutlineRegular,
-  Menu,
-  MenuItemButton,
-} from '@deepseek-ai/dsh-client-ui-primitives'
+import type { RefObject } from '../react.js'
 import { AT_TOP, GROUP_H, ROW_H, ROW_H_PLAIN } from '../constants.js'
-import { entriesOf, exhaustedGroups, folderNames, sourceOrder } from '../derive.js'
-import type { Entry, GroupEntry } from '../derive.js'
+import { entriesOf, exhaustedGroups, sourceOrder } from '../derive.js'
+import type { Entry, SourceOrder } from '../derive.js'
 import { groupFloorOf, offsetIndex, scrollAfterRebuild, scrollReads, settledAbove, windowOf } from '../window.js'
-import type { ItemListProps, MarkScope } from '../types.js'
-import { fmtTime } from '../util.js'
-import { IconStar } from '../icons.js'
-import { EmptyState, IconButton } from './Controls.js'
-import { FolderMenu } from './FolderMenu.js'
+import type { ClientState, Controller, Filter, ItemListProps, MarkCounts, MarkScope } from '../types.js'
+import type { GroupBy, Item } from '../../shared/types.js'
+import type { Translate } from '../locales.js'
+import { bandParts, ListBody, ListHeader, listRowsOf, MarkArea, placeholderOf } from './item-list-parts.js'
+
+/**
+ * The list with no rows to show: the loading skeleton, or the reason there is
+ * nothing. The count bar is the same one the rows get, so it does not jump.
+ */
 
 /** One menu row: the scope label on the left and what it would touch on the right. */
-function scopeLabel(label: string, n: number) {
-  return (
-    <span className="gf-menu-row">
-      <span>{label}</span>
-      <span className="gf-menu-count">{String(n)}</span>
-    </span>
+/**
+ * The one menu row the view's own button does not cover: every unread item in the
+ * library, offered only when that is a different set. Taking it back is a second
+ * press, which is what `armed` is.
+ */
+
+
+/** One section header: its name, and the actions taken while reading a feed. */
+
+/** The two buttons a confirming section header offers. */
+
+/** A source section's actions: move it, stop following it, mark it read. */
+
+/** One item row: the row's own target, its digest line, and the star beside it. */
+
+/** The rows and section headers for one list, in the order the rail shows. */
+function entriesFor(
+  list: Item[], groupBy: GroupBy, rowH: number, order: SourceOrder, controller: Controller,
+): Entry[] {
+  return entriesOf(
+    list,
+    groupBy,
+    { row: rowH, group: GROUP_H },
+    function (id) { return controller.feedTitle(id) },
+    function (id) { return controller.feedFolder(id) },
+    function (key) {
+      const rank = groupBy === 'feed' ? order.rank.get(key) : order.folders.get(key)
+      return rank === undefined ? order.next : rank
+    },
   )
 }
+
+/** The bar over the list: how many rows the view has, and the arrivals it holds. */
+
+/**
+ * The floating bar that marks the current view, with the one scope the view does
+ * not reach — every unread item in the library — in its menu.
+ */
+
 
 /** How long a finished section fades before the list is rebuilt without it. */
 const FADE_MS = 380
 /** Rows the first paint fakes: more than any pane of this list holds. */
-const SKELETON_ROWS = 8
 
 /**
  * Row-shaped blocks at the height the rows will have, so the first paint does
@@ -41,21 +69,6 @@ const SKELETON_ROWS = 8
  * @param props.label - what the loading state is called, for a screen reader.
  * @returns the placeholder rows.
  */
-function Skeleton({ height, digest, label }: { height: number; digest: boolean; label: string }) {
-  return (
-    <div className="gf-skel" role="status" aria-label={label}>
-      {Array.from({ length: SKELETON_ROWS }, function (_, i) {
-        return (
-          <div key={i} className="gf-skel-row" style={{ height: height }}>
-            <div className="gf-skel-line" style={{ width: '62%' }} />
-            <div className="gf-skel-line" style={{ width: '34%' }} />
-            {digest ? <div className="gf-skel-line" style={{ width: '88%' }} /> : null}
-          </div>
-        )
-      })}
-    </div>
-  )
-}
 /**
  * Read rows above the band before a scroll releases them in one batch. One
  * rebuild per row would re-derive the whole archive every 66 pixels; this is
@@ -63,654 +76,530 @@ function Skeleton({ height, digest, label }: { height: number; digest: boolean; 
  */
 const TRIM_AT = 24
 
-export function ItemList({ state, controller, t, wide }: ItemListProps) {
+/** The refs the scroll bookkeeping lives on; they outlive every render. */
+interface ViewportRefs {
+  viewportRef: RefObject<HTMLDivElement>
+  /** The scroll offset as the DOM has it — a render cannot read the element. */
+  topRef: { current: number }
+  /** Where the list was last drawn from, so a rebuild can put the edge back. */
+  drawn: { current: { entries: Entry[]; offsets: number[]; scope: string } | null }
+  /** Whether the viewport has left the top since a refresh held rows for it. */
+  leftTop: { current: boolean }
+  raf: { current: number }
+  /** The row the reader was last moved to, so a rebuild does not drag them off it. */
+  lastSelected: { current: string | null }
+  /** The rows that have been on screen, and since when. */
+  seen: { current: Map<string, number> }
+}
+
+/** The render values one scroll pass works with. */
+interface ListView {
+  entries: Entry[]
+  offsets: number[]
+  groupFloor: number[]
+  groupBy: GroupBy
+  itemIndex: Map<string, number>
+  markOnScroll: boolean
+  read: Set<string>
+  filter: Filter
+  controller: Controller
+  current: string | null
+  listLen: number
+  scopeKey: string
+  height: number
+  band: ReturnType<typeof windowOf>
+}
+
+/** The rail's order over sources: the one the load settled, not the read set. */
+function sourceOrderOf(state: ClientState, t: Translate): SourceOrder {
+  const interestOrder = state.interestOrder === null ? true : state.interestOrder
+  const scores = interestOrder ? state.ranks : null
+  return sourceOrder(state.feeds, scores, t('feed.uncategorized'))
+}
+
+/** The item index of the entries, for the row the keyboard moved to. */
+function itemIndexes(entries: Entry[]): Map<string, number> {
+  const map = new Map<string, number>()
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i]
+    if (entry.kind === 'row') map.set(entry.item.id, i)
+  }
+  return map
+}
+
+/**
+ * The section the open article is in keeps its rows, even once nothing in it is
+ * unread: the reader is looking at that row, and fading it out under the click
+ * is the one movement opening an article should not cause. The section leaves
+ * when the reader closes the article or moves to another one.
+ */
+function holdKeyOf(
+  entries: Entry[], itemIndex: Map<string, number>, groupFloor: number[], current: string | null,
+): string | null {
+  if (!current) return null
+  const index = itemIndex.get(current)
+  if (index === undefined) return null
+  const floor = groupFloor[index]
+  if (floor < 0) return null
+  const header = entries[floor]
+  return header.kind === 'group' ? header.group.key : null
+}
+
+/**
+ * The list's side effects for one viewport pass: the rows the scroll read, the
+ * rows it can let go, and whether a held arrival may land. The band is not one
+ * of them — it comes from the render that carries the offset.
+ */
+function settleNow(refs: ViewportRefs, view: ListView, at: number, h: number): void {
+  // Held arrivals land when the reader leaves the top and comes back. Sitting
+  // at the top is not leaving it: the rows would push the one being read down.
+  if (at <= AT_TOP) {
+    if (refs.leftTop.current) {
+      refs.leftTop.current = false
+      view.controller.releaseHeld()
+    }
+  } else {
+    refs.leftTop.current = true
+  }
+  // Rows above the band that were read on the way here were kept only so the
+  // list would not move; the anchor holds the position now. A flat list has no
+  // section to fade them out, so the band is what lets them go.
+  if (view.filter === 'unread') {
+    const next = windowOf({
+      entries: view.entries, offsets: view.offsets, groupFloor: view.groupFloor,
+      top: at, height: h, groupBy: view.groupBy,
+    })
+    const settled = settledAbove(view.entries, next.start, view.read)
+    if (settled.length >= TRIM_AT) view.controller.trimSticky(settled)
+  }
+  // A row counts as read once it has been on screen long enough to be seen and
+  // the viewport has scrolled past it; with the preference off, nothing is timed
+  // and nothing is marked. This pass runs on a rebuild as well as on a scroll,
+  // which is why only a row the band carried over is read: rows a rebuild pushed
+  // down were never scrolled past.
+  if (!view.markOnScroll) {
+    refs.seen.current.clear()
+    return
+  }
+  for (const id of refs.seen.current.keys()) {
+    if (!view.itemIndex.has(id) || view.read.has(id)) refs.seen.current.delete(id)
+  }
+  const reads = scrollReads({
+    entries: view.entries,
+    offsets: view.offsets,
+    index: view.itemIndex,
+    top: at,
+    height: h,
+    seen: refs.seen.current,
+    read: view.read,
+    now: window.performance.now(),
+  })
+  for (const row of reads.entering) refs.seen.current.set(row[0], row[1])
+  for (const id of reads.leaving) refs.seen.current.delete(id)
+  // Implicit marks keep their rows: a row must not vanish from under the
+  // pointer. The section releases them once it has nothing unread left.
+  if (reads.readIds.length) void view.controller.mark(reads.readIds, true, true)
+}
+
+/**
+ * A rebuild, or a scope change, has to be dealt with before it is painted: the
+ * scroll offset is the one part of the band a render cannot answer for. The band
+ * is derived from the render that carries the corrected offset, so the frame
+ * that reaches the screen is already consistent.
+ */
+function rebuildNow(
+  refs: ViewportRefs,
+  view: ListView,
+  top: number,
+  viewportH: number,
+  io: { setTop: (value: number) => void; setViewportH: (value: number) => void; settle: (at: number, h: number) => void },
+): void {
+  // A list with rows on it is a position to protect, at the top as much as in
+  // the middle: a row inserted above the reader pushes the reader down.
+  view.controller.setHold(view.listLen > 0)
+  const el = refs.viewportRef.current
+  if (!el) {
+    // No viewport is on screen (loading, empty, or failed): there is no position
+    // to hold, so the next list that appears starts at its own top.
+    refs.drawn.current = null
+    return
+  }
+  const h = el.clientHeight || view.height
+  const previous = refs.drawn.current
+  let target = refs.topRef.current
+  if (!previous) {
+    target = el.scrollTop
+  } else if (previous.scope !== view.scopeKey) {
+    // A new filter, search, or source is a new list: it starts at its own top.
+    target = 0
+    refs.seen.current.clear()
+    refs.leftTop.current = false
+  } else if (previous.entries !== view.entries) {
+    target = scrollAfterRebuild({
+      prev: previous.entries,
+      prevOffsets: previous.offsets,
+      next: view.entries,
+      nextOffsets: view.offsets,
+      top: refs.topRef.current,
+      height: h,
+      groupBy: view.groupBy,
+    })
+  }
+  // A row the keyboard moved to is an explicit act: bring it into view, even if
+  // the rebuild would have held the old position.
+  if (view.current !== refs.lastSelected.current) {
+    refs.lastSelected.current = view.current
+    const index = view.current ? view.itemIndex.get(view.current) : undefined
+    if (index !== undefined) {
+      const shown = windowOf({
+        entries: view.entries, offsets: view.offsets, groupFloor: view.groupFloor,
+        top: target, height: h, groupBy: view.groupBy,
+      })
+      if (index < shown.start || index >= shown.end) target = Math.max(0, (view.offsets[index] || 0) - 32)
+    }
+  }
+  if (el.scrollTop !== target) el.scrollTop = target
+  // The browser clamps past the end of the list; what it kept is where the band
+  // has to be drawn.
+  const settled = el.scrollTop
+  refs.topRef.current = settled
+  if (settled !== top) io.setTop(settled)
+  if (el.clientHeight !== viewportH) io.setViewportH(el.clientHeight)
+  refs.drawn.current = { entries: view.entries, offsets: view.offsets, scope: view.scopeKey }
+  io.settle(settled, h)
+}
+
+/** One throttled scroll pass: re-render only when the band or the top edge moves. */
+function scrollNow(
+  refs: ViewportRefs,
+  view: ListView,
+  top: number,
+  setTop: (value: number) => void,
+  settle: (at: number, h: number) => void,
+  el: HTMLDivElement,
+): void {
+  refs.topRef.current = el.scrollTop
+  if (refs.raf.current) return
+  refs.raf.current = requestAnimationFrame(function () {
+    refs.raf.current = 0
+    const node = refs.viewportRef.current
+    if (!node) return
+    const at = node.scrollTop
+    refs.topRef.current = at
+    const h = node.clientHeight || view.height
+    const next = windowOf({
+      entries: view.entries, offsets: view.offsets, groupFloor: view.groupFloor,
+      top: at, height: h, groupBy: view.groupBy,
+    })
+    // Re-render only when the band moves, or when the viewport crosses the top:
+    // the overscan covers the rows between one band and the next, and the top is
+    // what says whether a held arrival may land or the pill shows.
+    const crossed = (at <= AT_TOP) !== (top <= AT_TOP)
+    if (crossed || next.start !== view.band.start || next.end !== view.band.end || next.headerIndex !== view.band.headerIndex) setTop(at)
+    settle(at, h)
+  })
+}
+
+/** Keep the viewport height in state, so the end screen is exactly one of them. */
+function watchViewport(
+  viewportRef: RefObject<HTMLDivElement>,
+  setViewportH: (update: (current: number) => number) => void,
+): () => void {
+  const el = viewportRef.current
+  if (!el) return function () { /* nothing to watch */ }
+  let alive = true
+  const observer = new ResizeObserver(function () {
+    if (!alive) return
+    const node = viewportRef.current
+    if (!node) return
+    setViewportH(function (current) { return current === node.clientHeight ? current : node.clientHeight })
+  })
+  observer.observe(el)
+  return function () {
+    alive = false
+    observer.disconnect()
+  }
+}
+
+/** Let the sections that finished reading leave once their fade is done. */
+function releaseFinished(entries: Entry[], finishedSet: Set<string>, controller: Controller): void {
+  const ids: string[] = []
+  for (const entry of entries) {
+    if (entry.kind !== 'group' || !finishedSet.has(entry.group.key)) continue
+    for (const item of entry.group.items) ids.push(item.id)
+  }
+  if (ids.length) controller.releaseSticky(ids)
+}
+
+/**
+ * The bar follows the viewport, but the scope is picked from the strongest scope
+ * that is actually in effect: a search, then a selected source, then the group
+ * under the edge. A source always wins over grouping, so a folder that reaches
+ * past the current source can never be marked from inside it.
+ */
+function scopeOf(count: number, state: ClientState, counts: MarkCounts, t: Translate): MarkScope | null {
+  if (!count) return null
+  // A single source is marked from that source's own row (here or in the feed
+  // list), so the bar only speaks for a wider view.
+  if (state.query.trim()) return { kind: 'results', label: t('action.markResults'), n: counts.results }
+  if (state.feedId) return null
+  return { kind: 'all', label: t('action.markAll'), n: counts.all }
+}
+
+/** Whether the entry at one index belongs to a section that is leaving. */
+
+/** The mounted band's rows: section headers and item rows, each with its fade. */
+
+/** The floating mark bar: its own open/armed state, and the scope it acts on. */
+
+/** The mounted band's parts: its rows and the spacers above and below. */
+
+/** The list with no rows yet, or why it has none; null when it has rows. */
+
+/** The list's own frame: the rows, the end screen, the pinned header, the bar. */
+
+/**
+ * Sections whose unread rows have all been read: they are kept on screen only so
+ * nothing moves under the pointer, so they fade where they stand and the list is
+ * rebuilt without them once the fade is done.
+ */
+function useStickySections(input: {
+  entries: Entry[]
+  itemIndex: Map<string, number>
+  groupFloor: number[]
+  current: string | null
+  read: Set<string>
+  filter: Filter
+  controller: Controller
+}): Set<string> {
+  // The section the open article is in keeps its rows, even once nothing in it
+  // is unread: the reader is looking at that row, and fading it out under the
+  // click is the one movement opening an article should not cause.
+  const holdKey = useMemo(function () {
+    return holdKeyOf(input.entries, input.itemIndex, input.groupFloor, input.current)
+  }, [input.current, input.itemIndex, input.groupFloor, input.entries])
+  const finished = useMemo(function () {
+    return exhaustedGroups(input.entries, input.read, input.filter, holdKey)
+  }, [input.entries, input.read, input.filter, holdKey])
+  const finishedKey = finished.join('\u0000')
+  const finishedSet = new Set(finished)
+  useEffect(function () {
+    if (!finishedKey) return
+    const timer = setTimeout(function () { releaseFinished(input.entries, finishedSet, input.controller) }, FADE_MS)
+    return function () { clearTimeout(timer) }
+  }, [finishedKey, input.controller])
+  return finishedSet
+}
+
+/** The list's own reading of the reader's preferences. */
+function useListPrefs(state: ClientState, controller: Controller): {
+  list: Item[]
+  groupBy: GroupBy
+  markOnScroll: boolean
+  showDigest: boolean
+  rowH: number
+} {
   const list = controller.getList()
   const groupBy = state.groupBy || state.reader.groupBy || 'none'
   const markOnScroll = state.markOnScroll === null ? state.reader.markReadOnScroll : state.markOnScroll
   const showDigest = state.showDigest === null ? true : state.showDigest
   const rowH = showDigest ? ROW_H : ROW_H_PLAIN
-  const viewportRef = useRef<HTMLDivElement>(null)
-  /** The scroll offset the mounted band is drawn for. */
-  const [top, setTop] = useState(0)
-  /** The viewport's own height: the end screen is exactly one of them. */
-  const [viewportH, setViewportH] = useState(0)
-  /** The scroll offset as the DOM has it — a render cannot read the element. */
-  const topRef = useRef(0)
-  /** Where the list was last drawn from, so a rebuild can put the edge back. */
-  const drawn = useRef<{ entries: Entry[]; offsets: number[]; scope: string } | null>(null)
-  /** Whether the viewport has left the top since a refresh held rows for it. */
-  const leftTop = useRef(false)
-  const raf = useRef(0)
-  /** The row the reader was last moved to, so a rebuild does not drag them off it. */
-  const lastSelected = useRef<string | null>(null)
-  /** The rows that have been on screen, and since when. */
-  const seen = useRef<Map<string, number>>(new Map())
-  /** The scope menu for marking read; it shows its counts before acting. */
-  const [markOpen, setMarkOpen] = useState(false)
-  /** Only the whole-library entry needs a second, differently placed click. */
-  const [markArmed, setMarkArmed] = useState(false)
-  /** The feed whose section header is asking before unsubscribing. */
-  const [pendingUnsub, setPendingUnsub] = useState<string | null>(null)
-  function closeMark() {
-    setMarkOpen(false)
-    setMarkArmed(false)
-  }
+  return { list: list, groupBy: groupBy, markOnScroll: markOnScroll, showDigest: showDigest, rowH: rowH }
+}
 
-  /** Counts for the mark menu; recomputed when the list or the read set moves. */
+/** The rows and the section headers the list derives from them. */
+function useListRows(state: ClientState, controller: Controller, t: Translate, list: Item[], groupBy: GroupBy, rowH: number): {
+  counts: MarkCounts
+  entries: Entry[]
+  offsets: number[]
+  groupFloor: number[]
+  itemIndex: Map<string, number>
+  total: number
+  scopeKey: string
+} {
   const counts = useMemo(function () {
     return controller.markCounts()
   }, [state.items, state.read, state.version, state.listEpoch, state.feedId, state.query, state.filter, controller])
-
-  // Sections follow the rail's order over sources: the sources the reader
-  // reads first. It is fixed for this load, which is what keeps a fetch or a
-  // mark from moving the section being read.
-  const interestOrder = state.interestOrder === null ? true : state.interestOrder
   const order = useMemo(function () {
-    const scores = interestOrder ? state.ranks : null
-    return sourceOrder(state.feeds, scores, t('feed.uncategorized'))
-  }, [state.feeds, state.ranks, interestOrder, t])
-
+    return sourceOrderOf(state, t)
+  }, [state.feeds, state.ranks, state.interestOrder, t])
   const entries = useMemo<Entry[]>(function () {
-    return entriesOf(
-      list,
-      groupBy,
-      rowH,
-      GROUP_H,
-      function (id) { return controller.feedTitle(id) },
-      function (id) { return controller.feedFolder(id) },
-      function (key) {
-        const rank = groupBy === 'feed' ? order.rank.get(key) : order.folders.get(key)
-        return rank === undefined ? order.next : rank
-      },
-    )
+    return entriesFor(list, groupBy, rowH, order, controller)
   }, [list, groupBy, controller, rowH, order])
-
-  const offsets = useMemo(function () {
-    return offsetIndex(entries)
-  }, [entries])
-
-  /** Which group entry covers each entry, so a section header can stay mounted. */
-  const groupFloor = useMemo(function () {
-    return groupFloorOf(entries)
-  }, [entries])
-
-  const itemIndex = useMemo(function () {
-    const map = new Map<string, number>()
-    for (let i = 0; i < entries.length; i++) {
-      const entry = entries[i]
-      if (entry.kind === 'row') map.set(entry.item.id, i)
-    }
-    return map
-  }, [entries])
-
+  const offsets = useMemo(function () { return offsetIndex(entries) }, [entries])
+  const groupFloor = useMemo(function () { return groupFloorOf(entries) }, [entries])
+  const itemIndex = useMemo(function () { return itemIndexes(entries) }, [entries])
   const total = offsets[entries.length] || 0
-  const height = viewportH || 600
-  /** What the list is a list *of*: a change here is a new list, not a rebuild. */
   const scopeKey = `${groupBy}\u0000${state.query}\u0000${state.feedId || ''}`
+  return {
+    counts: counts, entries: entries, offsets: offsets, groupFloor: groupFloor,
+    itemIndex: itemIndex, total: total, scopeKey: scopeKey,
+  }
+}
 
-  /**
-   * The band this render draws. It is derived, never stored: the entries and
-   * the scroll offset are the same render's, so a rebuild cannot paint rows
-   * that describe the list it replaced.
-   */
+/** The list's scroll machinery: its refs, its offset, and the band it draws. */
+function useListViewport(input: {
+  entries: Entry[]
+  offsets: number[]
+  groupFloor: number[]
+  groupBy: GroupBy
+  itemIndex: Map<string, number>
+  markOnScroll: boolean
+  read: Set<string>
+  filter: Filter
+  controller: Controller
+  current: string | null
+  listLen: number
+  scopeKey: string
+}): {
+  viewportRef: RefObject<HTMLDivElement>
+  top: number
+  viewportH: number
+  band: ReturnType<typeof windowOf>
+  onScroll: (event: { currentTarget: HTMLDivElement }) => void
+} {
+  const viewportRef = useRef<HTMLDivElement>(null)
+  const [top, setTop] = useState(0)
+  const [viewportH, setViewportH] = useState(0)
+  const topRef = useRef(0)
+  const drawn = useRef<{ entries: Entry[]; offsets: number[]; scope: string } | null>(null)
+  const leftTop = useRef(false)
+  const raf = useRef(0)
+  const lastSelected = useRef<string | null>(null)
+  const seen = useRef<Map<string, number>>(new Map())
+  const refs: ViewportRefs = {
+    viewportRef: viewportRef, topRef: topRef, drawn: drawn, leftTop: leftTop,
+    raf: raf, lastSelected: lastSelected, seen: seen,
+  }
+  const height = viewportH || 600
   const band = useMemo(function () {
-    return windowOf({ entries: entries, offsets: offsets, groupFloor: groupFloor, top: top, height: height, groupBy: groupBy })
-  }, [entries, offsets, groupFloor, top, height, groupBy])
-
-  /**
-   * The list's side effects for one viewport pass: the rows the scroll read,
-   * the rows it can let go, and whether a held arrival may land. The band is
-   * not one of them — it comes from the render that carries the offset.
-   * @param at - the scroll offset this pass is about.
-   * @param h - the viewport height at that offset.
-   */
-  const settle = useCallback(function (at: number, h: number) {
-    // Held arrivals land when the reader leaves the top and comes back. Sitting
-    // at the top is not leaving it: the rows would push the one being read down.
-    if (at <= AT_TOP) {
-      if (leftTop.current) {
-        leftTop.current = false
-        controller.releaseHeld()
-      }
-    } else {
-      leftTop.current = true
-    }
-    // Rows above the band that were read on the way here were kept only so the
-    // list would not move; the anchor holds the position now. A flat list has
-    // no section to fade them out, so the band is what lets them go.
-    if (state.filter === 'unread') {
-      const next = windowOf({ entries: entries, offsets: offsets, groupFloor: groupFloor, top: at, height: h, groupBy: groupBy })
-      const settled = settledAbove(entries, next.start, state.read)
-      if (settled.length >= TRIM_AT) controller.trimSticky(settled)
-    }
-    // A row counts as read once it has been on screen long enough to be seen
-    // and the viewport has scrolled past it; with the preference off, nothing
-    // is timed and nothing is marked. This pass runs on a rebuild as well as on
-    // a scroll, which is why only a row the band carried over is read: rows a
-    // rebuild pushed down were never scrolled past.
-    if (!markOnScroll) {
-      seen.current.clear()
-      return
-    }
-    for (const id of seen.current.keys()) {
-      if (!itemIndex.has(id) || state.read.has(id)) seen.current.delete(id)
-    }
-    const reads = scrollReads({
-      entries: entries,
-      offsets: offsets,
-      index: itemIndex,
-      top: at,
-      height: h,
-      seen: seen.current,
-      read: state.read,
-      now: window.performance.now(),
+    return windowOf({
+      entries: input.entries, offsets: input.offsets, groupFloor: input.groupFloor,
+      top: top, height: height, groupBy: input.groupBy,
     })
-    for (const row of reads.entering) seen.current.set(row[0], row[1])
-    for (const id of reads.leaving) seen.current.delete(id)
-    // Implicit marks keep their rows: a row must not vanish from under the
-    // pointer. The section releases them once it has nothing unread left.
-    if (reads.readIds.length) void controller.mark(reads.readIds, true, true)
-  }, [entries, offsets, groupFloor, groupBy, itemIndex, markOnScroll, state.read, state.filter, controller])
+  }, [input.entries, input.offsets, input.groupFloor, top, height, input.groupBy])
+  const view: ListView = {
+    entries: input.entries, offsets: input.offsets, groupFloor: input.groupFloor, groupBy: input.groupBy,
+    itemIndex: input.itemIndex, markOnScroll: input.markOnScroll, read: input.read, filter: input.filter,
+    controller: input.controller, current: input.current, listLen: input.listLen, scopeKey: input.scopeKey,
+    height: height, band: band,
+  }
 
-  // A rebuild, or a scope change, has to be dealt with before it is painted:
-  // the scroll offset is the one part of the band a render cannot answer for.
-  // The band is derived from the render that carries the corrected offset, so
-  // the frame that reaches the screen is already consistent — the failure this
-  // replaces was one painted frame of the old band, then a correction.
+  const settle = useCallback(function (at: number, h: number) { settleNow(refs, view, at, h) }, [view])
   useLayoutEffect(function () {
-    // A list with rows on it is a position to protect, at the top as much as in
-    // the middle: a row inserted above the reader pushes the reader down.
-    controller.setHold(list.length > 0)
-    const el = viewportRef.current
-    if (!el) {
-      // No viewport is on screen (loading, empty, or failed): there is no
-      // position to hold, so the next list that appears starts at its own top.
-      drawn.current = null
-      return
-    }
-    const h = el.clientHeight || height
-    const previous = drawn.current
-    let target = topRef.current
-    if (!previous) {
-      target = el.scrollTop
-    } else if (previous.scope !== scopeKey) {
-      // A new filter, search, or source is a new list: it starts at its own top.
-      target = 0
-      seen.current.clear()
-      leftTop.current = false
-    } else if (previous.entries !== entries) {
-      target = scrollAfterRebuild({
-        prev: previous.entries,
-        prevOffsets: previous.offsets,
-        next: entries,
-        nextOffsets: offsets,
-        top: topRef.current,
-        height: h,
-        groupBy: groupBy,
-      })
-    }
-    // A row the keyboard moved to is an explicit act: bring it into view, even
-    // if the rebuild would have held the old position.
-    const selected = state.current
-    if (selected !== lastSelected.current) {
-      lastSelected.current = selected
-      const index = selected ? itemIndex.get(selected) : undefined
-      if (index !== undefined) {
-        const shown = windowOf({ entries: entries, offsets: offsets, groupFloor: groupFloor, top: target, height: h, groupBy: groupBy })
-        if (index < shown.start || index >= shown.end) target = Math.max(0, (offsets[index] || 0) - 32)
-      }
-    }
-    if (el.scrollTop !== target) el.scrollTop = target
-    // The browser clamps past the end of the list; what it kept is where the
-    // band has to be drawn.
-    const settled = el.scrollTop
-    topRef.current = settled
-    if (settled !== top) setTop(settled)
-    if (el.clientHeight !== viewportH) setViewportH(el.clientHeight)
-    drawn.current = { entries: entries, offsets: offsets, scope: scopeKey }
-    settle(settled, h)
-  }, [entries, offsets, groupFloor, groupBy, top, viewportH, state.current, list, controller, scopeKey, settle, itemIndex])
-
+    rebuildNow(refs, view, top, viewportH, { setTop: setTop, setViewportH: setViewportH, settle: settle })
+  }, [view, top, viewportH, settle])
   const onScroll = useCallback(function (event: { currentTarget: HTMLDivElement }) {
-    const el = event.currentTarget
-    topRef.current = el.scrollTop
-    if (raf.current) return
-    raf.current = requestAnimationFrame(function () {
-      raf.current = 0
-      const node = viewportRef.current
-      if (!node) return
-      const at = node.scrollTop
-      topRef.current = at
-      const h = node.clientHeight || height
-      const next = windowOf({ entries: entries, offsets: offsets, groupFloor: groupFloor, top: at, height: h, groupBy: groupBy })
-      // Re-render only when the band moves, or when the viewport crosses the
-      // top: the overscan covers the rows between one band and the next, and
-      // the top is what says whether a held arrival may land or the pill shows.
-      const crossed = (at <= AT_TOP) !== (top <= AT_TOP)
-      if (crossed || next.start !== band.start || next.end !== band.end || next.headerIndex !== band.headerIndex) setTop(at)
-      settle(at, h)
-    })
-  }, [band, entries, offsets, groupFloor, groupBy, height, top, settle])
+    scrollNow(refs, view, top, setTop, settle, event.currentTarget)
+  }, [view, top, settle])
 
   useEffect(function () {
     return function () {
-      if (raf.current) cancelAnimationFrame(raf.current)
-      raf.current = 0
+      if (refs.raf.current) cancelAnimationFrame(refs.raf.current)
+      refs.raf.current = 0
     }
-  }, [])
+  }, [refs])
 
-  useEffect(function () {
-    const el = viewportRef.current
-    if (!el) return
-    let alive = true
-    const observer = new ResizeObserver(function () {
-      if (!alive) return
-      const node = viewportRef.current
-      if (!node) return
-      setViewportH(function (current) { return current === node.clientHeight ? current : node.clientHeight })
-    })
-    observer.observe(el)
-    return function () {
-      alive = false
-      observer.disconnect()
-    }
-  }, [])
+  useEffect(function () { return watchViewport(refs.viewportRef, setViewportH) }, [refs])
 
-  /**
-   * Sections whose unread rows have all been read: they are kept on screen only
-   * so nothing moves under the pointer, so they fade where they stand and the
-   * list is rebuilt without them once the fade is done.
-   */
-  // The section the open article is in keeps its rows, even once nothing in it
-  // is unread: the reader is looking at that row, and fading it out under the
-  // click is the one movement opening an article should not cause. The section
-  // leaves when the reader closes the article or moves to another one.
-  const holdKey = useMemo(function () {
-    if (!state.current) return null
-    const index = itemIndex.get(state.current)
-    if (index === undefined) return null
-    const floor = groupFloor[index]
-    if (floor < 0) return null
-    const header = entries[floor]
-    return header.kind === 'group' ? header.group.key : null
-  }, [state.current, itemIndex, groupFloor, entries])
-  const finished = useMemo(function () {
-    return exhaustedGroups(entries, state.read, state.filter, holdKey)
-  }, [entries, state.read, state.filter, holdKey])
-  const finishedKey = finished.join('\u0000')
-  const finishedSet = new Set(finished)
-  useEffect(function () {
-    if (!finishedKey) return
-    const timer = setTimeout(function () {
-      const ids: string[] = []
-      for (const entry of entries) {
-        if (entry.kind !== 'group' || !finishedSet.has(entry.group.key)) continue
-        for (const item of entry.group.items) ids.push(item.id)
-      }
-      if (ids.length) controller.releaseSticky(ids)
-    }, FADE_MS)
-    return function () { clearTimeout(timer) }
-  }, [finishedKey, controller])
+  return { viewportRef: viewportRef, top: top, viewportH: viewportH, band: band, onScroll: onScroll }
+}
 
-  /** Whether the entry at one index belongs to a section that is leaving. */
-  function leaving(index: number): boolean {
-    if (!finishedSet.size) return false
-    const floor = groupFloor[index]
-    if (floor < 0) return false
-    const header = entries[floor]
-    return header.kind === 'group' && finishedSet.has(header.group.key)
-  }
+export function ItemList({ state, controller, t, wide }: ItemListProps) {
+  const [pendingUnsub, setPendingUnsub] = useState<string | null>(null)
+  const { list, groupBy, markOnScroll, showDigest, rowH } = useListPrefs(state, controller)
+  const { counts, entries, offsets, groupFloor, itemIndex, total, scopeKey } = useListRows(state, controller, t, list, groupBy, rowH)
 
-  const slice = entries.slice(band.start, band.end)
-  /** The rows above and below the mounted band, kept as spacers of their height. */
-  const lead = offsets[band.start] || 0
-  const trail = Math.max(0, total - (offsets[band.end] || total))
-  /** The section header covering the band while it sits above the mounted rows. */
-  const pinned = band.headerIndex === null ? undefined : entries[band.headerIndex]
-
-  /**
-   * One section header: its name, and the things done *while reading a feed* —
-   * move it to another folder, mark the section read, and stop following it. A
-   * folder section can only be marked. The same markup renders in place and
-   * pinned at the top of the band, so the pinned bar never drifts from the row
-   * it stands for.
-   * @param entry - the section header entry.
-   * @returns the header's children.
-   */
-  function sectionHeader(entry: GroupEntry) {
-    const groupUnread = entry.group.items.filter(function (item) { return !state.read.has(item.id) }).length
-    const feedId = groupBy === 'feed' ? entry.group.key : ''
-    const feed = feedId ? state.feedMap.get(feedId) || null : null
-    const confirming = feedId !== '' && pendingUnsub === feedId
-    return (
-      <>
-        <span className="gf-group-name">
-          {confirming ? t('confirm.unsubscribe') : entry.group.label}
-        </span>
-        <div className="gf-group-actions">
-          {confirming
-            ? [
-              <Button
-                key="cancel"
-                variant="ghost"
-                size="sm"
-                className="gf-group-read"
-                onClick={function () { setPendingUnsub(null) }}
-              >
-                {t('action.cancel')}
-              </Button>,
-              <Button
-                key="remove"
-                variant="ghost"
-                size="sm"
-                className="gf-group-read gf-danger"
-                disabled={state.busy.remove}
-                title={t('confirm.unsubscribeHint')}
-                onClick={function () {
-                  setPendingUnsub(null)
-                  void controller.removeFeed(feedId)
-                }}
-              >
-                {t('action.remove')}
-              </Button>,
-            ]
-            : [
-              // A source's own actions sit together, where unsubscribe already
-              // is: the header is the one place a source is acted on without
-              // leaving the rows.
-              feedId
-                ? (
-                  <FolderMenu
-                    key="move"
-                    folder={feed ? feed.folder : null}
-                    folders={folderNames(state.feeds)}
-                    label={t('action.moveFolder')}
-                    t={t}
-                    align="end"
-                    onMove={function (name) {
-                      setPendingUnsub(null)
-                      void controller.setFeedFolder(feedId, name)
-                    }}
-                    trigger={function (picker) {
-                      return (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="gf-group-read"
-                          title={t('action.moveSource')}
-                          onClick={picker.toggle}
-                        >
-                          {t('action.move')}
-                        </Button>
-                      )
-                    }}
-                  />
-                )
-                : null,
-              feedId
-                ? (
-                  <Button
-                    key="unsub"
-                    variant="ghost"
-                    size="sm"
-                    className="gf-group-unsub"
-                    title={t('confirm.unsubscribeHint')}
-                    onClick={function () { setPendingUnsub(feedId) }}
-                  >
-                    {t('action.remove')}
-                  </Button>
-                )
-                : null,
-              <Button
-                key="mark"
-                variant="ghost"
-                size="sm"
-                className="gf-group-read"
-                disabled={!groupUnread}
-                title={t('action.markGroup')}
-                onClick={function () { controller.markGroup(entry.group.key) }}
-              >
-                {groupUnread ? t('action.markGroupCount', { n: groupUnread }) : t('action.markGroup')}
-              </Button>,
-            ]}
-        </div>
-      </>
-    )
-  }
-
-  const listRows = slice.map(function (entry, offset) {
-    const gone = leaving(band.start + offset) ? ' gf-fade' : ''
-    if (entry.kind === 'group') {
-      return (
-        <div key={entry.key} className={`gf-group${gone}`}>
-          {sectionHeader(entry)}
-        </div>
-      )
-    }
-    const item = entry.item
-    const unread = !state.read.has(item.id)
-    const starred = state.starred.has(item.id)
-    const digest = showDigest ? controller.digest(item) : ''
-    return (
-      <div
-        key={entry.key}
-        className={`gf-row${unread ? ' unread' : ''}${state.current === item.id ? ' active' : ''}${state.fresh.has(item.id) ? ' gf-row-in' : ''}${gone}`}
-      >
-        {/* The row is the container; the row's own target is the button, so the
-            star beside it is never announced as part of the row's name. */}
-        <button
-          type="button"
-          className="gf-row-main"
-          tabIndex={-1}
-          aria-current={state.current === item.id ? 'true' : undefined}
-          onClick={function () { controller.select(item.id) }}
-        >
-          <span className="gf-row-title">
-            {unread ? <span className="gf-dot" aria-hidden="true" /> : null}
-            <span className="t">{item.title || '(untitled)'}</span>
-          </span>
-          <span className="gf-row-meta">
-            {/* Every row under a source section would repeat the name the sticky
-                header already carries; only an ungrouped list needs it per row. */}
-            {groupBy === 'feed' ? null : <span className="feed-name">{controller.feedTitle(item.feed)}</span>}
-            <span className="when">{fmtTime(item.date)}</span>
-          </span>
-          {/* The digest line is part of the row's shape: an entry with no
-              summary keeps an empty line there, so a row without a preview is
-              the same three lines as the rest rather than a shorter variant. */}
-          {showDigest ? <span className="gf-row-digest">{digest}</span> : null}
-        </button>
-        {/* The star is an action on the row, not a way into it: it sits on
-            every row so an item can be kept without opening the article, and
-            it holds its space so the title never re-wraps on hover. */}
-        <span className={`gf-row-actions${starred ? ' on' : ''}`}>
-          <IconButton
-            icon={<IconStar filled={starred} size={13} />}
-            label={starred ? t('action.unstar') : t('action.star')}
-            small
-            active={starred}
-            // The rows are reached with j/k, not the tab key; a tab stop per
-            // row would put hundreds of them between the reader and the
-            // controls that are actually tabbed to.
-            tabIndex={-1}
-            onClick={function () { controller.toggleStar(item.id) }}
-          />
-        </span>
-      </div>
-    )
+  const { viewportRef, top, viewportH, band, onScroll } = useListViewport({
+    entries: entries,
+    offsets: offsets,
+    groupFloor: groupFloor,
+    groupBy: groupBy,
+    itemIndex: itemIndex,
+    markOnScroll: markOnScroll,
+    read: state.read,
+    filter: state.filter,
+    controller: controller,
+    current: state.current,
+    listLen: list.length,
+    scopeKey: scopeKey,
   })
 
+  const finishedSet = useStickySections({
+    entries: entries,
+    itemIndex: itemIndex,
+    groupFloor: groupFloor,
+    current: state.current,
+    read: state.read,
+    filter: state.filter,
+    controller: controller,
+  })
+
+  const { slice, lead, trail, pinned } = bandParts(entries, offsets, band, total)
   const count = list.length
-  /**
-   * What the header counts: the rows this view has, counted from the archive
-   * rather than from the list. A read row stays listed until something else
-   * moves the list, so counting the list made the number lag behind the
-   * reading — and a refresh that holds its arrivals back would leave them out
-   * of the only number that says they are there.
-   */
   const remaining = useMemo(function () {
     return controller.countInView()
   }, [state.items, state.read, state.starred, state.filter, state.query, state.feedId, state.listEpoch, controller])
   const paneClass = `gf-listpane${wide ? ' wide' : ''}${showDigest ? '' : ' rows-plain'}`
+  const scope = useMemo(function () {
+    return scopeOf(count, state, counts, t)
+  }, [count, state.query, state.feedId, counts, t])
 
-  // The bar follows the viewport, but the scope is picked from the strongest
-  // scope that is actually in effect: a search, then a selected source, then
-  // the group under the edge. A source always wins over grouping, so a folder
-  // that reaches past the current source can never be marked from inside it,
-  // and with neither grouping nor a source the label stays put instead of
-  // flipping with every row.
-  const scope = useMemo(function (): MarkScope | null {
-    if (!count) return null
-    const searching = !!state.query.trim()
-    // A single source is marked from that source's own row (here or in the
-    // feed list), so the bar only speaks for a wider view.
-    if (searching) return { kind: 'results', label: t('action.markResults'), n: counts.results }
-    if (state.feedId) return null
-    return { kind: 'all', label: t('action.markAll'), n: counts.all }
-  }, [count, state.query, state.feedId, counts, controller, t])
+  const listRows = listRowsOf({
+    slice: slice,
+    band: band,
+    entries: entries,
+    groupFloor: groupFloor,
+    finishedSet: finishedSet,
+    groupBy: groupBy,
+    state: state,
+    controller: controller,
+    t: t,
+    pendingUnsub: pendingUnsub,
+    onPending: setPendingUnsub,
+    showDigest: showDigest,
+  })
 
-  function runScope() {
-    if (!scope || !scope.n) return
-    if (scope.kind === 'all') controller.markEverything()
-    else controller.markAll()
-  }
-
-  // The button marks the view; the menu holds the one scope the view does not
-  // reach — every unread item in the library — and only when that differs.
-  const markRows: ReactNode[] = []
-  if (counts.all > 0 && counts.all !== (scope ? scope.n : 0)) {
-    markRows.push(
-      <MenuItemButton
-        key="everything"
-        danger
-        onSelect={function () {
-          if (!markArmed) {
-            setMarkArmed(true)
-            return
-          }
-          closeMark()
-          controller.markEverything()
-        }}
-      >
-        {scopeLabel(markArmed ? t('action.markAllConfirm', { n: counts.all }) : t('action.markEverything'), counts.all)}
-      </MenuItemButton>,
-    )
-  }
+  const markBar = scope
+    ? <MarkArea t={t} counts={counts} scope={scope} controller={controller} />
+    : null
 
   /** Rows a refresh is holding back; they land when the reader asks or moves. */
   const heldCount = controller.heldCount()
   const header = (
-    <div className="gf-listbar">
-      <span className="gf-count-label">{t('items.count', { n: remaining })}</span>
-      {/* At the top, arrivals are held rather than pushing the newest row down.
-          This is how they are asked for; anywhere else the reader gets them by
-          coming back to the top, which is why the control only appears here. */}
-      {heldCount > 0 && top <= AT_TOP
-        ? (
-          <button
-            type="button"
-            className="gf-newitems"
-            title={t('list.newHint')}
-            onClick={function () { controller.releaseHeld() }}
-          >
-            {t('list.newItems', { n: heldCount })}
-          </button>
-        )
-        : null}
-    </div>
+    <ListHeader
+      t={t}
+      remaining={remaining}
+      heldCount={heldCount}
+      atTop={top <= AT_TOP}
+      onRelease={function () { controller.releaseHeld() }}
+    />
   )
 
-  const markBar = !scope
-    ? null
-    : (
-      <div className={`gf-markfloat${scope.n ? '' : ' off'}`}>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="gf-markfloat-main"
-          disabled={!scope.n}
-          title={scope.label}
-          onClick={runScope}
-        >
-          <span className="gf-markfloat-label">{scope.label}</span>
-          <span className="gf-markfloat-count">{String(scope.n)}</span>
-        </Button>
-        {markRows.length > 0
-          ? (
-            <Menu
-              open={markOpen}
-              side="top"
-              align="end"
-              onClose={closeMark}
-              className="gf-markfloat-more"
-              anchor={(
-                <IconButton
-                  icon={<IconChevronDownOutlineRegular size={14} />}
-                  label={t('action.markPick')}
-                  small
-                  hasPopup="menu"
-                  expanded={markOpen}
-                  onClick={function () {
-                    if (markOpen) closeMark()
-                    else { setMarkOpen(true); setMarkArmed(false) }
-                  }}
-                />
-              )}
-            >
-              {markRows}
-            </Menu>
-          )
-          : null}
-      </div>
-    )
-
-  if (state.status === 'loading' && !state.items.length) {
-    return (
-      <div className={paneClass} aria-busy="true">
-        {header}
-        <Skeleton height={rowH} digest={showDigest} label={t('status.loading')} />
-      </div>
-    )
-  }
-  if (state.status === 'error' && !state.items.length) {
-    return (
-      <div className={paneClass}>
-        {header}
-        <EmptyState className="compact" hint={state.error || t('status.error')} />
-      </div>
-    )
-  }
-  if (!count) {
-    return (
-      <div className={paneClass}>
-        {header}
-        <EmptyState className="compact" hint={state.items.length ? t('empty.nothing') : t('empty.noItems')} />
-      </div>
-    )
-  }
+  const placeholder = placeholderOf({
+    state: state, count: count, paneClass: paneClass, header: header, t: t, rowH: rowH, digest: showDigest,
+  })
+  if (placeholder) return placeholder
 
   return (
-    <div className={paneClass}>
-      {header}
-      <div className="gf-scrollwrap">
-        <div className="gf-scroll" ref={viewportRef} onScroll={onScroll}>
-          <div style={{ height: lead }} />
-          {listRows}
-          <div style={{ height: trail }} />
-          {/* One viewport of scroll past the last row. The rows the list ends
-              on could otherwise never leave the viewport, so they stayed
-              unread; this is also where the reader learns the list is over. */}
-          <div className="gf-endnote" style={{ height: viewportH ? viewportH + 1 : undefined }}>{t('list.end')}</div>
-        </div>
-        {pinned && pinned.kind === 'group'
-          ? (
-            <div className={`gf-group gf-group-pinned${finishedSet.has(pinned.group.key) ? ' gf-fade' : ''}`}>
-              {sectionHeader(pinned)}
-            </div>
-          )
-          : null}
-      </div>
-      {markBar}
-    </div>
+    <ListBody
+      paneClass={paneClass}
+      header={header}
+      markBar={markBar}
+      viewportRef={viewportRef}
+      onScroll={onScroll}
+      lead={lead}
+      trail={trail}
+      listRows={listRows}
+      viewportH={viewportH}
+      pinned={pinned}
+      finishedSet={finishedSet}
+      groupBy={groupBy}
+      state={state}
+      controller={controller}
+      t={t}
+      pendingUnsub={pendingUnsub}
+      onPending={setPendingUnsub}
+    />
   )
 }

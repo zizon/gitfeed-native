@@ -1,7 +1,7 @@
 /**
  * The reader's command surface: what the reader is looking at, the derivations
  * over it, and the commands a surface calls. The requests themselves live in
- * transport.ts; this file owns the published state both halves read.
+ * rec.transport.ts; this file owns the published state both halves read.
  *
  * The state has two halves — the archive and repository facts a load brings in,
  * and what the reader is looking at — published as one snapshot. Every write
@@ -22,7 +22,7 @@ import {
 import type { ReaderView } from './derive.js'
 import { LIST_MAX, LIST_MIN, RAIL_MAX, RAIL_MIN } from './constants.js'
 import { messageOf } from '../shared/errors.js'
-import type { PrefsStore } from './prefs.js'
+import type { Prefs, PrefsStore } from './prefs.js'
 import { createTransport } from './transport.js'
 import type { Transport } from './transport.js'
 import type {
@@ -36,17 +36,9 @@ import type {
 } from './types.js'
 import { clamp, digestText } from './util.js'
 
-export function createController(t: Translate, prefs: PrefsStore): Controller {
-  const saved = prefs.getSnapshot()
-  // Persisted JSON crosses a file boundary, so the grouping is re-validated on
-  // the way in instead of trusted from the snapshot's type.
-  const savedGroupBy: GroupBy | null = saved.groupBy === 'none' || saved.groupBy === 'folder' || saved.groupBy === 'feed'
-    ? saved.groupBy
-    : null
-  // Likewise for a panel that had no preference when the snapshot was written:
-  // a stored value that is not a boolean means the reader never hid it.
-  const savedRailHidden = (saved.railHidden as boolean | undefined) === true
-  let data: ReaderData = {
+/** The archive and repository facts a surface starts from, before any load. */
+function initialData(): ReaderData {
+  return {
     status: 'idle',
     error: null,
     loadError: null,
@@ -67,13 +59,20 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     repo: '',
     allowGit: true,
   }
-  let ui: ReaderUi = {
+}
+
+/**
+ * The viewing state the stored preferences start, validated on the way in: the
+ * snapshot crosses a file boundary, so nothing is trusted from its type.
+ */
+function initialUi(saved: Prefs, groupBy: GroupBy | null, railHidden: boolean): ReaderUi {
+  return {
     filter: 'unread',
     query: '',
     searchIds: null,
     feedId: null,
     current: null,
-    groupBy: savedGroupBy,
+    groupBy: groupBy,
     hideEmpty: saved.hideEmpty,
     markOnScroll: saved.markOnScroll,
     showDigest: saved.showDigest,
@@ -81,647 +80,709 @@ export function createController(t: Translate, prefs: PrefsStore): Controller {
     folderOpen: saved.folderOpen,
     railW: clamp(saved.railW, RAIL_MIN, RAIL_MAX),
     listW: clamp(saved.listW, LIST_MIN, LIST_MAX),
-    railHidden: savedRailHidden,
+    railHidden: railHidden,
     listEpoch: 0,
     busy: {},
     toast: null,
   }
+}
 
-  const store = createSnapshotStore<ClientState>(Object.assign({}, data, ui))
+/** What the controller keeps between calls: the published halves and its caches. */
+interface ControllerRecord {
+  t: Translate
+  prefs: PrefsStore
+  data: ReaderData
+  ui: ReaderUi
+  store: ReturnType<typeof createSnapshotStore<ClientState>>
   /** The published snapshot; the renderer binds it, nothing writes through it. */
-  const reader: ReaderSource = store
-
-  const digestCache = new Map<string, string>()
-  let listCache: { key: string | null; items: Item[] } = { key: null, items: [] }
-  let toastTimer: ReturnType<typeof setTimeout> | null = null
+  reader: ReaderSource
+  digestCache: Map<string, string>
+  listCache: { key: string | null; items: Item[] }
+  toastTimer: ReturnType<typeof setTimeout> | null
   /** The last explicit scope mark, so a too-wide action can be taken back. */
-  let lastScopeMark: string[] | null = null
-  /**
+  lastScopeMark: string[] | null
+  /** Which query the Host is answering, and how to cancel it. */
+  searchSeq: number
+  searchAbort: AbortController | null
+  /** Rows whose body is being read, so an article opening twice reads it once. */
+  bodyRequests: Set<string>
+  /** Whether a surface is showing a list it wants held still. */
+  hold: boolean
+  attentionSent: Set<string>
+  transport: Transport
+}
+
+export function createController(t: Translate, prefs: PrefsStore): Controller {
+  const saved = prefs.getSnapshot()
+  // Persisted JSON crosses a file boundary, so the grouping is re-validated on
+  // the way in instead of trusted from the snapshot's type.
+  const savedGroupBy: GroupBy | null = saved.groupBy === 'none' || saved.groupBy === 'folder' || saved.groupBy === 'feed'
+    ? saved.groupBy
+    : null
+  // Likewise for a panel that had no preference when the snapshot was written:
+  // a stored value that is not a boolean means the reader never hid it.
+  const savedRailHidden = (saved.railHidden as boolean | undefined) === true
+  const data = initialData()
+  const ui = initialUi(saved, savedGroupBy, savedRailHidden)
+  const store = createSnapshotStore<ClientState>(Object.assign({}, data, ui))
+  const record: ControllerRecord = {
+    t: t,
+    prefs: prefs,
+    data: data,
+    ui: ui,
+    store: store,
+    reader: store,
+    digestCache: new Map<string, string>(),
+    listCache: { key: null, items: [] },
+    toastTimer: null,
+    lastScopeMark: null,
+    searchSeq: 0,
+    searchAbort: null,
+    bodyRequests: new Set<string>(),
+    hold: false,
+    attentionSent: new Set<string>(),
+    transport: null as unknown as Transport,
+  }
+  record.transport = createTransport({
+    read: function () { return { data: record.data, ui: record.ui } },
+    setData: function (patch) { setData(record, patch) },
+    setUi: function (patch) { setUi(record, patch) },
+    commit: function (dataPatch, uiPatch) { commit(record, dataPatch, uiPatch) },
+    setBusy: function (key, value) { setBusy(record, key, value) },
+    toast: function (text, error, undo) { toast(record, text, error, undo) },
+    titleOf: function (feedId) { return feedTitleOf(record, feedId) },
+    hold: function () { return holdNow(record) },
+    refilter: function () { refilter(record) },
+    refetchBody: function (id) { refetchBody(record, id) },
+    resetText: function () { resetText(record) },
+    t: t,
+  })
+  return apiOf(record)
+}
+
+/** Whether a refresh should hold its rows: a list is on screen to protect. */
+function holdNow(rec: ControllerRecord): boolean {
+  // A list with nothing on screen has no position to protect. The flag can
+  // outlive the list that set it — a scroll to the end, then the filter
+  // emptying it — and no scroll pass would clear it, because an empty list
+  // renders no viewport.
+  return rec.hold && getList(rec).length > 0
+}
+
+/** The model moved under a query: ask again for the text the reader left in the box. */
+function refilter(rec: ControllerRecord): void {
+  const needle = rec.ui.query.trim()
+  if (!needle) return
+  searchFor(rec, needle)
+}
+
+/** The article is showing a row that arrived as a digest: read its body again. */
+function refetchBody(rec: ControllerRecord, id: string): void {
+  rec.bodyRequests.delete(id)
+  ensureBody(rec, id)
+}
+
+/** A new item model invalidates the body text this surface has read. */
+function resetText(rec: ControllerRecord): void {
+  rec.bodyRequests.clear()
+}
+
+/** The controller surface, built once the record and the transport exist. */
+function apiOf(rec: ControllerRecord): Controller {
+  return {
+    get: function () { return get(rec) },
+    subscribe: function (listener) { return subscribe(rec, listener) },
+    reader: rec.store,
+    getList: function () { return getList(rec) },
+    reconnect: function () { rec.transport.reconnect() },
+    mark: function (ids, value, shown) { return mark(rec, ids, value, shown) },
+    select: function (id) { select(rec, id) },
+    closeArticle: function () { closeArticle(rec) },
+    selectFeed: function (id) { selectFeed(rec, id) },
+    setFilter: function (filter) { setFilter(rec, filter) },
+    setQuery: function (query) { setQuery(rec, query) },
+    move: function (offset) { move(rec, offset) },
+    toggleRead: function () { toggleRead(rec) },
+    toggleStar: function (id) { toggleStar(rec, id) },
+    openCurrent: function () { openCurrent(rec) },
+    escape: function () { escape(rec) },
+    markAll: function () { markAll(rec) },
+    markCounts: function () { return markCounts(rec) },
+    markEverything: function () { markEverything(rec) },
+    undoMark: function () { undoMark(rec) },
+    dismissToast: function () { dismissToast(rec) },
+    markGroup: function (key) { markGroup(rec, key) },
+    markFeed: function (feedId) { markFeed(rec, feedId) },
+    markFolder: function (folder) { markFolder(rec, folder) },
+    setGroupBy: function (value) { setGroupBy(rec, value) },
+    setHideEmpty: function (value) { setHideEmpty(rec, value) },
+    setMarkOnScroll: function (value) { setMarkOnScroll(rec, value) },
+    setShowDigest: function (value) { setShowDigest(rec, value) },
+    setInterestOrder: function (value) { setInterestOrder(rec, value) },
+    digest: function (item) { return digestOf(rec, item) },
+    releaseSticky: function (ids) { releaseSticky(rec, ids) },
+    trimSticky: function (ids) { trimSticky(rec, ids) },
+    releaseHeld: function () { releaseHeld(rec) },
+    setHold: function (value) { setHold(rec, value) },
+    heldCount: function () { return heldCount(rec) },
+    countInView: function () { return countInView(rec) },
+    setFolderOpen: function (name, open) { setFolderOpen(rec, name, open) },
+    setWidths: function (patch) { setWidths(rec, patch) },
+    setRailHidden: function (hidden) { setRailHidden(rec, hidden) },
+    addFeed: function (url, folder) { return rec.transport.addFeed(url, folder) },
+    importOpml: function (opml, replace) { return rec.transport.importOpml(opml, replace) },
+    exportOpml: function () { return rec.transport.exportOpml() },
+    removeFeed: function (id) { return rec.transport.removeFeed(id) },
+    setFeedFolder: function (id, folder) { return rec.transport.setFeedFolder(id, folder) },
+    runAction: function (name) { return rec.transport.runAction(name) },
+    mount: function () { mount(rec) },
+    unmount: function () { unmount(rec) },
+    dispose: function () { dispose(rec) },
+    feedTitle: function (id) { return feedTitleOf(rec, id) },
+    feedFolder: function (id) { return feedFolderOf(rec, id) },
+    groupKey: function (item) { return groupKeyOf(rec, item) },
+  }
+}
+
+// Persisted JSON crosses a file boundary, so the grouping is re-validated on
+// the way in instead of trusted from the snapshot's type.
+// Likewise for a panel that had no preference when the snapshot was written:
+// a stored value that is not a boolean means the rec.reader never hid it.
+
+/** The last explicit scope mark, so a too-wide action can be taken back. */
+/**
    * Which query the Host is answering, and how to cancel it. Only the newest
    * answer may be applied, and the query it replaced is told to stop: the
    * Host's index build is the expensive part, and nobody is waiting for it.
    */
-  let searchSeq = 0
-  let searchAbort: AbortController | null = null
-  /** Rows whose body is being read, so an article opening twice reads it once. */
-  const bodyRequests = new Set<string>()
-  /**
+/** Rows whose body is being read, so an article opening twice reads it once. */
+/**
    * Whether a surface is showing a list it wants held still. The transport asks
-   * before it lets a refresh put rows where the reader is looking; it is not
+   * before it lets a refresh put rows where the rec.reader is looking; it is not
    * published, because a scroll must not republish the snapshot.
    */
-  let hold = false
 
-  function get(): ClientState {
-    return reader.getSnapshot()
-  }
+function get(rec: ControllerRecord): ClientState {
+  return rec.reader.getSnapshot()
+}
 
-  function subscribe(listener: () => void): () => void {
-    return reader.subscribe(listener)
-  }
+function subscribe(rec: ControllerRecord, listener: () => void): () => void {
+  return rec.reader.subscribe(listener)
+}
 
-  /**
+/**
    * Publish one consistent snapshot. Both halves merge in the same step, so a
    * change that moves both — a load that also drops the selection — never
    * renders the intermediate one.
    * @param dataPatch - archive, marks, or repository facts that moved.
    * @param uiPatch - viewing state that moved.
    */
-  function commit(dataPatch: Partial<ReaderData> | null, uiPatch: Partial<ReaderUi> | null): void {
-    if (dataPatch) data = Object.assign({}, data, dataPatch)
-    if (uiPatch) ui = Object.assign({}, ui, uiPatch)
-    store.set(Object.assign({}, data, ui))
+function commit(rec: ControllerRecord, dataPatch: Partial<ReaderData> | null, uiPatch: Partial<ReaderUi> | null): void {
+  if (dataPatch) rec.data = Object.assign({}, rec.data, dataPatch)
+  if (uiPatch) rec.ui = Object.assign({}, rec.ui, uiPatch)
+  rec.store.set(Object.assign({}, rec.data, rec.ui))
+}
+
+/** Publish a change the transport made to the archive or the repository. */
+function setData(rec: ControllerRecord, patch: Partial<ReaderData>): void {
+  commit(rec, patch, null)
+}
+
+/** Publish a change the rec.reader made to what it is looking at. */
+function setUi(rec: ControllerRecord, patch: Partial<ReaderUi>): void {
+  commit(rec, null, patch)
+}
+
+
+function setBusy(rec: ControllerRecord, key: string, value: boolean): void {
+  const busy = Object.assign({}, rec.ui.busy)
+  if (value) busy[key] = true
+  else Reflect.deleteProperty(busy, key)
+  setUi(rec, { busy: busy })
+}
+
+function toast(rec: ControllerRecord, text: string, error?: boolean, undo?: boolean): void {
+  if (rec.toastTimer) clearTimeout(rec.toastTimer)
+  setUi(rec, { toast: { text: text, error: !!error, at: Date.now(), undo: !!undo } })
+  // An undoable mark stays on screen long enough to be taken back.
+  rec.toastTimer = setTimeout(function () {
+    rec.toastTimer = null
+    setUi(rec, { toast: null })
+  }, error || undo ? 8000 : 3500)
+}
+
+/** Dismiss the banner early, e.g. once the shared toast has faded out. */
+function dismissToast(rec: ControllerRecord): void {
+  if (rec.toastTimer) {
+    clearTimeout(rec.toastTimer)
+    rec.toastTimer = null
   }
+  if (rec.ui.toast) setUi(rec, { toast: null })
+}
 
-  /** Publish a change the transport made to the archive or the repository. */
-  function setData(patch: Partial<ReaderData>): void {
-    commit(patch, null)
+/** The list's inputs, gathered from the snapshot the rec.reader publishes. */
+function view(rec: ControllerRecord): ReaderView {
+  return {
+    items: rec.data.items,
+    read: rec.data.read,
+    starred: rec.data.starred,
+    feeds: rec.data.feedMap,
+    filter: rec.ui.filter,
+    query: rec.ui.query,
+    searchIds: rec.ui.searchIds,
+    feedId: rec.ui.feedId,
+    stickyRead: rec.transport.sticky,
+    heldArrivals: rec.transport.held,
+    uncategorized: rec.t('feed.uncategorized'),
   }
+}
 
-  /** Publish a change the reader made to what it is looking at. */
-  function setUi(patch: Partial<ReaderUi>): void {
-    commit(null, patch)
+function getList(rec: ControllerRecord): Item[] {
+  // The epoch covers every rebuild the rows can see: a new item model, a
+  // changed read/star set, or a fresh answer from the Host's search. The
+  // state version is not part of the key, because it also moves for git and
+  // schedule polling, and rebuilding the rows for those would hand the list
+  // a fresh array on every quiet refresh.
+  const key = [rec.ui.filter, rec.ui.query, rec.ui.feedId || '', rec.ui.listEpoch].join('\u0000')
+  if (rec.listCache.key !== key) {
+    rec.listCache = { key: key, items: listOf(view(rec)) }
   }
+  return rec.listCache.items
+}
 
-  const transport: Transport = createTransport({
-    read: function () { return { data: data, ui: ui } },
-    setData: setData,
-    setUi: setUi,
-    commit: commit,
-    setBusy: setBusy,
-    toast: toast,
-    titleOf: function (id: string) { return feedTitle(data.feedMap, id) },
-    // A list with nothing on screen has no position to protect. The flag can
-    // outlive the list that set it — a scroll to the end, then the filter
-    // emptying it — and no scroll pass would clear it, because an empty list
-    // renders no viewport.
-    hold: function () { return hold && getList().length > 0 },
-    refilter: function () {
-      // The model moved under a query: ask again for the text the reader left
-      // in the box, so a row a refresh brought in is searchable at once.
-      const needle = ui.query.trim()
-      if (needle) searchFor(needle)
-    },
-    refetchBody: function (id: string) {
-      // A row that arrived as a digest under the open article: read it whole
-      // again. ensureBody is a no-op when the row is complete or already being
-      // read.
-      ensureBody(id)
-    },
-    resetText: function () {
-      // The digest cache is the one text cache the reader still owns: search
-      // is the Host's answer now, not text this half derives.
-      digestCache.clear()
-    },
-    t: t,
-  })
-
-  function setBusy(key: string, value: boolean): void {
-    const busy = Object.assign({}, ui.busy)
-    if (value) busy[key] = true
-    else Reflect.deleteProperty(busy, key)
-    setUi({ busy: busy })
-  }
-
-  function toast(text: string, error?: boolean, undo?: boolean): void {
-    if (toastTimer) clearTimeout(toastTimer)
-    setUi({ toast: { text: text, error: !!error, at: Date.now(), undo: !!undo } })
-    // An undoable mark stays on screen long enough to be taken back.
-    toastTimer = setTimeout(function () {
-      toastTimer = null
-      setUi({ toast: null })
-    }, error || undo ? 8000 : 3500)
-  }
-
-  /** Dismiss the banner early, e.g. once the shared toast has faded out. */
-  function dismissToast(): void {
-    if (toastTimer) {
-      clearTimeout(toastTimer)
-      toastTimer = null
-    }
-    if (ui.toast) setUi({ toast: null })
-  }
-
-  /** The list's inputs, gathered from the snapshot the reader publishes. */
-  function view(): ReaderView {
-    return {
-      items: data.items,
-      read: data.read,
-      starred: data.starred,
-      feeds: data.feedMap,
-      filter: ui.filter,
-      query: ui.query,
-      searchIds: ui.searchIds,
-      feedId: ui.feedId,
-      stickyRead: transport.sticky,
-      heldArrivals: transport.held,
-      uncategorized: t('feed.uncategorized'),
-    }
-  }
-
-  function getList(): Item[] {
-    // The epoch covers every rebuild the rows can see: a new item model, a
-    // changed read/star set, or a fresh answer from the Host's search. The
-    // state version is not part of the key, because it also moves for git and
-    // schedule polling, and rebuilding the rows for those would hand the list
-    // a fresh array on every quiet refresh.
-    const key = [ui.filter, ui.query, ui.feedId || '', ui.listEpoch].join('\u0000')
-    if (listCache.key !== key) {
-      listCache = { key: key, items: listOf(view()) }
-    }
-    return listCache.items
-  }
-
-  /**
+/**
    * Ask the Host for the rows the query matches. The bodies are the Host's:
-   * the reader carries what the list draws, not what it searches.
+   * the rec.reader carries what the list draws, not what it searches.
    * @param needle - the trimmed query.
    */
-  function searchFor(needle: string): void {
-    const seq = ++searchSeq
-    if (searchAbort) searchAbort.abort()
-    const controller = new AbortController()
-    searchAbort = controller
-    transport.search(needle, controller.signal).then(function (ids) {
-      // A newer query was typed while this one was answered.
-      if (seq !== searchSeq || controller.signal.aborted) return
-      if (ui.query.trim() !== needle) return
-      setUi({ searchIds: new Set(ids) })
-      bumpList()
-    }).catch(function (err: unknown) {
-      // A cancelled query says nothing: the reader already moved on.
-      if (seq !== searchSeq || controller.signal.aborted) return
-      toast(t('toast.failed', { error: messageOf(err) }), true)
-      setUi({ searchIds: new Set() })
-      bumpList()
-    })
-  }
+function searchFor(rec: ControllerRecord, needle: string): void {
+  const seq = ++rec.searchSeq
+  if (rec.searchAbort) rec.searchAbort.abort()
+  const controller = new AbortController()
+  rec.searchAbort = controller
+  rec.transport.search(needle, controller.signal).then(function (ids) {
+    // A newer query was typed while this one was answered.
+    if (seq !== rec.searchSeq || controller.signal.aborted) return
+    if (rec.ui.query.trim() !== needle) return
+    setUi(rec, { searchIds: new Set(ids) })
+    bumpList(rec)
+  }).catch(function (err: unknown) {
+    // A cancelled query says nothing: the rec.reader already moved on.
+    if (seq !== rec.searchSeq || controller.signal.aborted) return
+    toast(rec, rec.t('toast.failed', { error: messageOf(err) }), true)
+    setUi(rec, { searchIds: new Set() })
+    bumpList(rec)
+  })
+}
 
-  function digestOf(item: Item): string {
-    const key = `${item.id}:${item.summary ? item.summary.length : 0}`
-    let text = digestCache.get(key)
-    if (text === undefined) {
-      text = digestText(item.summary)
-      if (digestCache.size > 4000) digestCache.clear()
-      digestCache.set(key, text)
-    }
-    return text
+function digestOf(rec: ControllerRecord, item: Item): string {
+  const key = `${item.id}:${item.summary ? item.summary.length : 0}`
+  let text = rec.digestCache.get(key)
+  if (text === undefined) {
+    text = digestText(item.summary)
+    if (rec.digestCache.size > 4000) rec.digestCache.clear()
+    rec.digestCache.set(key, text)
   }
+  return text
+}
 
-  function feedTitleOf(id: string): string {
-    return feedTitle(data.feedMap, id)
-  }
+function feedTitleOf(rec: ControllerRecord, id: string): string {
+  return feedTitle(rec.data.feedMap, id)
+}
 
-  function feedFolderOf(id: string): string {
-    return feedFolder(data.feedMap, id, t('feed.uncategorized'))
-  }
+function feedFolderOf(rec: ControllerRecord, id: string): string {
+  return feedFolder(rec.data.feedMap, id, rec.t('feed.uncategorized'))
+}
 
-  function groupKeyOf(item: Item): string {
-    const groupBy = ui.groupBy || data.reader.groupBy || 'none'
-    return groupKey(item, groupBy, data.feedMap, t('feed.uncategorized'))
-  }
+function groupKeyOf(rec: ControllerRecord, item: Item): string {
+  const groupBy = rec.ui.groupBy || rec.data.reader.groupBy || 'none'
+  return groupKey(item, groupBy, rec.data.feedMap, rec.t('feed.uncategorized'))
+}
 
-  /**
+/**
    * Mark items read or unread.
    * @param ids item ids.
    * @param value target state.
    * @param [keepList] keep the affected rows in the list until the scope
    * changes. Implicit marks (opening an article, scrolling past a row) keep
    * them so nothing moves under the pointer; an explicit "mark these read"
-   * command drops them, because that is the feedback the reader asked for.
+   * command drops them, because that is the feedback the rec.reader asked for.
    */
-  function mark(ids: string[], value: boolean, keepList?: boolean): Promise<void> {
-    const clean = (Array.isArray(ids) ? ids : []).filter(function (id) {
-      return typeof id === 'string' && id.length > 0 && id.length < 64
-    })
-    if (!clean.length) return Promise.resolve()
-    // An implicit mark keeps the rows that are on screen; the transport applies
-    // the mark and holds those rows until the scope changes.
-    const shown = keepList && value ? new Set(getList().map(function (item) { return item.id })) : null
-    const request = transport.mark(clean, value, shown)
-    // The transport already reconnected and told the reader what failed; most
-    // callers are event handlers that never look at this promise.
-    request.catch(function () { /* reported by the transport */ })
-    return request
-  }
+function mark(rec: ControllerRecord, ids: string[], value: boolean, keepList?: boolean): Promise<void> {
+  const clean = (Array.isArray(ids) ? ids : []).filter(function (id) {
+    return typeof id === 'string' && id.length > 0 && id.length < 64
+  })
+  if (!clean.length) return Promise.resolve()
+  // An implicit mark keeps the rows that are on screen; the transport applies
+  // the mark and holds those rows until the scope changes.
+  const shown = keepList && value ? new Set(getList(rec).map(function (item) { return item.id })) : null
+  const request = rec.transport.mark(clean, value, shown)
+  // The transport already reconnected and told the rec.reader what failed; most
+  // callers are event handlers that never look at this promise.
+  request.catch(function () { /* reported by the transport */ })
+  return request
+}
 
-  /**
+/**
    * Forget the rows that were kept only so the current list would stay put, and
-   * let the arrivals that were waiting for the reader to move land with them.
+   * let the arrivals that were waiting for the rec.reader to move land with them.
    */
-  function clearSticky(): void {
-    transport.clearSticky()
-    transport.releaseHeld()
-  }
+function clearSticky(rec: ControllerRecord): void {
+  rec.transport.clearSticky()
+  rec.transport.releaseHeld()
+}
 
-  /**
+/**
    * Let a refresh's held arrivals land, rebuilding the list when that adds
    * rows. The list calls this once the viewport is back at the top, where new
-   * rows are what the reader expects to find.
+   * rows are what the rec.reader expects to find.
    */
-  function releaseHeld(): void {
-    if (transport.releaseHeld()) bumpList()
-  }
+function releaseHeld(rec: ControllerRecord): void {
+  if (rec.transport.releaseHeld()) bumpList(rec)
+}
 
-  /**
+/**
    * Tell the transport whether a surface is showing a list it wants held
    * still, which is any list with rows on it.
    * @param value - whether a list with rows is on screen.
    */
-  function setHold(value: boolean): void {
-    hold = value
-  }
+function setHold(rec: ControllerRecord, value: boolean): void {
+  rec.hold = value
+}
 
-  /** How many rows a refresh is holding back until the reader asks for them. */
-  function heldCount(): number {
-    return transport.held.size
-  }
+/** How many rows a refresh is holding back until the rec.reader asks for them. */
+function heldCount(rec: ControllerRecord): number {
+  return rec.transport.held.size
+}
 
-  /**
+/**
    * Rows the current view has, counted from the archive instead of from the
    * list, so a row a refresh is holding still counts as something to read.
    */
-  function countInView(): number {
-    const query = ui.query.trim()
-    let n = 0
-    for (const item of data.items) {
-      if (ui.feedId && item.feed !== ui.feedId) continue
-      if (ui.filter === 'unread' && data.read.has(item.id)) continue
-      if (ui.filter === 'starred' && !data.starred.has(item.id)) continue
-      if (query && !(ui.searchIds && ui.searchIds.has(item.id))) continue
-      n++
-    }
-    return n
+function countInView(rec: ControllerRecord): number {
+  const query = rec.ui.query.trim()
+  let n = 0
+  for (const item of rec.data.items) {
+    if (rec.ui.feedId && item.feed !== rec.ui.feedId) continue
+    if (rec.ui.filter === 'unread' && rec.data.read.has(item.id)) continue
+    if (rec.ui.filter === 'starred' && !rec.data.starred.has(item.id)) continue
+    if (query && !(rec.ui.searchIds && rec.ui.searchIds.has(item.id))) continue
+    n++
   }
+  return n
+}
 
-  /**
+/**
    * Let go of rows a finished section no longer needs kept, and rebuild so the
    * section leaves. The list asked for this once its fade is done.
    */
-  function releaseSticky(ids: string[]): void {
-    transport.release(ids)
-    bumpList()
-  }
+function releaseSticky(rec: ControllerRecord, ids: string[]): void {
+  rec.transport.release(ids)
+  bumpList(rec)
+}
 
-  /**
+/**
    * Drop the rows a scroll left behind. They were held so the list would not
    * move under the pointer, and the anchor holds that now; the rebuild is
    * skipped when nothing was actually held, so a scroll over rows that never
    * stuck costs nothing.
    */
-  function trimSticky(ids: string[]): void {
-    if (!transport.release(ids)) return
-    bumpList()
-  }
+function trimSticky(rec: ControllerRecord, ids: string[]): void {
+  if (!rec.transport.release(ids)) return
+  bumpList(rec)
+}
 
-  function bumpList() {
-    setUi({ listEpoch: ui.listEpoch + 1 })
-  }
+function bumpList(rec: ControllerRecord) {
+  setUi(rec, { listEpoch: rec.ui.listEpoch + 1 })
+}
 
-  /**
+/**
    * Read the body of a row the wire only carried a digest of. The list draws a
    * digest and the text filter is the Host's, so the one body worth reading is
-   * the one the reader is about to read.
+   * the one the rec.reader is about to read.
    * @param id - the row the article is opening.
    */
-  function ensureBody(id: string): void {
-    const item = data.byId.get(id)
-    if (!item || !item.bodyChars || item.bodyChars <= item.summary.length) return
-    if (bodyRequests.has(id)) return
-    bodyRequests.add(id)
-    transport.body(id).then(function (full) {
-      bodyRequests.delete(id)
-      if (!full) return
-      const before = data
-      if (!before.byId.has(id)) return
-      const row = Object.assign({}, full)
-      Reflect.deleteProperty(row, 'bodyChars')
-      const byId = new Map(before.byId)
-      byId.set(id, row)
-      const items = before.items.map(function (item) { return item.id === id ? row : item })
-      // No list epoch: the digest is unchanged, and rebuilding the rows under
-      // the pointer to lengthen one body in the article is a reflow for nothing.
-      setData({ items: items, byId: byId })
-    }).catch(function (err: unknown) {
-      bodyRequests.delete(id)
-      toast(t('toast.failed', { error: messageOf(err) }), true)
-    })
-  }
+function ensureBody(rec: ControllerRecord, id: string): void {
+  const item = rec.data.byId.get(id)
+  if (!item || !item.bodyChars || item.bodyChars <= item.summary.length) return
+  if (rec.bodyRequests.has(id)) return
+  rec.bodyRequests.add(id)
+  rec.transport.body(id).then(function (full) {
+    rec.bodyRequests.delete(id)
+    if (!full) return
+    const before = rec.data
+    if (!before.byId.has(id)) return
+    const row = Object.assign({}, full)
+    Reflect.deleteProperty(row, 'bodyChars')
+    const byId = new Map(before.byId)
+    byId.set(id, row)
+    const items = before.items.map(function (item) { return item.id === id ? row : item })
+    // No list epoch: the digest is unchanged, and rebuilding the rows under
+    // the pointer to lengthen one body in the article is a reflow for nothing.
+    setData(rec, { items: items, byId: byId })
+  }).catch(function (err: unknown) {
+    rec.bodyRequests.delete(id)
+    toast(rec, rec.t('toast.failed', { error: messageOf(err) }), true)
+  })
+}
 
-  /**
+/**
    * The acts already told to the Host, so a j/k sweep through a list logs each
    * row once rather than once per visit.
    */
-  const attentionSent = new Set<string>()
 
-  /**
-   * Tell the Host which rows the reader is actually reading. Opening a row and
+/**
+   * Tell the Host which rows the rec.reader is actually reading. Opening a row and
    * starring one are the two signals the source order is built from; a read
    * mark is not one, because scrolling and bulk marking saturate it.
    * @param kind - `open` for a selected row, `star` for an explicit one.
    * @param id - the row.
    */
-  function recordAttention(kind: 'open' | 'star', id: string): void {
-    const item = data.byId.get(id)
-    if (!item) return
-    const key = `${kind}\u0000${id}`
-    if (attentionSent.has(key)) return
-    attentionSent.add(key)
-    transport.attention(kind, id, item.feed)
-  }
+function recordAttention(rec: ControllerRecord, kind: 'open' | 'star', id: string): void {
+  const item = rec.data.byId.get(id)
+  if (!item) return
+  const key = `${kind}\u0000${id}`
+  if (rec.attentionSent.has(key)) return
+  rec.attentionSent.add(key)
+  rec.transport.attention(kind, id, item.feed)
+}
 
-  function select(id: string | null): void {
-    if (!id) {
-      setUi({ current: null })
-      return
-    }
-    if (!data.byId.has(id)) return
-    setUi({ current: id })
-    ensureBody(id)
-    recordAttention('open', id)
-    if (!data.read.has(id)) void mark([id], true, true)
+function select(rec: ControllerRecord, id: string | null): void {
+  if (!id) {
+    setUi(rec, { current: null })
+    return
   }
+  if (!rec.data.byId.has(id)) return
+  setUi(rec, { current: id })
+  ensureBody(rec, id)
+  recordAttention(rec, 'open', id)
+  if (!rec.data.read.has(id)) void mark(rec, [id], true, true)
+}
 
-  function closeArticle() {
-    setUi({ current: null })
+function closeArticle(rec: ControllerRecord) {
+  setUi(rec, { current: null })
+}
+
+function selectFeed(rec: ControllerRecord, id: string | null): void {
+  if ((id || null) !== rec.ui.feedId) clearSticky(rec)
+  setUi(rec, { feedId: id || null })
+}
+
+function setFilter(rec: ControllerRecord, filter: Filter): void {
+  if (filter !== rec.ui.filter) clearSticky(rec)
+  setUi(rec, { filter: filter })
+}
+
+function setQuery(rec: ControllerRecord, query: string): void {
+  const next = query || ''
+  if (next !== rec.ui.query) clearSticky(rec)
+  setUi(rec, { query: next })
+  const needle = next.trim()
+  if (needle) {
+    searchFor(rec, needle)
+    return
   }
+  // An empty box is the whole view again, and no answer is pending for it.
+  rec.searchSeq += 1
+  if (rec.searchAbort) rec.searchAbort.abort()
+  if (rec.ui.searchIds) setUi(rec, { searchIds: null })
+}
 
-  function selectFeed(id: string | null): void {
-    if ((id || null) !== ui.feedId) clearSticky()
-    setUi({ feedId: id || null })
-  }
+function move(rec: ControllerRecord, offset: number): void {
+  const list = getList(rec)
+  if (!list.length) return
+  let index = list.findIndex(function (item) { return item.id === rec.ui.current })
+  if (index === -1) index = offset > 0 ? -1 : list.length
+  const next = list.at(clamp(index + offset, 0, list.length - 1))
+  if (next) select(rec, next.id)
+}
 
-  function setFilter(filter: Filter): void {
-    if (filter !== ui.filter) clearSticky()
-    setUi({ filter: filter })
-  }
+function toggleRead(rec: ControllerRecord): void {
+  const id = rec.ui.current
+  if (!id) return
+  const isRead = rec.data.read.has(id)
+  // Marking read keeps the row where it is, the way opening an article does:
+  // the section fade or the band trim lets it go once it is out of the way.
+  // Marking unread puts it back, so that direction rebuilds at once.
+  void mark(rec, [id], !isRead, !isRead)
+  if (isRead) bumpList(rec)
+}
 
-  function setQuery(query: string): void {
-    const next = query || ''
-    if (next !== ui.query) clearSticky()
-    setUi({ query: next })
-    const needle = next.trim()
-    if (needle) {
-      searchFor(needle)
-      return
-    }
-    // An empty box is the whole view again, and no answer is pending for it.
-    searchSeq += 1
-    if (searchAbort) searchAbort.abort()
-    if (ui.searchIds) setUi({ searchIds: null })
-  }
-
-  function move(offset: number): void {
-    const list = getList()
-    if (!list.length) return
-    let index = list.findIndex(function (item) { return item.id === ui.current })
-    if (index === -1) index = offset > 0 ? -1 : list.length
-    const next = list.at(clamp(index + offset, 0, list.length - 1))
-    if (next) select(next.id)
-  }
-
-  function toggleRead(): void {
-    const id = ui.current
-    if (!id) return
-    const isRead = data.read.has(id)
-    // Marking read keeps the row where it is, the way opening an article does:
-    // the section fade or the band trim lets it go once it is out of the way.
-    // Marking unread puts it back, so that direction rebuilds at once.
-    void mark([id], !isRead, !isRead)
-    if (isRead) bumpList()
-  }
-
-  /**
+/**
    * Star or unstar one item.
    * @param [id] the row whose star was clicked; the open article when omitted.
    */
-  function toggleStar(id?: string): void {
-    const target = id || ui.current
-    if (!target) return
-    const on = !data.starred.has(target)
-    const starred = new Set(data.starred)
-    if (on) starred.add(target)
-    else starred.delete(target)
-    setData({ starred: starred })
-    if (on) recordAttention('star', target)
-    // Under the Starred filter the star is what membership *is*, so that is
-    // the one view that has to rebuild its rows; in the others the glyph
-    // updates in place and the list stays where the reader left it.
-    if (ui.filter === 'starred') bumpList()
-    transport.star(target, on).catch(function (err: unknown) {
-      const revert = new Set(data.starred)
-      if (on) revert.delete(target)
-      else revert.add(target)
-      setData({ starred: revert })
-      toast(t('toast.failed', { error: messageOf(err) }), true)
-    })
-  }
+function toggleStar(rec: ControllerRecord, id?: string): void {
+  const target = id || rec.ui.current
+  if (!target) return
+  const on = !rec.data.starred.has(target)
+  const starred = new Set(rec.data.starred)
+  if (on) starred.add(target)
+  else starred.delete(target)
+  setData(rec, { starred: starred })
+  if (on) recordAttention(rec, 'star', target)
+  // Under the Starred filter the star is what membership *is*, so that is
+  // the one view that has to rebuild its rows; in the others the glyph
+  // updates in place and the list stays where the rec.reader left it.
+  if (rec.ui.filter === 'starred') bumpList(rec)
+  rec.transport.star(target, on).catch(function (err: unknown) {
+    const revert = new Set(rec.data.starred)
+    if (on) revert.delete(target)
+    else revert.add(target)
+    setData(rec, { starred: revert })
+    toast(rec, rec.t('toast.failed', { error: messageOf(err) }), true)
+  })
+}
 
-  function openCurrent(): void {
-    const id = ui.current
-    const item = id ? data.byId.get(id) : undefined
-    if (item && item.link && /^https?:/i.test(item.link)) {
-      window.open(item.link, '_blank', 'noopener,noreferrer')
-    }
+function openCurrent(rec: ControllerRecord): void {
+  const id = rec.ui.current
+  const item = id ? rec.data.byId.get(id) : undefined
+  if (item && item.link && /^https?:/i.test(item.link)) {
+    window.open(item.link, '_blank', 'noopener,noreferrer')
   }
+}
 
-  function escape(): void {
-    if (ui.current) {
-      closeArticle()
-      return
-    }
-    // Clearing the scope is a scope change like any other: the rows the old
-    // scope kept reachable go with it.
-    if (ui.query || ui.feedId) clearSticky()
-    searchSeq += 1
-    if (searchAbort) searchAbort.abort()
-    setUi({ query: '', feedId: null, searchIds: null })
+function escape(rec: ControllerRecord): void {
+  if (rec.ui.current) {
+    closeArticle(rec)
+    return
   }
+  // Clearing the scope is a scope change like any other: the rows the old
+  // scope kept reachable go with it.
+  if (rec.ui.query || rec.ui.feedId) clearSticky(rec)
+  rec.searchSeq += 1
+  if (rec.searchAbort) rec.searchAbort.abort()
+  setUi(rec, { query: '', feedId: null, searchIds: null })
+}
 
-  /**
+/**
    * Run one explicit scope mark: read rows leave the list, the toast offers to
    * take it back, and only the most recent one can be undone.
    */
-  function runScopeMark(ids: string[]): void {
-    if (!ids.length) return
-    lastScopeMark = ids.slice()
-    void mark(ids, true, false)
-    bumpList()
-    toast(t('toast.marked', { n: ids.length }), false, true)
-  }
+function runScopeMark(rec: ControllerRecord, ids: string[]): void {
+  if (!ids.length) return
+  rec.lastScopeMark = ids.slice()
+  void mark(rec, ids, true, false)
+  bumpList(rec)
+  toast(rec, rec.t('toast.marked', { n: ids.length }), false, true)
+}
 
-  function markAll(): void {
-    runScopeMark(getList()
-      .filter(function (item) { return !data.read.has(item.id) })
-      .map(function (item) { return item.id }))
-  }
+function markAll(rec: ControllerRecord): void {
+  runScopeMark(rec, getList(rec)
+    .filter(function (item) { return !rec.data.read.has(item.id) })
+    .map(function (item) { return item.id }))
+}
 
-  function markGroup(key: string): void {
-    runScopeMark(getList()
-      .filter(function (item) { return groupKeyOf(item) === key && !data.read.has(item.id) })
-      .map(function (item) { return item.id }))
-  }
+function markGroup(rec: ControllerRecord, key: string): void {
+  runScopeMark(rec, getList(rec)
+    .filter(function (item) { return groupKeyOf(rec, item) === key && !rec.data.read.has(item.id) })
+    .map(function (item) { return item.id }))
+}
 
-  /** Every unread item of one source, whatever the list filter is showing. */
-  function markFeed(feedId: string): void {
-    runScopeMark(data.items
-      .filter(function (item) { return item.feed === feedId && !data.read.has(item.id) })
-      .map(function (item) { return item.id }))
-  }
+/** Every unread item of one source, whatever the list filter is showing. */
+function markFeed(rec: ControllerRecord, feedId: string): void {
+  runScopeMark(rec, rec.data.items
+    .filter(function (item) { return item.feed === feedId && !rec.data.read.has(item.id) })
+    .map(function (item) { return item.id }))
+}
 
-  /** Every unread item of one folder, whatever the list filter is showing. */
-  function markFolder(folder: string): void {
-    runScopeMark(data.items
-      .filter(function (item) {
-        return !data.read.has(item.id) && feedFolderOf(item.feed) === folder
-      })
-      .map(function (item) { return item.id }))
-  }
+/** Every unread item of one folder, whatever the list filter is showing. */
+function markFolder(rec: ControllerRecord, folder: string): void {
+  runScopeMark(rec, rec.data.items
+    .filter(function (item) {
+      return !rec.data.read.has(item.id) && feedFolderOf(rec, item.feed) === folder
+    })
+    .map(function (item) { return item.id }))
+}
 
-  /** Take back the last scope mark; scroll and selection marks are not tracked. */
-  function undoMark(): void {
-    const last = lastScopeMark
-    lastScopeMark = null
-    if (!last || !last.length) return
-    void mark(last, false, false)
-    bumpList()
-    toast(t('toast.unmarked', { n: last.length }))
-  }
+/** Take back the last scope mark; scroll and selection marks are not tracked. */
+function undoMark(rec: ControllerRecord): void {
+  const last = rec.lastScopeMark
+  rec.lastScopeMark = null
+  if (!last || !last.length) return
+  void mark(rec, last, false, false)
+  bumpList(rec)
+  toast(rec, rec.t('toast.unmarked', { n: last.length }))
+}
 
-  /**
+/**
    * How many unread items each marking scope would touch. The mark menu shows
    * these numbers before it acts, so a five-figure action never hides behind a
    * button that looks like the small one next to it.
    */
-  function markCounts(): MarkCounts {
-    return markCountsOf(view(), getList())
-  }
+function markCounts(rec: ControllerRecord): MarkCounts {
+  return markCountsOf(view(rec), getList(rec))
+}
 
-  /** Mark every unread item in the reader, whatever the scope on screen is. */
-  function markEverything(): void {
-    runScopeMark(data.items
-      .filter(function (item) { return !data.read.has(item.id) })
-      .map(function (item) { return item.id }))
-  }
+/** Mark every unread item in the rec.reader, whatever the scope on screen is. */
+function markEverything(rec: ControllerRecord): void {
+  runScopeMark(rec, rec.data.items
+    .filter(function (item) { return !rec.data.read.has(item.id) })
+    .map(function (item) { return item.id }))
+}
 
-  function setGroupBy(value: string): void {
-    const next = value === 'folder' || value === 'feed' ? value : 'none'
-    prefs.update(function (draft) { draft.groupBy = next })
-    setUi({ groupBy: next })
-  }
+function setGroupBy(rec: ControllerRecord, value: string): void {
+  const next = value === 'folder' || value === 'feed' ? value : 'none'
+  rec.prefs.update(function (draft) { draft.groupBy = next })
+  setUi(rec, { groupBy: next })
+}
 
-  function setHideEmpty(value: boolean): void {
-    prefs.update(function (draft) { draft.hideEmpty = value })
-    setUi({ hideEmpty: value })
-  }
+function setHideEmpty(rec: ControllerRecord, value: boolean): void {
+  rec.prefs.update(function (draft) { draft.hideEmpty = value })
+  setUi(rec, { hideEmpty: value })
+}
 
-  function setMarkOnScroll(value: boolean): void {
-    prefs.update(function (draft) { draft.markOnScroll = value })
-    setUi({ markOnScroll: value })
-  }
+function setMarkOnScroll(rec: ControllerRecord, value: boolean): void {
+  rec.prefs.update(function (draft) { draft.markOnScroll = value })
+  setUi(rec, { markOnScroll: value })
+}
 
-  function setShowDigest(value: boolean): void {
-    prefs.update(function (draft) { draft.showDigest = value })
-    setUi({ showDigest: value })
-  }
+function setShowDigest(rec: ControllerRecord, value: boolean): void {
+  rec.prefs.update(function (draft) { draft.showDigest = value })
+  setUi(rec, { showDigest: value })
+}
 
-  function setInterestOrder(value: boolean): void {
-    prefs.update(function (draft) { draft.interestOrder = value })
-    setUi({ interestOrder: value })
-  }
+function setInterestOrder(rec: ControllerRecord, value: boolean): void {
+  rec.prefs.update(function (draft) { draft.interestOrder = value })
+  setUi(rec, { interestOrder: value })
+}
 
-  function setFolderOpen(name: string, open: boolean): void {
-    prefs.update(function (draft) { draft.folderOpen[name] = open })
-    setUi({ folderOpen: Object.assign({}, prefs.getSnapshot().folderOpen) })
-  }
+function setFolderOpen(rec: ControllerRecord, name: string, open: boolean): void {
+  rec.prefs.update(function (draft) { draft.folderOpen[name] = open })
+  setUi(rec, { folderOpen: Object.assign({}, rec.prefs.getSnapshot().folderOpen) })
+}
 
-  function setWidths(patch: { railW?: number; listW?: number }): void {
-    const next: { railW?: number; listW?: number } = {}
-    if (typeof patch.railW === 'number' && Number.isFinite(patch.railW)) {
-      const railW = clamp(Math.round(patch.railW), RAIL_MIN, RAIL_MAX)
-      next.railW = railW
-      prefs.update(function (draft) { draft.railW = railW })
-    }
-    if (typeof patch.listW === 'number' && Number.isFinite(patch.listW)) {
-      const listW = clamp(Math.round(patch.listW), LIST_MIN, LIST_MAX)
-      next.listW = listW
-      prefs.update(function (draft) { draft.listW = listW })
-    }
-    if (Object.keys(next).length) setUi(next)
+function setWidths(rec: ControllerRecord, patch: { railW?: number; listW?: number }): void {
+  const next: { railW?: number; listW?: number } = {}
+  if (typeof patch.railW === 'number' && Number.isFinite(patch.railW)) {
+    const railW = clamp(Math.round(patch.railW), RAIL_MIN, RAIL_MAX)
+    next.railW = railW
+    rec.prefs.update(function (draft) { draft.railW = railW })
   }
+  if (typeof patch.listW === 'number' && Number.isFinite(patch.listW)) {
+    const listW = clamp(Math.round(patch.listW), LIST_MIN, LIST_MAX)
+    next.listW = listW
+    rec.prefs.update(function (draft) { draft.listW = listW })
+  }
+  if (Object.keys(next).length) setUi(rec, next)
+}
 
-  function setRailHidden(hidden: boolean): void {
-    prefs.update(function (draft) { draft.railHidden = hidden })
-    setUi({ railHidden: hidden })
-  }
+function setRailHidden(rec: ControllerRecord, hidden: boolean): void {
+  rec.prefs.update(function (draft) { draft.railHidden = hidden })
+  setUi(rec, { railHidden: hidden })
+}
 
-  /** The mount refcount the transport polls on while any surface is on screen. */
-  function mount(): void {
-    transport.mount()
-  }
+/** The mount refcount the transport polls on while any surface is on screen. */
+function mount(rec: ControllerRecord): void {
+  rec.transport.mount()
+}
 
-  function unmount(): void {
-    transport.unmount()
-  }
+function unmount(rec: ControllerRecord): void {
+  rec.transport.unmount()
+}
 
-  function dispose(): void {
-    if (toastTimer) clearTimeout(toastTimer)
-    toastTimer = null
-    transport.dispose()
-  }
-
-  const api: Controller = {
-    get: get,
-    subscribe: subscribe,
-    reader: reader,
-    getList: getList,
-    reconnect: transport.reconnect,
-    mark: mark,
-    select: select,
-    closeArticle: closeArticle,
-    selectFeed: selectFeed,
-    setFilter: setFilter,
-    setQuery: setQuery,
-    move: move,
-    toggleRead: toggleRead,
-    toggleStar: toggleStar,
-    openCurrent: openCurrent,
-    escape: escape,
-    markAll: markAll,
-    markCounts: markCounts,
-    markEverything: markEverything,
-    undoMark: undoMark,
-    dismissToast: dismissToast,
-    markGroup: markGroup,
-    markFeed: markFeed,
-    markFolder: markFolder,
-    setGroupBy: setGroupBy,
-    setHideEmpty: setHideEmpty,
-    setMarkOnScroll: setMarkOnScroll,
-    setShowDigest: setShowDigest,
-    setInterestOrder: setInterestOrder,
-    digest: digestOf,
-    releaseSticky: releaseSticky,
-    trimSticky: trimSticky,
-    releaseHeld: releaseHeld,
-    setHold: setHold,
-    heldCount: heldCount,
-    countInView: countInView,
-    setFolderOpen: setFolderOpen,
-    setWidths: setWidths,
-    setRailHidden: setRailHidden,
-    addFeed: transport.addFeed,
-    importOpml: transport.importOpml,
-    exportOpml: transport.exportOpml,
-    removeFeed: transport.removeFeed,
-    setFeedFolder: transport.setFeedFolder,
-    runAction: transport.runAction,
-    mount: mount,
-    unmount: unmount,
-    dispose: dispose,
-    feedTitle: feedTitleOf,
-    feedFolder: feedFolderOf,
-    groupKey: groupKeyOf,
-  }
-  return api
+function dispose(rec: ControllerRecord): void {
+  if (rec.toastTimer) clearTimeout(rec.toastTimer)
+  rec.toastTimer = null
+  rec.transport.dispose()
 }

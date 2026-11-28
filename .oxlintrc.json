@@ -5,7 +5,7 @@
     "correctness": "off"
   },
   "options": {
-    "reportUnusedDisableDirectives": "warn",
+    "reportUnusedDisableDirectives": "error",
     // One type-aware program covers both halves: the root tsconfig.json loads
     // ES2022, DOM, node, and react types, so Host and Client files resolve
     // without per-file projects. Drop to false only if that stops resolving.
@@ -26,6 +26,17 @@
         "src/**/*.{ts,tsx}"
       ],
       "rules": {
+        // One-shot work is a sequence of named steps: a function that grows a
+        // closure per phase, or nests a step-sized block, reads as one knot
+        // instead of a flow. `gitfeed/step-lines` measures a function's own
+        // code (nested functions are judged on their own), so a factory is not
+        // one huge function; `max-depth` and `max-params` apply everywhere.
+        // docs/engineering.md ("Code shape") has the rule.
+        "max-lines-per-function": ["error", { "max": 100, "skipBlankLines": true, "skipComments": true, "IIFEs": false }],
+        "max-statements": ["error", { "max": 50 }],
+        "max-depth": ["error", 4],
+        "max-params": ["error", 6],
+        "max-lines": ["error", { "max": 600, "skipBlankLines": true, "skipComments": true }],
         "no-var": "error",
         "prefer-const": "error",
         "prefer-rest-params": "error",

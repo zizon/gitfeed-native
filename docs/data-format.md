@@ -25,17 +25,19 @@ Items live in two places, and the reader merges them on every model rebuild:
 
 | store | written by | committed |
 | --- | --- | --- |
-| `data/items/*.ndjson` | the CLI, and `Sync` after an unsubscribe rewrites shards | yes |
-| `.local/items/*.ndjson` | the plugin's own refresh | no — gitignored |
+| `data/items/*.ndjson` | the CLI; `Sync` commits what it wrote, and retention prunes old shards | yes |
+| `.local/items/*.ndjson` | the plugin's own refresh, with the same retention | no — gitignored |
 
 `data/` is listed first, then `.local/`; the first sighting of an id wins, with
 one exception: when both hold the same id, the longer summary wins, because a
-repair only ever lengthens a body. A fetch counts **both** stores as already
-archived, so re-reading a feed does not copy the committed archive into the
-cache, and `.local/` can be deleted at any time — everything in it is either a
-row the committed store also holds or a body the next fetch re-reads. Marks
-always go to `data/read.ndjson` and `data/starred.ndjson`, whichever store the
-item came from.
+repair only ever lengthens a body. Neither store is swept when a subscription
+leaves: the digest draws only the sources that are followed, so the rows of a
+source that stopped being followed stay put — and come back if it is followed
+again. A fetch counts **both** stores as already archived, so re-reading a feed
+does not copy the committed archive into the cache, and `.local/` can be deleted
+at any time — everything in it is either a row the committed store also holds or
+a body the next fetch re-reads. Marks always go to `data/read.ndjson` and
+`data/starred.ndjson`, whichever store the item came from.
 
 The same rule orders the two `meta.json` files (`.local/meta.json` is the
 cache's): the entry whose `checkedAt` is newer describes the feed, and a changed
@@ -53,4 +55,3 @@ data/items/*.ndjson merge=union
 A fetch only ever appends item shards, and the reader only ever appends read/star
 state and attention; unsubscribing is the one operation that rewrites a shard in place, which
 is why `Sync` stages `data/items/`.
-

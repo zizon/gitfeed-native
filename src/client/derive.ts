@@ -228,8 +228,7 @@ export type Entry = RowEntry | GroupEntry
  * The rows the list renders, section headers included.
  * @param list - the rows the filter left, in archive order.
  * @param groupBy - `none`, `folder`, or `feed`.
- * @param rowHeight - one row's height at the current density.
- * @param groupHeight - one section header's height.
+ * @param heights - one row's height and one section header's, at the density.
  * @param titleOf - a source's display name.
  * @param folderOf - the folder a source groups under.
  * @param rankOf - a section's place in the reader's source order; omitted, the
@@ -239,14 +238,13 @@ export type Entry = RowEntry | GroupEntry
 export function entriesOf(
   list: readonly Item[],
   groupBy: string,
-  rowHeight: number,
-  groupHeight: number,
+  heights: { row: number; group: number },
   titleOf: (feedId: string) => string,
   folderOf: (feedId: string) => string,
   rankOf?: (key: string) => number,
 ): Entry[] {
   if (groupBy === 'none') {
-    return list.map(function (item) { return { kind: 'row', key: item.id, item: item, h: rowHeight } })
+    return list.map(function (item) { return { kind: 'row', key: item.id, item: item, h: heights.row } })
   }
   const groups = new Map<string, Group>()
   for (const item of list) {
@@ -265,8 +263,8 @@ export function entriesOf(
   })
   const out: Entry[] = []
   for (const group of ordered) {
-    out.push({ kind: 'group', key: `group:${group.key}`, group: group, h: groupHeight })
-    for (const item of group.items) out.push({ kind: 'row', key: item.id, item: item, h: rowHeight })
+    out.push({ kind: 'group', key: `group:${group.key}`, group: group, h: heights.group })
+    for (const item of group.items) out.push({ kind: 'row', key: item.id, item: item, h: heights.row })
   }
   return out
 }

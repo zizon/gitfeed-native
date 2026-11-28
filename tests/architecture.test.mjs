@@ -43,7 +43,7 @@ const okSites = readdirSync(clientDir, { recursive: true })
   .filter((name) => typeof name === 'string' && /\.tsx?$/.test(name))
   .filter((name) => readFileSync(path.join(clientDir, name), 'utf8').match(/\.ok === false|\.ok !== true/))
   .sort()
-ok(JSON.stringify(okSites) === JSON.stringify(['transport.ts']), 'the transport is the one place a non-ok answer becomes a failure', okSites)
+ok(JSON.stringify(okSites) === JSON.stringify(['transport-core.ts']), 'the transport core is the one place a non-ok answer becomes a failure', okSites)
 
 // A status is chosen by the error's type, never by its words: matching the
 // message was how every untaught failure became a 500.

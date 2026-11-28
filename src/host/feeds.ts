@@ -1,12 +1,12 @@
 // Feed list helpers: ids, URL normalisation, discovery, and feeds.json access.
 
 import { parseFeed } from './xml.js'
+import { PAGE_ACCEPT, USER_AGENT, classifyDocument, readDocument } from './document.js'
 import { pathsFor } from './settings.js'
 import { InputError } from '../shared/errors.js'
 import { readJson, writeJson } from './store.js'
 import type { FeedDefinition } from './types.js'
 
-const UA = 'gitfeed/2.0 (+https://github.com; personal RSS reader)'
 const FEED_TYPE = /(rss|atom|xml)/i
 
 export function slug(input: string): string {
@@ -22,6 +22,50 @@ export function slug(input: string): string {
 export function feedIdFor(url: string): string {
   const u = new URL(url)
   return slug(u.hostname.replace(/^www\./, '') + u.pathname)
+}
+
+/**
+ * The ids subscriptions are archived under.
+ *
+ * One owner, because the fetcher writes rows, metadata, and its scheduler's
+ * clocks keyed by these ids, and the digest decides what to show by comparing a
+ * row's feed against the same ids: two derivations would be two answers, and a
+ * row would become invisible under one of them.
+ *
+ * An entry keeps the id feeds.json gave it, verbatim — that string is the
+ * identity its archive already lives under, so re-slugging it would move the
+ * feed's rows and read state to a different key. Only a missing id is derived
+ * from the URL. A repeated id is numbered in file order, which is the only
+ * ordering the file itself carries; every reader of the list sees the same
+ * numbering because they all come through here.
+ * @param entries - the raw `feeds` array, in file order.
+ * @returns one id per entry, aligned by index; an empty string for a null row.
+ */
+export function assignFeedIds(entries: ReadonlyArray<{ id?: unknown; url?: unknown } | null>): string[] {
+  const used = new Set<string>()
+  return entries.map(function (entry) {
+    if (!entry) return ''
+    let id = ''
+    if (typeof entry.id === 'string' && entry.id.trim()) {
+      id = entry.id.trim()
+    } else if (typeof entry.url === 'string' && entry.url.trim()) {
+      try {
+        id = feedIdFor(entry.url)
+      } catch {
+        // A URL that cannot be parsed still belongs to a row the reader can
+        // see; its id only has to be stable and unique, not meaningful.
+        id = slug(entry.url)
+      }
+    } else {
+      id = 'feed'
+    }
+    const base = id
+    let unique = base
+    let n = 2
+    while (used.has(unique)) unique = `${base}-${n++}`
+    used.add(unique)
+    return unique
+  })
 }
 
 export function normalizeUrl(url: string): string {
@@ -59,7 +103,16 @@ export function indexFeeds(feeds: FeedDefinition[]): Map<string, FeedDefinition>
 export async function readFeeds(root: string): Promise<FeedDefinition[]> {
   const raw = await readJson<{ feeds?: unknown }>(pathsFor(root).feeds, { feeds: [] })
   const entries = Array.isArray(raw.feeds) ? raw.feeds as Array<FeedDefinition | null> : []
-  return entries.filter(function (entry): entry is FeedDefinition { return entry !== null })
+  const ids = assignFeedIds(entries)
+  const feeds: FeedDefinition[] = []
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i]
+    if (!entry) continue
+    // Only an entry whose file spelling differs from the assigned id is copied:
+    // a written-back list then carries the ids the archive is keyed by.
+    feeds.push(entry.id === ids[i] ? entry : Object.assign({}, entry, { id: ids[i] }))
+  }
+  return feeds
 }
 
 export async function writeFeeds(root: string, feeds: FeedDefinition[]): Promise<void> {
@@ -67,21 +120,6 @@ export async function writeFeeds(root: string, feeds: FeedDefinition[]): Promise
     '$comment': 'Subscription list. Edit by hand, use Add feed in the reader, or run `gitfeed import-opml`; then Sync.',
     feeds: feeds,
   })
-}
-
-// Content-type alone is not enough: some sites serve XHTML as
-// application/xhtml+xml, which would slip past an /xml/ test and then parse as
-// an empty feed. Look at what the document actually is.
-function looksLikeFeed(contentType: string | null, body: string): boolean {
-  const head = body
-    .slice(0, 2000)
-    .replace(/^\uFEFF/, '')
-    .replace(/^\s*<\?xml[^>]*\?>\s*/i, '')
-    .replace(/^\s*<!--[\s\S]*?-->\s*/, '')
-    .trimStart()
-  if (/^<(rss|feed|rdf)\b/i.test(head)) return true
-  if (/^<(!doctype\s+html|html)\b/i.test(head)) return false
-  return /(rss|atom)\+xml/i.test(contentType || '')
 }
 
 // Find <link rel="alternate" type="application/rss+xml" href="..."> on a site.
@@ -138,25 +176,19 @@ export async function resolveFeed(rawUrl: string, depth?: number): Promise<Resol
   }
   if (!/^https?:/i.test(url)) throw new InputError('only http(s) URLs are supported')
 
-  const res = await fetch(url, {
-    headers: {
-      'user-agent': UA,
-      accept: 'application/rss+xml, application/atom+xml, application/xml;q=0.9, text/html;q=0.8, */*;q=0.5',
-    },
-    redirect: 'follow',
+  const res = await readDocument(url, {
+    headers: { 'user-agent': USER_AGENT, accept: PAGE_ACCEPT },
     signal: AbortSignal.timeout(20000),
   })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  const body = await res.text()
-  const finalUrl = res.url || url
+  if (res.status < 200 || res.status > 299) throw new Error(`HTTP ${res.status}`)
 
-  if (looksLikeFeed(res.headers.get('content-type'), body)) {
-    const parsed = parseFeed(body)
+  if (classifyDocument(res.headers.get('content-type'), res.body) === 'feed') {
+    const parsed = parseFeed(res.body)
     if (!parsed.items.length && !parsed.title) throw new InputError('no items found in feed')
-    return { url: finalUrl, title: parsed.title || null, items: parsed.items.length }
+    return { url: res.finalUrl, title: parsed.title || null, items: parsed.items.length }
   }
 
-  const discovered = discoverFeed(body, finalUrl)
+  const discovered = discoverFeed(res.body, res.finalUrl)
   if (!discovered) {
     throw new InputError('no RSS/Atom feed found on that page — a custom feed script can read a page like this instead')
   }

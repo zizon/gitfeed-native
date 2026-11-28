@@ -4,129 +4,14 @@
  * it reads and writes the controller's two halves through {@link TransportPorts}.
  */
 
-import type { Feed, GitInfo, Item, ReaderPrefs, ScheduleJobInfo } from '../shared/types.js'
-import { mergeItems, PROTOCOL, STREAM_PATH } from '../shared/stream.js'
-import type { StreamDelta, StreamWelcome } from '../shared/stream.js'
+import type { Item } from '../shared/types.js'
 import { PREFIX } from './constants.js'
-import type { Translate } from './locales.js'
-import type { ReaderData, ReaderUi } from './types.js'
 import { messageOf } from '../shared/errors.js'
+import { armFresh, dataOf, request, uiOf } from './transport-core.js'
+import type { ApiResponse, Transport, TransportPorts, TransportRecord } from './transport-core.js'
+import { closeStream, openStream, reconnect } from './transport-stream.js'
 
-interface ApiFeed {
-  title?: string
-  url?: string
-  folder?: string
-}
-
-interface ApiResponse {
-  ok?: boolean
-  error?: string
-  output?: string
-  version?: string
-  feed?: ApiFeed
-  /** Ids one query matched, in archive order. */
-  ids?: string[]
-  /** One row with its body whole, when an article asked for it. */
-  item?: Item | null
-  /** What an OPML import changed. */
-  summary?: {
-    total?: number
-    added?: number
-    updated?: number
-    kept?: number
-  }
-}
-
-/** Failed stream attempts before the HTTP path takes over for a while. */
-const STREAM_ATTEMPTS = 3
-/** How long a given-up stream waits before trying the Host again. */
-const STREAM_RETRY_MS = 60000
-
-/** What the transport needs from the controller that owns the published state. */
-export interface TransportPorts {
-  /** The two halves as published right now. */
-  read(): { data: ReaderData; ui: ReaderUi }
-  setData(patch: Partial<ReaderData>): void
-  setUi(patch: Partial<ReaderUi>): void
-  /** Publish both halves in one step, for a load that also moves the view. */
-  commit(data: Partial<ReaderData>, ui: Partial<ReaderUi>): void
-  setBusy(key: string, value: boolean): void
-  toast(text: string, error?: boolean, undo?: boolean): void
-  /** The name a source is shown by, for the toast that names it. */
-  titleOf(feedId: string): string
-  /**
-   * Whether a surface is showing a list it does not want a refresh to move.
-   * That is any list with rows on it: the reader is looking at one, at the top
-   * as much as in the middle, and rows that land above it push it down.
-   */
-  hold(): boolean
-  /**
-   * The item model moved: a text filter the Host answered may be stale, and the
-   * surface's query is the Host's to answer.
-   */
-  refilter(): void
-  /**
-   * The open article's row arrived as a digest again: read its body once more
-   * rather than leaving the reader with the first 400 characters.
-   * @param id - the row the article is showing.
-   */
-  refetchBody(id: string): void
-  /** Drop the row text a new item model invalidates. */
-  resetText(): void
-  t: Translate
-}
-
-export interface Transport {
-  /** Replace the stream: the only way the reader gets state again. */
-  reconnect: () => void
-  /**
-   * Mark rows, optimistically and in the next flush.
-   * @returns settled when the Host has the flush; rejected when it did not.
-   */
-  mark: (ids: string[], value: boolean, shown: ReadonlySet<string> | null) => Promise<void>
-  star: (id: string, on: boolean) => Promise<void>
-  /**
-   * Tell the Host the reader opened or starred a row. The order that log feeds
-   * is a convenience, not the reader's state: a lost act costs a day of
-   * ranking, and a failure here is not worth a banner over the article.
-   */
-  attention: (kind: 'open' | 'star', item: string, feed: string) => void
-  addFeed: (url: string, folder: string) => Promise<boolean>
-  /**
-   * Merge or replace the subscription list from an OPML document.
-   * @param opml - the document's text.
-   * @param replace - whether it becomes the whole list instead of merging.
-   */
-  importOpml: (opml: string, replace: boolean) => Promise<boolean>
-  /** Download the subscription list as an OPML file. */
-  exportOpml: () => Promise<boolean>
-  removeFeed: (id: string) => Promise<boolean>
-  setFeedFolder: (id: string, folder: string) => Promise<boolean>
-  runAction: (name: string) => Promise<void>
-  /**
-   * Ask the Host which rows match a query; empty when the query is blank.
-   * @param query - what the reader typed.
-   * @param signal - cancels a query the reader has already replaced.
-   */
-  search: (query: string, signal?: AbortSignal) => Promise<string[]>
-  /** One row with its body whole, for the article that is open. */
-  body: (id: string, signal?: AbortSignal) => Promise<Item | null>
-  mount: () => void
-  unmount: () => void
-  dispose: () => void
-  clearSticky: () => void
-  /** Let go of rows a finished section no longer needs kept. */
-  release: (ids: readonly string[]) => boolean
-  /** Rows kept on screen only so the list stays put; the view reads this. */
-  readonly sticky: ReadonlySet<string>
-  /** Arrivals held back until the reader leaves the position they would move. */
-  readonly held: ReadonlySet<string>
-  /**
-   * Let those arrivals land. Answers whether anything was being held, so the
-   * caller rebuilds the list only when the release actually adds rows.
-   */
-  releaseHeld: () => boolean
-}
+export type { Transport, TransportPorts } from './transport-core.js'
 
 /**
  * Open the transport over one published state.
@@ -134,529 +19,206 @@ export interface Transport {
  * @returns the request and timer surface the controller drives.
  */
 export function createTransport(ports: TransportPorts): Transport {
-  const t = ports.t
-  const data = function () { return ports.read().data }
-  const ui = function () { return ports.read().ui }
-
-  const pendingRead = new Set<string>()
-  const pendingUnread = new Set<string>()
-  /**
-   * Read rows that stay in the Unread list until the scope changes. A row the
-   * reader scrolled past or opened must not vanish from under the pointer,
-   * which is what made the list jump on every mark.
-   */
-  const stickyRead = new Set<string>()
-  /**
-   * Rows a refresh brought in while a surface was showing a list. A row that
-   * lands above the reader — or inside the rows under them — pushes everything
-   * below it down; the fade that softens that only makes it blink. They wait
-   * here instead, and land when the reader acts: leaves the top and comes back,
-   * changes the scope, or asks for them.
-   */
-  const heldArrivals = new Set<string>()
-  /**
-   * The first frame a (re)opened stream delivers. It is the baseline, not a
-   * change: a surface that has just come on screen has no rows for it to move.
-   */
-  let firstFrame = true
-
-  let flushTimer: ReturnType<typeof setTimeout> | null = null
-  let freshTimer: ReturnType<typeof setTimeout> | null = null
-  /** Mark promises waiting for the next flush to tell them what happened. */
-  let markWaiters: Array<{ resolve: () => void; reject: (error: unknown) => void }> = []
-  let visibilityHandler: (() => void) | null = null
-  let mounted = 0
-  let disposed = false
-  /**
-   * The revision this surface holds, and the stream that keeps it current.
-   * `lastRev` is what a reconnecting stream asks from; it is not published,
-   * because a scroll or a mark must not republish the snapshot for it.
-   */
-  let lastRev = 0
-  let stream: EventSource | null = null
-  let streaming = false
-  /** Failed attempts to open the stream; a Host that has none falls back for good. */
-  let streamAttempts = 0
-  let streamRetry: ReturnType<typeof setTimeout> | null = null
-
-  function request(route: string, body?: unknown, signal?: AbortSignal): Promise<ApiResponse> {
-    const init: RequestInit = {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body || {}),
-      cache: 'no-store',
-      credentials: 'same-origin',
-    }
-    if (signal) init.signal = signal
-    return fetch(PREFIX + route, init).then(async function (res) {
-      let payload: ApiResponse = {}
-      try {
-        payload = (await res.json()) as ApiResponse
-      } catch {
-        payload = {}
-      }
-      // The one place an answer becomes a failure: a status the Host could not
-      // serve, or a 200 that says `ok: false` (a fetch that ran and failed is an
-      // answer, not a status). Every command above throws from here, which is
-      // why none of them checks the field itself.
-      if (!res.ok || payload.ok === false) {
-        throw new Error(payload.error || payload.output || (res.ok ? 'the Host refused the action' : `HTTP ${res.status}`))
-      }
-      return payload
-    })
+  const record: TransportRecord = {
+    ports: ports,
+    t: ports.t,
+    pendingRead: new Set<string>(),
+    pendingUnread: new Set<string>(),
+    stickyRead: new Set<string>(),
+    heldArrivals: new Set<string>(),
+    firstFrame: true,
+    flushTimer: null,
+    freshTimer: null,
+    markWaiters: [],
+    visibilityHandler: null,
+    mounted: 0,
+    disposed: false,
+    lastRev: 0,
+    stream: null,
+    streaming: false,
+    streamAttempts: 0,
+    streamRetry: null,
   }
-
-  /** Stop calling a row new once the fade that introduced it is done. */
-  function armFresh(): void {
-    if (freshTimer) clearTimeout(freshTimer)
-    freshTimer = setTimeout(function () {
-      freshTimer = null
-      if (data().fresh.size) ports.setData({ fresh: new Set() })
-    }, 1600)
-  }
-
-  /**
-   * Publish one complete item model with the facts that came with it. Both the
-   * HTTP load and the stream's first frame end here, so a surface cannot tell
-   * which of them delivered its rows.
-   * @param items - the rows of the model.
-   * @param payload - the marks and facts sent beside them.
-   */
-  function commitModel(
-    items: Item[],
-    payload: {
-      read?: string[]
-      starred?: string[]
-      feeds?: Feed[]
-      reader?: ReaderPrefs
-      /** Attention scores from the Host; absent from a Host before the log. */
-      interest?: Record<string, number>
-      git?: GitInfo | null
-      schedule?: ScheduleJobInfo[]
-      version?: string | null
-      itemsVersion?: string | null
-      repo?: string
-      allowGit?: boolean
+  return {
+    reconnect: function () { reconnect(record) },
+    search: function (query, signal) { return search(record, query, signal) },
+    body: function (id, signal) { return body(record, id, signal) },
+    mark: function (ids, value, shown) { return mark(record, ids, value, shown) },
+    star: function (id, on) { return star(record, id, on) },
+    attention: function (kind, item, feed) { attention(record, kind, item, feed) },
+    addFeed: function (url, folder) { return addFeed(record, url, folder) },
+    importOpml: function (opml, replace) { return importOpml(record, opml, replace) },
+    exportOpml: function () { return exportOpml(record) },
+    removeFeed: function (id) { return removeFeed(record, id) },
+    setFeedFolder: function (id, folder) { return setFeedFolder(record, id, folder) },
+    runAction: function (name) { return runAction(record, name) },
+    mount: function () { mount(record) },
+    unmount: function () { unmount(record) },
+    dispose: function () { dispose(record) },
+    clearSticky: function () { if (record.stickyRead.size) record.stickyRead.clear() },
+    releaseHeld: function () { return releaseRows(record) },
+    release: function (ids: readonly string[]): boolean {
+      let changed = false
+      for (const id of ids) if (record.stickyRead.delete(id)) changed = true
+      return changed
     },
-  ): void {
-    const before = data()
-    const byId = new Map<string, Item>(items.map(function (item): [string, Item] { return [item.id, item] }))
-    const fresh = new Set<string>()
-    if (before.loadedOnce) {
-      for (const item of items) if (!before.byId.has(item.id)) fresh.add(item.id)
-    }
-    // A refresh that lands rows under the reader's eye moves the rows below
-    // them, and the fade meant to soften that reads as a blink: the count
-    // moves, the rows do not.
-    if (fresh.size && !firstFrame && ports.hold()) {
-      for (const id of fresh) heldArrivals.add(id)
-    }
-    firstFrame = false
-    // A full state can drop rows a held set or a retained row still names.
-    for (const id of heldArrivals) {
-      if (!byId.has(id)) heldArrivals.delete(id)
-      else fresh.delete(id)
-    }
-    for (const id of stickyRead) if (!byId.has(id)) stickyRead.delete(id)
-    const read = new Set<string>(Array.isArray(payload.read) ? payload.read : before.read)
-    const starred = new Set<string>(Array.isArray(payload.starred) ? payload.starred : before.starred)
-    const feeds: Feed[] = Array.isArray(payload.feeds) ? payload.feeds : before.feeds
-    const feedMap = new Map<string, Feed>(feeds.map(function (feed): [string, Feed] { return [feed.id, feed] }))
-    ports.resetText()
-    const current = ui().current
-    ports.commit({
-      status: 'ready',
-      error: null,
-      loadError: null,
-      loadedOnce: true,
-      items: items,
-      byId: byId,
-      itemsVersion: payload.itemsVersion || before.itemsVersion,
-      fresh: fresh,
-      feeds: feeds,
-      feedMap: feedMap,
-      read: read,
-      starred: starred,
-      ranks: payload.interest ? new Map(Object.entries(payload.interest)) : before.ranks,
-      reader: payload.reader || before.reader,
-      git: payload.git === undefined ? before.git : payload.git,
-      schedule: Array.isArray(payload.schedule) ? payload.schedule : before.schedule,
-      version: payload.version || before.version,
-      repo: payload.repo || before.repo,
-      allowGit: payload.allowGit !== false,
-    }, {
-      current: current && byId.has(current) ? current : null,
-      listEpoch: ui().listEpoch + 1,
-    })
-    if (fresh.size) armFresh()
-    // A fuller model can match a text filter the Host answered a moment ago.
-    ports.refilter()
-    // The article that is open was replaced by a digest: read its body again.
-    const open = ui().current
-    if (open && data().byId.get(open)?.bodyChars) ports.refetchBody(open)
+    get sticky() { return record.stickyRead },
+    get held() { return record.heldArrivals },
   }
+}
 
-  /**
+
+/** Stop calling a row new once the fade that introduced it is done. */
+
+
+/**
    * Ask the Host which rows match a query. The body text is the Host's to
    * search: it holds it whole, and the reader holds the list's half of it.
    * @param query - what the reader typed.
    * @returns the matching ids, in archive order.
    */
-  function body(id: string, signal?: AbortSignal): Promise<Item | null> {
-    return request('/item', { id: id }, signal).then(function (payload) {
-      return payload.item ? payload.item : null
-    })
-  }
+function body(rec: TransportRecord, id: string, signal?: AbortSignal): Promise<Item | null> {
+  return request('/item', { id: id }, signal).then(function (payload) {
+    return payload.item ? payload.item : null
+  })
+}
 
-  function search(query: string, signal?: AbortSignal): Promise<string[]> {
-    if (!query.trim()) return Promise.resolve([])
-    return request('/search', { query: query }, signal).then(function (payload) {
-      return Array.isArray(payload.ids) ? payload.ids : []
-    })
-  }
+function search(rec: TransportRecord, query: string, signal?: AbortSignal): Promise<string[]> {
+  if (!query.trim()) return Promise.resolve([])
+  return request('/search', { query: query }, signal).then(function (payload) {
+    return Array.isArray(payload.ids) ? payload.ids : []
+  })
+}
 
-  /**
-   * Apply the whole state the stream sends a surface that holds no revision it
-   * can extend, or whose revision the Host no longer has.
-   */
-  function applyWelcome(frame: StreamWelcome): void {
-    if (frame.protocol !== PROTOCOL) {
-      // A protocol this bundle does not speak: this Host is another build.
-      // Stop guessing at its frames and let the retry loop find one that
-      // matches, rather than rendering a frame shape that may have changed.
-      streaming = false
-      closeStream()
-      streamFailed(t('status.offline'))
-      retryStream(STREAM_RETRY_MS)
-      return
-    }
-    lastRev = frame.rev
-    commitModel(frame.items, frame)
-  }
 
-  /** Apply what changed since the revision this surface holds. */
-  function applyDelta(frame: StreamDelta): void {
-    if (frame.rev <= lastRev) return
-    lastRev = frame.rev
-    const before = data()
-    const patch: Partial<ReaderData> = {
-      status: 'ready',
-      error: null,
-      loadError: null,
-      loadedOnce: true,
-      itemsVersion: frame.itemsVersion || before.itemsVersion,
-      version: frame.version || before.version,
-    }
-    let epoch = false
-    const fresh = new Set<string>()
-    if (frame.items) {
-      const items = mergeItems(before.items, frame.items)
-      const byId = new Map<string, Item>(before.byId)
-      for (const item of frame.items.updated) byId.set(item.id, item)
-      for (const item of frame.items.added) byId.set(item.id, item)
-      for (const id of frame.items.removed) {
-        byId.delete(id)
-        heldArrivals.delete(id)
-        stickyRead.delete(id)
-      }
-      if (before.loadedOnce) {
-        for (const item of frame.items.added) if (!before.byId.has(item.id)) fresh.add(item.id)
-      }
-      if (fresh.size && !firstFrame && ports.hold()) {
-        for (const id of fresh) heldArrivals.add(id)
-      }
-      for (const id of heldArrivals) fresh.delete(id)
-      patch.items = items
-      patch.byId = byId
-      epoch = true
-    }
-    if (frame.read) {
-      const read = new Set(before.read)
-      let moved = false
-      for (const id of frame.read.add) {
-        if (read.has(id)) continue
-        read.add(id)
-        moved = true
-      }
-      for (const id of frame.read.remove) if (read.delete(id)) moved = true
-      if (moved) {
-        patch.read = read
-        epoch = true
-      }
-    }
-    if (frame.starred) {
-      const starred = new Set(before.starred)
-      let moved = false
-      for (const id of frame.starred.add) {
-        if (starred.has(id)) continue
-        starred.add(id)
-        moved = true
-      }
-      for (const id of frame.starred.remove) if (starred.delete(id)) moved = true
-      if (moved) {
-        patch.starred = starred
-        epoch = true
-      }
-    }
-    if (frame.feeds) {
-      patch.feeds = frame.feeds
-      patch.feedMap = new Map<string, Feed>(frame.feeds.map(function (feed): [string, Feed] { return [feed.id, feed] }))
-      epoch = true
-    }
-    if (frame.reader) {
-      patch.reader = frame.reader
-      epoch = true
-    }
-    if (frame.git !== undefined) patch.git = frame.git
-    if (frame.schedule) patch.schedule = frame.schedule
-    if (frame.repo) patch.repo = frame.repo
-    if (frame.allowGit !== undefined) patch.allowGit = frame.allowGit
-    if (fresh.size) {
-      const fading = new Set(before.fresh)
-      for (const id of fresh) fading.add(id)
-      patch.fresh = fading
-    }
-    const current = ui().current
-    const rows = patch.byId || before.byId
-    ports.commit(patch, {
-      current: current && rows.has(current) ? current : null,
-      listEpoch: epoch ? ui().listEpoch + 1 : ui().listEpoch,
-    })
-    firstFrame = false
-    if (fresh.size) armFresh()
-    if (frame.items) {
-      // The rows moved under an active text filter: the Host answers that query,
-      // and its old answer may no longer describe this model.
-      ports.refilter()
-      // The open article's row arrived as a digest again; read its body once
-      // more rather than leaving the reader with the first 400 characters.
-      const open = ui().current
-      if (open && data().byId.get(open)?.bodyChars) ports.refetchBody(open)
-    }
-  }
 
-  function closeStream(): void {
-    streaming = false
-    if (streamRetry) {
-      clearTimeout(streamRetry)
-      streamRetry = null
-    }
-    if (!stream) return
-    const source = stream
-    stream = null
-    source.close()
-  }
 
-  /**
-   * Try the stream again later, after it could not be opened. A Host that was
-   * restarted mid-session starts serving it again; a Host that never will costs
-   * one attempt a minute.
-   */
-  function retryStream(delayMs: number): void {
-    if (disposed || streamRetry) return
-    streamRetry = setTimeout(function () {
-      streamRetry = null
-      if (!disposed && mounted > 0) openStream()
-    }, delayMs)
-  }
 
-  /**
-   * The stream could not carry the state. With no second path, the reader says
-   * what is wrong where it can be seen: on the empty pane before the first
-   * frame, as a banner after it.
-   * @param message - why; the generic "not connected" text when empty.
-   */
-  function streamFailed(message: string): void {
-    streaming = false
-    const text = message || t('status.offline')
-    if (data().loadedOnce) ports.toast(text, true)
-    else ports.setData({ status: 'error', error: text })
-  }
 
-  /**
-   * Replace the stream. The reader has no state request to make, so getting its
-   * state again means reconnecting; a surface that is already streaming can use
-   * it to ask for a fresh whole state (the Retry button after a Host restart).
-   */
-  function reconnect(): void {
-    if (disposed) return
-    closeStream()
-    openStream()
-  }
 
-  /**
-   * Open the surface's stream. This is the only path: the Host sends the whole
-   * state once and then only what changed, and a page whose client bundle is
-   * newer than the running Host says so instead of showing an empty list.
-   */
-  function openStream(): void {
-    closeStream()
-    streamAttempts = 0
-    // The stream starts over: its first frame is the state this surface will
-    // hold, not a change to the one it had.
-    firstFrame = true
-    if (!data().loadedOnce && data().status !== 'error') ports.setData({ status: 'loading' })
-    if (disposed) return
-    if (typeof EventSource === 'undefined') {
-      streamFailed(t('status.offline'))
-      return
-    }
-    const source = new EventSource(`${STREAM_PATH}?rev=${lastRev}`)
-    stream = source
-    source.addEventListener('open', function () {
-      if (stream !== source) return
-      streamAttempts = 0
-      streaming = true
-    })
-    source.addEventListener('welcome', function (event: Event) {
-      if (stream !== source) return
-      applyWelcome(JSON.parse(String((event as MessageEvent).data)) as StreamWelcome)
-    })
-    source.addEventListener('delta', function (event: Event) {
-      if (stream !== source) return
-      applyDelta(JSON.parse(String((event as MessageEvent).data)) as StreamDelta)
-    })
-    source.addEventListener('error', function (event: Event) {
-      if (stream !== source) return
-      const text: unknown = (event as MessageEvent).data
-      if (typeof text === 'string' && text) {
-        streamFailed(text)
-        return
-      }
-      // A transport failure. The browser's own retry gets a few chances, then
-      // the stream is given up for a while: a Host that has not been restarted
-      // has no such route, and hammering it every few seconds helps nobody.
-      streaming = false
-      streamAttempts += 1
-      if (streamAttempts >= STREAM_ATTEMPTS) {
-        streamAttempts = 0
-        closeStream()
-        streamFailed(t('status.offline'))
-        retryStream(STREAM_RETRY_MS)
-      }
-    })
-  }
 
-  /**
+
+
+/**
    * Reload after an act the reader asked for. Rows a refresh was holding land
    * with it: the reader moved the list, so the rows may move now too.
    */
-  function showAll(): Promise<void> {
-    if (releaseRows()) ports.setUi({ listEpoch: ui().listEpoch + 1 })
-    // The Host announces what the action changed; there is nothing to ask for.
-    return Promise.resolve()
-  }
+function showAll(rec: TransportRecord): Promise<void> {
+  if (releaseRows(rec)) rec.ports.setUi({ listEpoch: uiOf(rec).listEpoch + 1 })
+  // The Host announces what the action changed; there is nothing to ask for.
+  return Promise.resolve()
+}
 
-  /**
+/**
    * Let the rows a refresh was holding land. They fade in where they belong,
    * the way a row that arrived where the reader was not looking does.
    * @returns whether anything was being held.
    */
-  function releaseRows(): boolean {
-    if (!heldArrivals.size) return false
-    const ids = Array.from(heldArrivals)
-    heldArrivals.clear()
-    const fresh = new Set(data().fresh)
-    for (const id of ids) fresh.add(id)
-    ports.setData({ fresh: fresh })
-    armFresh()
-    return true
-  }
+function releaseRows(rec: TransportRecord): boolean {
+  if (!rec.heldArrivals.size) return false
+  const ids = Array.from(rec.heldArrivals)
+  rec.heldArrivals.clear()
+  const fresh = new Set(dataOf(rec).fresh)
+  for (const id of ids) fresh.add(id)
+  rec.ports.setData({ fresh: fresh })
+  armFresh(rec)
+  return true
+}
 
-  function flushMarks(): void {
-    flushTimer = null
-    const readIds = Array.from(pendingRead)
-    const unreadIds = Array.from(pendingUnread)
-    pendingRead.clear()
-    pendingUnread.clear()
-    // Every mark queued since the last flush settles with it: one write is one
-    // answer, and the caller's promise means "the Host has this".
-    const waiting = markWaiters
-    markWaiters = []
-    if (!readIds.length && !unreadIds.length) {
-      for (const settle of waiting) settle.resolve()
-      return
-    }
-    const jobs: Array<Promise<ApiResponse>> = []
-    if (readIds.length) jobs.push(request('/mark', { ids: readIds, read: true }))
-    if (unreadIds.length) jobs.push(request('/mark', { ids: unreadIds, read: false }))
-    Promise.all(jobs).then(function () {
-      // The Host announces the mark back as a delta; the version its answer
-      // carries is not adopted, because it describes the root as it stands —
-      // including item shards this reader never loaded. Adopting it made the
-      // next request answer "unchanged" and those rows were never delivered.
-      for (const settle of waiting) settle.resolve()
-    }).catch(function (err: unknown) {
-      for (const settle of waiting) settle.reject(err)
-      ports.toast(t('toast.readFailed', { error: messageOf(err) }), true)
-      reconnect()
-    })
+function flushMarks(rec: TransportRecord): void {
+  rec.flushTimer = null
+  const readIds = Array.from(rec.pendingRead)
+  const unreadIds = Array.from(rec.pendingUnread)
+  rec.pendingRead.clear()
+  rec.pendingUnread.clear()
+  // Every mark queued since the last flush settles with it: one write is one
+  // answer, and the caller's promise means "the Host has this".
+  const waiting = rec.markWaiters
+  rec.markWaiters = []
+  if (!readIds.length && !unreadIds.length) {
+    for (const settle of waiting) settle.resolve()
+    return
   }
+  const jobs: Array<Promise<ApiResponse>> = []
+  if (readIds.length) jobs.push(request('/mark', { ids: readIds, read: true }))
+  if (unreadIds.length) jobs.push(request('/mark', { ids: unreadIds, read: false }))
+  Promise.all(jobs).then(function () {
+    // The Host announces the mark back as a delta; the version its answer
+    // carries is not adopted, because it describes the root as it stands —
+    // including item shards this reader never loaded. Adopting it made the
+    // next request answer "unchanged" and those rows were never delivered.
+    for (const settle of waiting) settle.resolve()
+  }).catch(function (err: unknown) {
+    for (const settle of waiting) settle.reject(err)
+    rec.ports.toast(rec.t('toast.readFailed', { error: messageOf(err) }), true)
+    reconnect(rec)
+  })
+}
 
-  /**
+/**
    * Apply one mark locally and queue it for the Host.
    * @param ids item ids, already validated by the caller.
    * @param value target state.
    * @param shown the rows on screen when an implicit mark keeps them; null when
    * the mark should drop them.
    */
-  function mark(ids: string[], value: boolean, shown: ReadonlySet<string> | null): Promise<void> {
-    const read = new Set(data().read)
-    for (const id of ids) {
-      if (value) read.add(id)
-      else read.delete(id)
-      if (value) {
-        pendingRead.add(id)
-        pendingUnread.delete(id)
-        if (shown) {
-          if (shown.has(id)) stickyRead.add(id)
-        } else {
-          stickyRead.delete(id)
-        }
+function mark(rec: TransportRecord, ids: string[], value: boolean, shown: ReadonlySet<string> | null): Promise<void> {
+  const read = new Set(dataOf(rec).read)
+  for (const id of ids) {
+    if (value) read.add(id)
+    else read.delete(id)
+    if (value) {
+      rec.pendingRead.add(id)
+      rec.pendingUnread.delete(id)
+      if (shown) {
+        if (shown.has(id)) rec.stickyRead.add(id)
       } else {
-        pendingUnread.add(id)
-        pendingRead.delete(id)
-        stickyRead.delete(id)
+        rec.stickyRead.delete(id)
       }
-    }
-    ports.setData({ read: read })
-    if (!flushTimer) flushTimer = setTimeout(flushMarks, 350)
-    return new Promise(function (resolve, reject) {
-      markWaiters.push({ resolve: resolve, reject: reject })
-    })
-  }
-
-  function star(id: string, on: boolean): Promise<void> {
-    // The load that follows is what settles the version: the answer to the
-    // star names the root, not the state this reader is holding.
-    return request('/star', { ids: [id], star: on }).then(function () { /* the frame settles it */ })
-  }
-
-  function attention(kind: 'open' | 'star', item: string, feed: string): void {
-    if (!item || !feed) return
-    request('/attention', { kind: kind, item: item, feed: feed }).catch(function () {
-      // The order is built from what the Host kept; nothing here is the
-      // reader's to fix, and a toast over the article would only be noise.
-    })
-  }
-
-  async function addFeed(url: string, folder: string): Promise<boolean> {
-    if (ui().busy.add) return false
-    ports.setBusy('add', true)
-    try {
-      const payload = await request('/feeds', { url: url, folder: folder })
-      ports.toast(t('toast.subscribed', { name: (payload.feed && (payload.feed.title || payload.feed.url)) || url }))
-      await showAll()
-      return true
-    } catch (err) {
-      ports.toast(t('toast.failed', { error: messageOf(err) }), true)
-      return false
-    } finally {
-      ports.setBusy('add', false)
+    } else {
+      rec.pendingUnread.add(id)
+      rec.pendingRead.delete(id)
+      rec.stickyRead.delete(id)
     }
   }
+  rec.ports.setData({ read: read })
+  if (!rec.flushTimer) rec.flushTimer = setTimeout(function () { flushMarks(rec) }, 350)
+  return new Promise(function (resolve, reject) {
+    rec.markWaiters.push({ resolve: resolve, reject: reject })
+  })
+}
 
-  /**
+function star(rec: TransportRecord, id: string, on: boolean): Promise<void> {
+  // The load that follows is what settles the version: the answer to the
+  // star names the root, not the state this reader is holding.
+  return request('/star', { ids: [id], star: on }).then(function () { /* the frame settles it */ })
+}
+
+function attention(rec: TransportRecord, kind: 'open' | 'star', item: string, feed: string): void {
+  if (!item || !feed) return
+  request('/attention', { kind: kind, item: item, feed: feed }).catch(function () {
+    // The order is built from what the Host kept; nothing here is the
+    // reader's to fix, and a toast over the article would only be noise.
+  })
+}
+
+async function addFeed(rec: TransportRecord, url: string, folder: string): Promise<boolean> {
+  if (uiOf(rec).busy.add) return false
+  rec.ports.setBusy('add', true)
+  try {
+    const payload = await request('/feeds', { url: url, folder: folder })
+    rec.ports.toast(rec.t('toast.subscribed', { name: (payload.feed && (payload.feed.title || payload.feed.url)) || url }))
+    await showAll(rec)
+    return true
+  } catch (err) {
+    rec.ports.toast(rec.t('toast.failed', { error: messageOf(err) }), true)
+    return false
+  } finally {
+    rec.ports.setBusy('add', false)
+  }
+}
+
+/**
    * Send one OPML document to the Host and report what it changed.
    *
    * The document is the reader's file, not a URL: the Host parses it, merges or
@@ -665,30 +227,30 @@ export function createTransport(ports: TransportPorts): Transport {
    * @param replace whether it becomes the whole list instead of merging.
    * @returns whether the Host applied it.
    */
-  async function importOpml(opml: string, replace: boolean): Promise<boolean> {
-    if (ui().busy.import) return false
-    ports.setBusy('import', true)
-    try {
-      const payload = await request('/import-opml', { opml: opml, replace: replace })
-      const summary = payload.summary || {}
-      const added = Number(summary.added) || 0
-      const updated = Number(summary.updated) || 0
-      const kept = Number(summary.kept) || 0
-      const total = Number(summary.total) || 0
-      ports.toast(replace
-        ? t('toast.replaced', { total: total })
-        : t('toast.imported', { total: total, added: added, updated: updated, kept: kept }))
-      await showAll()
-      return true
-    } catch (err) {
-      ports.toast(t('toast.failed', { error: messageOf(err) }), true)
-      return false
-    } finally {
-      ports.setBusy('import', false)
-    }
+async function importOpml(rec: TransportRecord, opml: string, replace: boolean): Promise<boolean> {
+  if (uiOf(rec).busy.import) return false
+  rec.ports.setBusy('import', true)
+  try {
+    const payload = await request('/import-opml', { opml: opml, replace: replace })
+    const summary = payload.summary || {}
+    const added = Number(summary.added) || 0
+    const updated = Number(summary.updated) || 0
+    const kept = Number(summary.kept) || 0
+    const total = Number(summary.total) || 0
+    rec.ports.toast(replace
+      ? rec.t('toast.replaced', { total: total })
+      : rec.t('toast.imported', { total: total, added: added, updated: updated, kept: kept }))
+    await showAll(rec)
+    return true
+  } catch (err) {
+    rec.ports.toast(rec.t('toast.failed', { error: messageOf(err) }), true)
+    return false
+  } finally {
+    rec.ports.setBusy('import', false)
   }
+}
 
-  /**
+/**
    * Download the subscription list as an OPML file.
    *
    * The Host answers with the document itself, and this surface hands it to
@@ -697,159 +259,131 @@ export function createTransport(ports: TransportPorts): Transport {
    * button promised.
    * @returns whether the download started.
    */
-  async function exportOpml(): Promise<boolean> {
-    if (ui().busy.export) return false
-    ports.setBusy('export', true)
-    try {
-      const answer = await fetch(`${PREFIX}/export-opml`, { cache: 'no-store', credentials: 'same-origin' })
-      if (!answer.ok) throw new Error(`HTTP ${answer.status}`)
-      const opml = await answer.text()
-      const url = URL.createObjectURL(new Blob([opml], { type: 'text/x-opml' }))
-      const link = document.createElement('a')
-      link.href = url
-      link.download = 'gitfeed-subscriptions.opml'
-      document.body.append(link)
-      link.click()
-      link.remove()
-      // The click has already asked the browser to save; the blob is free once
-      // that dispatch has happened, and never before it.
-      setTimeout(function () { URL.revokeObjectURL(url) }, 0)
-      ports.toast(t('toast.exported', { n: data().feeds.length }))
-      return true
-    } catch (err) {
-      ports.toast(t('toast.failed', { error: messageOf(err) }), true)
-      return false
-    } finally {
-      ports.setBusy('export', false)
-    }
+async function exportOpml(rec: TransportRecord): Promise<boolean> {
+  if (uiOf(rec).busy.export) return false
+  rec.ports.setBusy('export', true)
+  try {
+    const answer = await fetch(`${PREFIX}/export-opml`, { cache: 'no-store', credentials: 'same-origin' })
+    if (!answer.ok) throw new Error(`HTTP ${answer.status}`)
+    const opml = await answer.text()
+    const url = URL.createObjectURL(new Blob([opml], { type: 'text/x-opml' }))
+    const link = document.createElement('a')
+    link.href = url
+    link.download = 'gitfeed-subscriptions.opml'
+    document.body.append(link)
+    link.click()
+    link.remove()
+    // The click has already asked the browser to save; the blob is free once
+    // that dispatch has happened, and never before it.
+    setTimeout(function () { URL.revokeObjectURL(url) }, 0)
+    rec.ports.toast(rec.t('toast.exported', { n: dataOf(rec).feeds.length }))
+    return true
+  } catch (err) {
+    rec.ports.toast(rec.t('toast.failed', { error: messageOf(err) }), true)
+    return false
+  } finally {
+    rec.ports.setBusy('export', false)
   }
+}
 
-  async function removeFeed(id: string): Promise<boolean> {
-    if (!id || ui().busy.remove) return false
-    ports.setBusy('remove', true)
-    try {
-      await request('/feeds/remove', { id: id })
-      if (ui().feedId === id) ports.setUi({ feedId: null })
-      ports.toast(t('toast.unsubscribed', { name: ports.titleOf(id) }))
-      await showAll()
-      return true
-    } catch (err) {
-      ports.toast(t('toast.failed', { error: messageOf(err) }), true)
-      return false
-    } finally {
-      ports.setBusy('remove', false)
-    }
+async function removeFeed(rec: TransportRecord, id: string): Promise<boolean> {
+  if (!id || uiOf(rec).busy.remove) return false
+  rec.ports.setBusy('remove', true)
+  try {
+    await request('/feeds/remove', { id: id })
+    if (uiOf(rec).feedId === id) rec.ports.setUi({ feedId: null })
+    rec.ports.toast(rec.t('toast.unsubscribed', { name: rec.ports.titleOf(id) }))
+    await showAll(rec)
+    return true
+  } catch (err) {
+    rec.ports.toast(rec.t('toast.failed', { error: messageOf(err) }), true)
+    return false
+  } finally {
+    rec.ports.setBusy('remove', false)
   }
+}
 
-  /**
+/**
    * Move one subscription to another folder and reload the list of sources.
    * @param id feed id.
    * @param folder folder to move it to; an empty name means Uncategorized.
    * @returns whether the move was accepted.
    */
-  async function setFeedFolder(id: string, folder: string): Promise<boolean> {
-    if (!id || ui().busy.folder) return false
-    ports.setBusy('folder', true)
-    try {
-      const payload = await request('/feeds/folder', { id: id, folder: folder })
-      const name = (payload.feed && payload.feed.folder) || t('feed.uncategorized')
-      ports.toast(t('toast.moved', { name: ports.titleOf(id), folder: name }))
-      await showAll()
-      return true
-    } catch (err) {
-      ports.toast(t('toast.failed', { error: messageOf(err) }), true)
-      return false
-    } finally {
-      ports.setBusy('folder', false)
+async function setFeedFolder(rec: TransportRecord, id: string, folder: string): Promise<boolean> {
+  if (!id || uiOf(rec).busy.folder) return false
+  rec.ports.setBusy('folder', true)
+  try {
+    const payload = await request('/feeds/folder', { id: id, folder: folder })
+    const name = (payload.feed && payload.feed.folder) || rec.t('feed.uncategorized')
+    rec.ports.toast(rec.t('toast.moved', { name: rec.ports.titleOf(id), folder: name }))
+    await showAll(rec)
+    return true
+  } catch (err) {
+    rec.ports.toast(rec.t('toast.failed', { error: messageOf(err) }), true)
+    return false
+  } finally {
+    rec.ports.setBusy('folder', false)
+  }
+}
+
+async function runAction(rec: TransportRecord, name: string): Promise<void> {
+  if (uiOf(rec).busy[name]) return
+  rec.ports.setBusy(name, true)
+  try {
+    const payload = await request(`/${name}`, {})
+    if (name === 'fetch') {
+      rec.ports.toast(rec.t('toast.fetch', { summary: payload.output || 'ok' }))
+    } else if (name === 'pull') {
+      rec.ports.toast(rec.t('toast.pull'))
+    } else if (name === 'sync') {
+      rec.ports.toast(rec.t('toast.sync'))
+    } else {
+      rec.ports.toast(`${name}: ok`)
     }
+    await showAll(rec)
+  } catch (err) {
+    rec.ports.toast(rec.t('toast.failed', { error: messageOf(err) }), true)
+  } finally {
+    rec.ports.setBusy(name, false)
   }
+}
 
-  async function runAction(name: string): Promise<void> {
-    if (ui().busy[name]) return
-    ports.setBusy(name, true)
-    try {
-      const payload = await request(`/${name}`, {})
-      if (name === 'fetch') {
-        ports.toast(t('toast.fetch', { summary: payload.output || 'ok' }))
-      } else if (name === 'pull') {
-        ports.toast(t('toast.pull'))
-      } else if (name === 'sync') {
-        ports.toast(t('toast.sync'))
-      } else {
-        ports.toast(`${name}: ok`)
-      }
-      await showAll()
-    } catch (err) {
-      ports.toast(t('toast.failed', { error: messageOf(err) }), true)
-    } finally {
-      ports.setBusy(name, false)
-    }
+function mount(rec: TransportRecord): void {
+  rec.mounted += 1
+  if (rec.mounted > 1) return
+  openStream(rec)
+  // A tab that was away may come back to a rec.stream the browser dropped.
+  rec.visibilityHandler = function () {
+    if (document.visibilityState !== 'visible') return
+    if (rec.streaming) return
+    openStream(rec)
   }
+  document.addEventListener('visibilitychange', rec.visibilityHandler)
+}
 
-  function mount(): void {
-    mounted += 1
-    if (mounted > 1) return
-    openStream()
-    // A tab that was away may come back to a stream the browser dropped.
-    visibilityHandler = function () {
-      if (document.visibilityState !== 'visible') return
-      if (streaming) return
-      openStream()
-    }
-    document.addEventListener('visibilitychange', visibilityHandler)
+function unmount(rec: TransportRecord): void {
+  rec.mounted = Math.max(0, rec.mounted - 1)
+  if (rec.mounted > 0) return
+  closeStream(rec)
+  if (rec.visibilityHandler) {
+    document.removeEventListener('visibilitychange', rec.visibilityHandler)
+    rec.visibilityHandler = null
   }
+}
 
-  function unmount(): void {
-    mounted = Math.max(0, mounted - 1)
-    if (mounted > 0) return
-    closeStream()
-    if (visibilityHandler) {
-      document.removeEventListener('visibilitychange', visibilityHandler)
-      visibilityHandler = null
-    }
-  }
-
-  function dispose(): void {
-    disposed = true
-    // Marks queued a moment ago were already applied optimistically; dropping
-    // them here would silently unmark what the reader just read (the next load
-    // would bring the old state back).
-    if (flushTimer) flushMarks()
-    closeStream()
-    mounted = 0
-    unmount()
-    if (flushTimer) clearTimeout(flushTimer)
-    if (freshTimer) clearTimeout(freshTimer)
-    if (streamRetry) clearTimeout(streamRetry)
-    flushTimer = null
-    freshTimer = null
-    streamRetry = null
-  }
-
-  return {
-    reconnect: reconnect,
-    search: search,
-    body: body,
-    mark: mark,
-    star: star,
-    attention: attention,
-    addFeed: addFeed,
-    importOpml: importOpml,
-    exportOpml: exportOpml,
-    removeFeed: removeFeed,
-    setFeedFolder: setFeedFolder,
-    runAction: runAction,
-    mount: mount,
-    unmount: unmount,
-    dispose: dispose,
-    clearSticky: function () { if (stickyRead.size) stickyRead.clear() },
-    releaseHeld: releaseRows,
-    release: function (ids: readonly string[]): boolean {
-      let changed = false
-      for (const id of ids) if (stickyRead.delete(id)) changed = true
-      return changed
-    },
-    get sticky() { return stickyRead },
-    get held() { return heldArrivals },
-  }
+function dispose(rec: TransportRecord): void {
+  rec.disposed = true
+  // Marks queued a moment ago were already applied optimistically; dropping
+  // them here would silently unmark what the reader just read (the next load
+  // would bring the old state back).
+  if (rec.flushTimer) flushMarks(rec)
+  closeStream(rec)
+  rec.mounted = 0
+  unmount(rec)
+  if (rec.flushTimer) clearTimeout(rec.flushTimer)
+  if (rec.freshTimer) clearTimeout(rec.freshTimer)
+  if (rec.streamRetry) clearTimeout(rec.streamRetry)
+  rec.flushTimer = null
+  rec.freshTimer = null
+  rec.streamRetry = null
 }

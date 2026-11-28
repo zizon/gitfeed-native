@@ -91,7 +91,7 @@ function ndjsonText(rows: unknown[]): string {
   return rows.map(function (r) { return JSON.stringify(r) }).join('\n') + (rows.length ? '\n' : '')
 }
 
-export function appendNdjson(file: string, rows: unknown[]): Promise<void> {
+export async function appendNdjson(file: string, rows: unknown[]): Promise<void> {
   if (rows.length === 0) return Promise.resolve()
   return serialized(file, async function () {
     await ensureDir(path.dirname(file))
